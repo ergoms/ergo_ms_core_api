@@ -1,0 +1,100 @@
+from rest_framework import generics
+from rest_framework.permissions import IsAuthenticated
+
+from src.core.bi_analysis.bi_charts.models import Chart
+from src.core.bi_analysis.bi_charts.serializers import ChartSerializer
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from rest_framework import status
+
+from django.shortcuts import get_object_or_404
+
+from src.core.bi_analysis.bi_charts.methods import get_rows_for_chart
+
+from rest_framework.views import APIView
+
+from src.core.bi_analysis.bi_charts.models import Chart
+from src.core.bi_analysis.bi_charts.serializers import ChartSerializer
+from src.core.bi_analysis.bi_datasets.models import Dataset
+
+class ChartListCreateView(generics.ListCreateAPIView):
+    queryset = Chart.objects.all()
+    serializer_class = ChartSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user.is_authenticated:
+            return self.queryset.none()
+        return self.queryset.filter(owner=user)
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
+class ChartDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Chart.objects.all()
+    serializer_class = ChartSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user.is_authenticated:
+            return self.queryset.none()
+        return self.queryset.filter(owner=user)
+    
+class DatasetRowsAggAPIView(APIView):
+    """
+    POST  .../charts/<chart_id>/rows-agg/
+    body = { "fields": {... exactly Chart.params ...} }
+    """
+    def post(self, request, pk):
+        chart = get_object_or_404(Chart, pk=pk)
+        ds = chart.dataset
+
+        chart_fields = []
+        for group_key, field_list in (request.data.get('fields') or {}).items():
+            chart_fields.extend(field_list)
+
+        data = get_rows_for_chart(ds, chart_fields)
+        return Response(data)
+    
+class ChartRowsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request, pk):
+        chart = get_object_or_404(Chart, pk=pk)
+        dataset = chart.dataset
+
+        params = chart.params or {}
+        chart_fields = []
+        for section in ('x', 'y', 'color', 'labels', 'sort', 'filters'):
+            if section in params:
+                section_fields = params[section]
+                if isinstance(section_fields, list):
+                    chart_fields.extend(section_fields)
+                elif section_fields:
+                    chart_fields.append(section_fields)
+        rows = get_rows_for_chart(dataset, chart_fields)
+        return Response(rows)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def dataset_columns(request, pk: int):
+    ds = get_object_or_404(
+        Dataset.objects.only('id', 'owner', 'table_ref'),
+        pk=pk, owner=request.user
+    )
+
+    fields = ds.fields.all()
+    cols = []
+    for f in fields:
+        cols.append({
+            "name": f.name,
+            "type": f.type,
+            "aggregation": f.aggregation,
+        })
+
+    return Response({
+        "dataset_id": pk,
+        "columns": cols
+    })
