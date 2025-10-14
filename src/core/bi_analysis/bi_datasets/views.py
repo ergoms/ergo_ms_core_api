@@ -527,11 +527,9 @@ class DataSetFieldViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         dataset_id = self.request.query_params.get('dataset')
-        print(f"!!! QUERY PARAM dataset={dataset_id}")
         queryset = DataSetField.objects.all()
         if dataset_id:
             queryset = queryset.filter(dataset_id=dataset_id)
-        print(f"!!! RESULT COUNT={queryset.count()}")
         return queryset
 
 # ==============================================================================

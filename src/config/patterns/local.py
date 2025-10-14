@@ -5,6 +5,7 @@
 """
 
 import importlib
+import sys
 from pathlib import Path
 
 # Получаем путь к папке settings

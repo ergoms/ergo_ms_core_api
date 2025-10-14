@@ -8,9 +8,9 @@ import logging
 from typing import Dict, Any, List
 from pathlib import Path
 
-from src.config.settings.base import BASE_DIR
+from src.config.settings.base import MODULES_DIR
 from src.core.utils.celery_beat.base import CeleryBeatModuleConfig
-from src.core.utils.auto_api.auto_config import discover_installed_apps, is_valid_module_name
+from src.core.utils.auto_api.auto_config import discover_installed_apps, discover_modules_apps, is_valid_module_name
 
 class CeleryBeatModuleManager:
     """
@@ -26,14 +26,14 @@ class CeleryBeatModuleManager:
     def _discover_modules(self):
         """Обнаруживает все Django приложения (модули) и загружает их конфигурации Beat"""
         # Получаем путь к директории модулей
-        modules_dir = BASE_DIR / 'modules'
+        modules_dir = MODULES_DIR
         
         if not modules_dir.exists():
             self.logger.warning(f"Директория модулей не найдена: {modules_dir}")
             return
         
         # Используем существующий алгоритм для обнаружения Django приложений
-        installed_apps = discover_installed_apps(str(modules_dir))
+        installed_apps = discover_modules_apps(str(modules_dir))
         
         # Также ищем вложенные модули с tasks.py
         nested_modules = self._discover_nested_modules(modules_dir)
@@ -59,7 +59,7 @@ class CeleryBeatModuleManager:
         """Загружает конфигурацию Beat конкретного модуля"""
         try:
             # Пытаемся импортировать конфигурацию Beat модуля
-            config_module_path = f'{app_path}.celery_beat_config' if app_path else f'src.modules.{module_name}.celery_beat_config'
+            config_module_path = f'{app_path}.celery_beat_config' if app_path else f'src.modules.{module_name}.api.celery_beat_config'
             config_module = importlib.import_module(config_module_path)
             
             # Ищем класс конфигурации в модуле

@@ -174,3 +174,123 @@ def is_valid_module_name(module_name: str) -> bool:
     # Регулярное выражение для проверки
     pattern = r'^[a-z_]+$'
     return bool(re.match(pattern, module_name))
+
+def discover_modules_apps(modules_dir: str) -> List[str]:
+    """
+    Обходит директорию modules и находит установленные приложения в структуре <module_name>/api/.
+    
+    Аргументы:
+        modules_dir (str): Базовая директория modules.
+        
+    Возвращает:
+        list: Список строк, представляющих пути к установленным приложениям.
+    """
+    installed_apps = []
+    
+    # Обходим все папки в modules_dir
+    for module_name in os.listdir(modules_dir):
+        module_path = os.path.join(modules_dir, module_name)
+        
+        # Проверяем, является ли это директорией
+        if os.path.isdir(module_path):
+            # Проверяем наличие папки api
+            api_path = os.path.join(module_path, 'api')
+            if os.path.isdir(api_path):
+                # Формируем базовый префикс для модуля
+                base_module = f'modules.{module_name}.api'
+                
+                # Рекурсивно ищем приложения в папке api
+                def find_apps_in_api(current_dir: str, current_module: str) -> None:
+                    # Сначала проверяем apps.py на текущем уровне
+                    apps_py_path = os.path.join(current_dir, 'apps.py')
+                    if os.path.exists(apps_py_path):
+                        try:
+                            # Пытаемся импортировать модуль apps
+                            import_path = f'{current_module}.apps'
+                            app_module = importlib.import_module(import_path)
+                            
+                            # Ищем класс AppConfig
+                            app_config = None
+                            for name, obj in inspect.getmembers(app_module, inspect.isclass):
+                                if issubclass(obj, AppConfig) and obj is not AppConfig:
+                                    app_config = obj
+                                    break
+
+                            if app_config:
+                                installed_apps.append(current_module)
+                                logger.debug(f"Найдено приложение модуля: {current_module}")
+                        except ModuleNotFoundError:
+                            logger.error("Модуль не найден: %s.apps", current_module)
+                        except AttributeError:
+                            logger.error("Ошибка атрибута: %s.apps не имеет допустимого класса AppConfig", current_module)
+                    
+                    # Затем ищем вложенные приложения
+                    for app_name in os.listdir(current_dir):
+                        app_path = os.path.join(current_dir, app_name)
+                        
+                        if os.path.isdir(app_path) and app_name != '__pycache__' and not app_name.startswith('.'):
+                            # Формируем путь к вложенному модулю
+                            nested_module = f'{current_module}.{app_name}'
+                            # Рекурсивно проверяем вложенную папку
+                            find_apps_in_api(app_path, nested_module)
+                
+                # Начинаем поиск в папке api
+                find_apps_in_api(api_path, base_module)
+
+    return installed_apps
+
+def discover_modules_urls(modules_dir: str) -> List[str]:
+    """
+    Обходит директорию modules и находит URL-конфигурации в структуре <module_name>/api/.
+    
+    Аргументы:
+        modules_dir (str): Базовая директория modules.
+        
+    Возвращает:
+        list: Список URL-конфигураций для установленных приложений.
+    """
+    urlpatterns = []
+    
+    # Обходим все папки в modules_dir
+    for module_name in os.listdir(modules_dir):
+        module_path = os.path.join(modules_dir, module_name)
+        
+        # Проверяем, является ли это директорией
+        if os.path.isdir(module_path):
+            # Проверяем наличие папки api
+            api_path = os.path.join(module_path, 'api')
+            if os.path.isdir(api_path):
+                # Формируем базовый префикс для модуля
+                base_module = f'modules.{module_name}.api'
+                
+                # Рекурсивно ищем urls.py в папке api
+                def find_urls_in_api(current_dir: str, current_module: str) -> None:
+                    # Сначала проверяем urls.py на текущем уровне
+                    urls_py_path = os.path.join(current_dir, 'urls.py')
+                    if os.path.exists(urls_py_path):
+                        try:
+                            # Вычисляем маршрут на основе текущего модуля
+                            # Удаляем 'modules.' из начала и заменяем '.api' на '/'
+                            route_parts = current_module.replace('modules.', '').replace('.api', '').split('.')
+                            route = '/'.join(route_parts) + '/'
+                            
+                            logger.debug(f"Найден файл urls.py в модуле: {current_module}, маршрут: {route}")
+                            url_pattern = path(route, include(f"{current_module}.urls"))
+                            urlpatterns.append(url_pattern)
+                        except Exception as e:
+                            logger.error("Ошибка при добавлении URL для модуля %s: %s", current_module, e)
+                    
+                    # Затем ищем вложенные urls.py
+                    for item_name in os.listdir(current_dir):
+                        item_path = os.path.join(current_dir, item_name)
+                        
+                        if os.path.isdir(item_path) and item_name != '__pycache__' and not item_name.startswith('.'):
+                            # Формируем путь к вложенному модулю
+                            nested_module = f'{current_module}.{item_name}'
+                            # Рекурсивно проверяем вложенную папку
+                            find_urls_in_api(item_path, nested_module)
+                
+                # Начинаем поиск в папке api
+                find_urls_in_api(api_path, base_module)
+
+    return urlpatterns

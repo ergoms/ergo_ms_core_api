@@ -8,9 +8,9 @@ import logging
 from typing import Dict, Any, List
 from pathlib import Path
 
-from src.config.settings.base import BASE_DIR
+from src.config.settings.base import MODULES_DIR
 from src.core.utils.celery.base import CeleryModuleConfig
-from src.core.utils.auto_api.auto_config import discover_installed_apps, is_valid_module_name
+from src.core.utils.auto_api.auto_config import discover_installed_apps, discover_modules_apps, is_valid_module_name
 
 class CeleryModuleManager:
     """
@@ -26,14 +26,14 @@ class CeleryModuleManager:
     def _discover_modules(self):
         """Обнаруживает все Django приложения (модули) и загружает их конфигурации"""
         # Получаем путь к директории модулей
-        modules_dir = BASE_DIR / 'modules'
+        modules_dir = MODULES_DIR
         
         if not modules_dir.exists():
             self.logger.warning(f"Директория модулей не найдена: {modules_dir}")
             return
         
         # Используем существующий алгоритм для обнаружения Django приложений
-        installed_apps = discover_installed_apps(str(modules_dir))
+        installed_apps = discover_modules_apps(str(modules_dir))
         
         # Также ищем вложенные модули с tasks.py
         nested_modules = self._discover_nested_modules(modules_dir)
@@ -59,7 +59,7 @@ class CeleryModuleManager:
         """Загружает конфигурацию конкретного модуля"""
         try:
             # Пытаемся импортировать конфигурацию модуля
-            config_module_path = f'{app_path}.celery_config' if app_path else f'src.modules.{module_name}.celery_config'
+            config_module_path = f'{app_path}.celery_config' if app_path else f'modules.{module_name}.celery_config'
             config_module = importlib.import_module(config_module_path)
             
             # Ищем класс конфигурации в модуле
@@ -84,7 +84,7 @@ class CeleryModuleManager:
         class DefaultModuleConfig(CeleryModuleConfig):
             def get_task_routes(self) -> Dict[str, str]:
                 # Используем полный путь к модулю если он предоставлен
-                module_path = app_path if app_path else f'src.modules.{module_name}'
+                module_path = app_path if app_path else f'modules.{module_name}'
                 return {f'{module_path}.tasks.*': {'queue': module_name}}
             
             def get_task_queues(self) -> Dict[str, Dict[str, Any]]:
@@ -112,12 +112,12 @@ class CeleryModuleManager:
                     tasks_file = item / 'tasks.py'
                     if tasks_file.exists():
                         # Формируем полный путь к модулю
-                        module_path = f"{base_path}.{item.name}" if base_path else f"src.modules.{item.name}"
+                        module_path = f"{base_path}.{item.name}" if base_path else f"modules.{item.name}"
                         nested_modules.append(module_path)
                         self.logger.debug(f"Найден вложенный модуль с tasks.py: {module_path}")
                     
                     # Рекурсивно обходим поддиректории
-                    new_base = f"{base_path}.{item.name}" if base_path else f"src.modules.{item.name}"
+                    new_base = f"{base_path}.{item.name}" if base_path else f"modules.{item.name}"
                     find_modules_with_tasks(item, new_base)
         
         find_modules_with_tasks(modules_dir)

@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any
 from pathlib import Path
 
-from src.config.settings.static import LOGS_ROOT
+from src.config.settings.base import LOGS_ROOT
 
 class CeleryBeatModuleConfig(ABC):
     """

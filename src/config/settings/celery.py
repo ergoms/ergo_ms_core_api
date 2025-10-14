@@ -13,8 +13,10 @@
     CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: Флаг повторного подключения к брокеру при запуске
 """
 
-CELERY_BROKER_URL = 'sqla+sqlite:///celery/celerydb.sqlite'
-CELERY_RESULT_BACKEND = 'db+sqlite:///celery/results.sqlite'
+from core.api.src.config.settings.base import VIRTUAL_ENV_DIR
+
+CELERY_BROKER_URL = f'sqla+sqlite:///{VIRTUAL_ENV_DIR}/celery/celerydb.sqlite'
+CELERY_RESULT_BACKEND = f'db+sqlite:///{VIRTUAL_ENV_DIR}/celery/results.sqlite'
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'

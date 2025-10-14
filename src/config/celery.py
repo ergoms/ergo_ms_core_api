@@ -10,6 +10,7 @@
 """
 
 import os
+from pathlib import Path
 
 from celery import Celery
 
@@ -17,6 +18,7 @@ from django.conf import settings
 
 from src.core.utils.auto_api.auto_config import get_env_deploy_type
 from src.core.utils.celery.manager import CeleryModuleManager
+from src.config.settings.base import LOGS_ROOT, VIRTUAL_ENV_DIR
 
 # Определение типа развертывания и настройка переменной окружения Django
 deploy_type = get_env_deploy_type()
@@ -33,19 +35,17 @@ module_manager = CeleryModuleManager()
 # Настройка логирования Celery
 def setup_celery_logging():
     """Настраивает основное логирование для Celery"""
-    import os
     import logging
     from logging.handlers import RotatingFileHandler
     
     # Создаем директорию для логов если её нет
-    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
-    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(LOGS_ROOT, exist_ok=True)
     
     # Пути к файлам логов
-    celery_log_file = os.path.join(log_dir, 'celery.log')
-    celery_worker_log_file = os.path.join(log_dir, 'celery_worker.log')
-    celery_beat_log_file = os.path.join(log_dir, 'celery_beat.log')
-    celery_tasks_log_file = os.path.join(log_dir, 'celery_tasks.log')
+    celery_log_file = os.path.join(LOGS_ROOT, 'celery.log')
+    celery_worker_log_file = os.path.join(LOGS_ROOT, 'celery_worker.log')
+    celery_beat_log_file = os.path.join(LOGS_ROOT, 'celery_beat.log')
+    celery_tasks_log_file = os.path.join(LOGS_ROOT, 'celery_tasks.log')
     
     # Настройка форматтера для логов
     log_formatter = logging.Formatter(
@@ -115,7 +115,7 @@ def setup_celery_logging():
     broker_logger.setLevel(logging.INFO)
     
     broker_file_handler = RotatingFileHandler(
-        os.path.join(log_dir, 'celery_broker.log'),
+        os.path.join(LOGS_ROOT, 'celery_broker.log'),
         maxBytes=5*1024*1024,  # 5MB
         backupCount=3,
         encoding='utf-8'
@@ -138,9 +138,9 @@ setup_celery_logging()
 
 # Настройка пути к файлу состояния планировщика и периодических задач
 celery_app.conf.update(
-    beat_schedule_filename="celery/celerybeat-schedule",
-    broker_url='sqla+sqlite:///celerydb.sqlite',
-    result_backend='db+sqlite:///results.sqlite',
+    beat_schedule_filename=str(VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db"),
+    broker_url=f'sqla+sqlite:///{VIRTUAL_ENV_DIR}/celery/celerydb.sqlite',
+    result_backend=f'db+sqlite:///{VIRTUAL_ENV_DIR}/celery/results.sqlite',
     
     # Маршруты задач из всех модулей
     task_routes=module_manager.get_all_task_routes(),

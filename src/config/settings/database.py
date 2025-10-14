@@ -19,8 +19,7 @@ from django.core.exceptions import ImproperlyConfigured
 import logging.config
 
 from src.config.settings.logger import LOGGING
-from src.config.settings.static import RESOURCES_DIR
-from src.config.settings.base import SYSTEM_DIR
+from src.config.settings.base import SYSTEM_DIR, RESOURCES_DIR
 
 # Явная инициализация логирования
 logging.config.dictConfig(LOGGING)

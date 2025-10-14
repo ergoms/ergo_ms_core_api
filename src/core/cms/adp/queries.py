@@ -1,5 +1,3 @@
-from src.modules.crm.models import Section,Task
-
 def get_users(user_id: int):
     return tuple(
         [
@@ -17,6 +15,7 @@ def get_users(user_id: int):
             tuple([user_id]),
         ]
     )
+
 def get_users_count():
     return (
       """
@@ -27,6 +26,7 @@ def get_users_count():
         """,
         tuple(),
     )
+
 def get_students():
     return tuple ([
             """

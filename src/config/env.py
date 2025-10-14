@@ -27,7 +27,7 @@ import environ
 import os
 import logging
 
-from src.config.settings.static import ENV_FILE_PATH
+from src.config.settings.base import ENV_FILE_PATH
 from src.core.utils.environment.methods import collect_env_files_from_configs
 
 logger = logging.getLogger(__name__)

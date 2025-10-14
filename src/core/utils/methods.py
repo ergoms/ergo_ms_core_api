@@ -66,7 +66,7 @@ def convert_snake_to_camel(snake_text: str) -> str:
     # Разделяем строку по символу подчеркивания, капитализируем каждую часть и объединяем их
     return ''.join(word.capitalize() for word in snake_text.split('_'))
 
-def convert_path_to_dot_notation(path: str) -> str:
+def convert_path_to_dot_notation(path) -> str:
     """
     Преобразует путь из формата Path в формат с точками.
 
@@ -74,10 +74,12 @@ def convert_path_to_dot_notation(path: str) -> str:
     Например: 'src/core' -> 'src.core'
 
     Аргументы:
-        path (str): Путь для преобразования.
+        path: Путь для преобразования (str или Path).
 
     Возвращает:
         str: Путь в формате с точками.
     """
+    # Преобразуем в строку, если это объект Path
+    path_str = str(path)
     # Заменяем слэши на точки и убираем лишние точки
-    return path.replace('/', '.').replace('\\', '.').strip('.')
+    return path_str.replace('/', '.').replace('\\', '.').strip('.')
