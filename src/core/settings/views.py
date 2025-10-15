@@ -4,18 +4,7 @@ from rest_framework.response import Response
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from rest_framework_simplejwt.tokens import RefreshToken
-from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
 
-from src.core.utils.database.base import SqlAlchemyManager
-from src.core.utils.database.dbconfig import DBConfig
-from src.core.utils.database.main import OrderedDictQueryExecutor
-from src.core.utils.management.commands.add_module import Command
-
-from django.contrib.auth import authenticate
-from django.utils.crypto import get_random_string
-from rest_framework import generics
 from .models import Category
 from .serializers import CategorySerializer
 from .models import UserAvatar
@@ -31,9 +20,6 @@ from .serializers import AuditLogSerializer
 from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.permissions import IsAdminUser
 
-from django.contrib.auth.models import User
-
-from rest_framework.request import Request
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .models import *
