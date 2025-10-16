@@ -91,7 +91,7 @@ class CMSUserProfileSerializer(ModelSerializer):
     class Meta:
         model = UserProfile
         fields = [
-            'avatar', 'phone', 'website', 'bio', 'country', 'city', 
+            'avatar', 'middle_name', 'phone', 'website', 'bio', 'country', 'city', 
             'language', 'timezone', 'email_notifications', 'push_notifications', 
             'sms_notifications', 'profile_visibility', 'two_factor_enabled',
             'full_name', 'created_at', 'updated_at'
@@ -114,7 +114,7 @@ class UpdateUserProfileSerializer(ModelSerializer):
     class Meta:
         model = UserProfile
         fields = [
-            'first_name', 'last_name', 'email', 'phone', 'website', 'bio', 
+            'first_name', 'last_name', 'middle_name', 'email', 'phone', 'website', 'bio', 
             'country', 'city', 'language', 'timezone', 'email_notifications', 
             'push_notifications', 'sms_notifications', 'profile_visibility'
         ]
@@ -134,6 +134,8 @@ class UpdateUserProfileSerializer(ModelSerializer):
         
         # Обновляем данные профиля
         for attr, value in validated_data.items():
+            if attr == 'middle_name' and value and value.strip() == '':
+                value = ''
             setattr(instance, attr, value)
         instance.save()
         

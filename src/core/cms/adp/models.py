@@ -12,6 +12,7 @@ class EmailConfirmationCode(models.Model):
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='adp_profile')
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    middle_name = models.CharField(max_length=150, blank=True, null=True, verbose_name='Отчество')
     phone = models.CharField(max_length=20, blank=True, null=True)
     website = models.URLField(blank=True, null=True)
     bio = models.TextField(max_length=500, blank=True, null=True)
@@ -47,7 +48,9 @@ class UserProfile(models.Model):
     
     @property
     def full_name(self):
-        return f"{self.user.first_name} {self.user.last_name}".strip() or self.user.username
+        name_parts = [self.user.first_name, self.middle_name, self.user.last_name]
+        full_name = " ".join(part for part in name_parts if part and part.strip())
+        return full_name or self.user.username
 
 class UserDevice(models.Model):
     DEVICE_TYPES = [
