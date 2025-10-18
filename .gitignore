@@ -7,6 +7,3 @@ env/
 venv/
 
 __pycache__/
-
-static/*
-!static/.gitkeep

@@ -44,7 +44,7 @@ PACKAGES_PATH = VIRTUAL_ENV_DIR / 'packages'
 STATIC_URL = '/static/'
 
 # Корневая директория для статических файлов.
-STATIC_ROOT = os.path.join(API_DIR, 'static')
+STATIC_ROOT = VIRTUAL_ENV_DIR / 'static_api'
 
 # URL для доступа к медиа файлам.
 MEDIA_URL = '/media/'
