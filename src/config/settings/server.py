@@ -3,10 +3,12 @@
 Он включает настройки имени процесса сервера, хоста и порта.
 """
 
+import platform
+
 from src.config.env import env
 
-# Имя процесса сервера.
-SERVER_PROCESS_NAME = 'daphne.exe'
+# Имя процесса сервера с учетом операционной системы.
+SERVER_PROCESS_NAME = 'daphne.exe' if platform.system() == 'Windows' else 'daphne'
 
 # Хост сервера, полученный из переменной окружения.
 SERVER_HOST = env.str('API_HOST', default='localhost')
