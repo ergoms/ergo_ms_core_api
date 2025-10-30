@@ -34,7 +34,7 @@ try:
     OLLAMA_AVAILABLE = True
 except ImportError:
     OLLAMA_AVAILABLE = False
-    print("⚠️ llama_index.llms.ollama не установлен. Установите: pip install llama-index-llms-ollama")
+    print("⚠️ llama_index.llms.ollama не установлен. Установите: llama-index-llms-ollama")
 
 
 # -----------------------------
