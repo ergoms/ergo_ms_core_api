@@ -114,22 +114,50 @@ class BIQueryView(APIView):
                     yield f"data: {json.dumps({'type': 'error', 'message': 'Ошибка загрузки файла'})}\n\n"
                     return
                 
-                # Callback для streaming событий
+                # Callback для streaming событий - отправляем сразу!
                 def stream_callback(event):
+                    # Отправляем событие немедленно
                     data = json.dumps(event, ensure_ascii=False)
-                    return f"data: {data}\n\n"
+                    # ВАЖНО: не return, а используем nonlocal для доступа к yield
+                    streaming_events.append(event)
                 
-                # Переменная для накопления streaming событий
-                events = []
-                def collect_events(event):
-                    events.append(event)
+                # Список для временного хранения (используется в callback)
+                streaming_events = []
                 
                 # Задаем вопрос с streaming
-                result = service.ask(question, want_commentary=want_commentary, stream_callback=collect_events)
+                # Используем генератор вместо накопления
+                import threading
+                result_container = {}
+                exception_container = {}
                 
-                # Отправляем все накопленные события
-                for event in events:
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                def run_ask():
+                    try:
+                        def immediate_callback(event):
+                            streaming_events.append(event)
+                        result_container['result'] = service.ask(question, want_commentary=want_commentary, stream_callback=immediate_callback)
+                    except Exception as e:
+                        exception_container['error'] = e
+                
+                # Запускаем в отдельном потоке
+                ask_thread = threading.Thread(target=run_ask)
+                ask_thread.start()
+                
+                # Отправляем события по мере их поступления
+                while ask_thread.is_alive() or streaming_events:
+                    while streaming_events:
+                        event = streaming_events.pop(0)
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    # Небольшая пауза чтобы не спамить
+                    import time
+                    time.sleep(0.01)
+                
+                ask_thread.join()
+                
+                # Проверяем ошибки
+                if 'error' in exception_container:
+                    raise exception_container['error']
+                
+                result = result_container.get('result', {})
                 
                 # Отправляем финальные данные
                 if result['success']:

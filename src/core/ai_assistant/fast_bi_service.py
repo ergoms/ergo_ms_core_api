@@ -26,9 +26,9 @@ except ImportError:
 # Константы
 # -----------------------------
 DEFAULT_MODEL = "mistral7b-tuned"
-MAX_OUTPUT_TOKENS = 256
+SQL_GENERATION_TOKENS = 128  # Лимит токенов для генерации SQL
+COMMENTARY_TOKENS = 80  # Лимит токенов для комментария (уменьшено с 192)
 STATS_TOP_K = 10
-COMMENTARY_TOKENS = 192
 SQL_TIMEOUT_SEC = 30
 
 
@@ -76,7 +76,6 @@ class FastBIService:
         self,
         model: str = DEFAULT_MODEL,
         keep_alive: str = "5m",
-        num_predict: int = MAX_OUTPUT_TOKENS,
     ):
         if not OLLAMA_AVAILABLE:
             raise RuntimeError("llama_index.llms.ollama не установлен")
@@ -92,7 +91,7 @@ class FastBIService:
                 model=model,
                 request_timeout=180.0,
                 keep_alive=keep_alive,
-                additional_kwargs={"num_predict": num_predict},
+                # Не задаем num_predict здесь - он будет задаваться для каждого запроса отдельно
             )
             print(f"✅ LLM инициализирован")
         except Exception as e:
@@ -191,6 +190,10 @@ class FastBIService:
                     LIMIT {STATS_TOP_K}
                     """
                 ).fetchdf()
+                # Конвертируем datetime в строки, если необходимо
+                for col in res.columns:
+                    if pd.api.types.is_datetime64_any_dtype(res[col]):
+                        res[col] = res[col].astype(str)
                 cat_summary[c] = res.to_dict(orient="records")
             except:
                 cat_summary[c] = []
@@ -232,20 +235,32 @@ class FastBIService:
         """Генерирует SQL через LLM с поддержкой streaming."""
         prompt = self._build_sql_prompt(question)
         
+        print(f"📝 Длина промпта для SQL: {len(prompt)} символов")
+        print(f"🎯 Лимит токенов: {SQL_GENERATION_TOKENS}")
+        
         start_time = time.time()
         
         if stream_callback:
             # Streaming режим
             full_response = ""
-            for chunk in self.llm.stream_complete(prompt):
+            token_count = 0
+            for chunk in self.llm.stream_complete(
+                prompt,
+                additional_kwargs={"num_predict": SQL_GENERATION_TOKENS}
+            ):
                 text = chunk.delta
                 full_response += text
+                token_count += 1
                 stream_callback({'type': 'sql_generation', 'text': text})
             
             resp_text = full_response
+            print(f"📊 Сгенерировано токенов: ~{token_count}")
         else:
             # Обычный режим
-            resp = self.llm.complete(prompt)
+            resp = self.llm.complete(
+                prompt,
+                additional_kwargs={"num_predict": SQL_GENERATION_TOKENS}
+            )
             resp_text = resp.text
         
         elapsed = time.time() - start_time
@@ -273,32 +288,44 @@ class FastBIService:
     def _commentary(self, question: str, df: pd.DataFrame, stream_callback=None) -> str:
         """Генерирует короткий комментарий по результатам с поддержкой streaming."""
         sample = _shorten(df, 30)
+        
+        # Конвертируем datetime колонки в строки для JSON
+        sample_copy = sample.copy()
+        for col in sample_copy.columns:
+            if pd.api.types.is_datetime64_any_dtype(sample_copy[col]):
+                sample_copy[col] = sample_copy[col].astype(str)
+        
         payload = {
             "question": question,
-            "result_preview": sample.to_dict(orient="records"),
+            "result_preview": sample_copy.to_dict(orient="records"),
             "rows_returned": len(df),
         }
         
         prompt = (
-            "Ты аналитик BI. Дай КОРОТКИЙ вывод по результату (2-4 предложения): тренды, аномалии, рекомендации. "
-            "Не повторяй таблицу. Учти, что это лишь превью.\n"
-            f"ДАНО (JSON):\n{json.dumps(payload, ensure_ascii=False, default=str)}"
+            "Дай КРАТКИЙ вывод (макс 2-3 предложения) по данным. Только ключевые находки.\n"
+            f"Данные:\n{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
+        
+        print(f"📝 Длина промпта для комментария: {len(prompt)} символов")
+        print(f"🎯 Лимит токенов: {COMMENTARY_TOKENS}")
         
         start_time = time.time()
         
         if stream_callback:
             # Streaming режим
             full_response = ""
+            token_count = 0
             for chunk in self.llm.stream_complete(
                 prompt,
                 additional_kwargs={"num_predict": COMMENTARY_TOKENS}
             ):
                 text = chunk.delta
                 full_response += text
+                token_count += 1
                 stream_callback({'type': 'commentary', 'text': text})
             
             resp_text = full_response.strip()
+            print(f"📊 Сгенерировано токенов: ~{token_count}")
         else:
             # Обычный режим
             resp = self.llm.complete(
@@ -358,7 +385,13 @@ class FastBIService:
             print(f"⏱️ Общее время: {total_time:.2f}с")
             
             # Конвертируем DataFrame в JSON-сериализуемый формат
-            data_dict = df.to_dict(orient="records")
+            # Преобразуем datetime колонки в строки для JSON сериализации
+            df_copy = df.copy()
+            for col in df_copy.columns:
+                if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
+                    df_copy[col] = df_copy[col].astype(str)
+            
+            data_dict = df_copy.to_dict(orient="records")
             
             return {
                 "success": True,
