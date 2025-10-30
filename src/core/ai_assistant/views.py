@@ -6,7 +6,7 @@ from django.http import StreamingHttpResponse
 import json
 
 from src.core.bi_analysis.bi_datasets.models import FileUpload
-from .fast_bi_service import FastBIService, OLLAMA_AVAILABLE
+from .fast_bi_service import FastBIService, OLLAMA_AVAILABLE, OllamaLLMManager
 
 
 class UserFilesListView(APIView):
@@ -248,14 +248,22 @@ class OllamaStatusView(APIView):
             })
         
         try:
-            from llama_index.llms.ollama import Ollama
-            # Пробуем создать клиент
-            llm = Ollama(model="mistral7b-tuned", request_timeout=5.0)
+            # Используем Singleton - модель уже загружена или будет загружена один раз
+            llm_manager = OllamaLLMManager()
+            llm = llm_manager.get_llm(model="mistral7b-tuned", keep_alive="5m")
             
-            return Response({
-                'available': True,
-                'message': 'Ollama доступен'
-            })
+            # Проверяем, что модель доступна
+            if llm:
+                return Response({
+                    'available': True,
+                    'message': 'Ollama доступен',
+                    'model_loaded': llm_manager._model_name
+                })
+            else:
+                return Response({
+                    'available': False,
+                    'message': 'Не удалось инициализировать LLM'
+                })
         except Exception as e:
             return Response({
                 'available': False,
