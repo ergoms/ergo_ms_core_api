@@ -24,9 +24,31 @@ from src.config.settings.base import LOGS_ROOT, VIRTUAL_ENV_DIR
 deploy_type = get_env_deploy_type()
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
 
+# Определяем, запускается ли beat (проверяем аргументы командной строки)
+import sys
+import logging
+logger = logging.getLogger('config.celery')
+
+is_beat = 'beat' in sys.argv or 'celery beat' in ' '.join(sys.argv)
+
 # Инициализация Celery приложения
 celery_app = Celery('src')
-celery_app.config_from_object('django.conf:settings', namespace='CELERY')
+
+# Если запускается beat, используем настройки beat, иначе worker
+if is_beat:
+    logger.info("Celery: Запускается BEAT, используются настройки CELERY_BEAT_*")
+    # Для beat загружаем настройки с префиксом CELERY_BEAT_
+    celery_app.config_from_object('django.conf:settings', namespace='CELERY_BEAT')
+    # Но также добавляем общие настройки CELERY_
+    from django.conf import settings as django_settings
+    for key in dir(django_settings):
+        if key.startswith('CELERY_') and not key.startswith('CELERY_BEAT_'):
+            celery_app.conf[key.replace('CELERY_', '').lower()] = getattr(django_settings, key)
+else:
+    logger.info("Celery: Запускается WORKER, используются настройки CELERY_*")
+    # Для worker используем стандартные CELERY_ настройки
+    celery_app.config_from_object('django.conf:settings', namespace='CELERY')
+
 celery_app.autodiscover_tasks(lambda: settings.INSTALLED_APPS)
 
 # Инициализация менеджера модулей
@@ -137,10 +159,33 @@ def setup_celery_logging():
 setup_celery_logging()
 
 # Настройка пути к файлу состояния планировщика и периодических задач
+# Broker URL и Result Backend берутся из config/settings/celery.py и celery_beat.py автоматически
+
+# Импортируем настройки Beat для scheduler
+try:
+    from src.config.settings.celery_beat import (
+        CELERY_BEAT_SCHEDULER,
+        CELERY_BEAT_SCHEDULER_DB_ALIAS,
+        CELERY_BEAT_SCHEDULE_FILENAME,
+    )
+except ImportError:
+    CELERY_BEAT_SCHEDULER = None
+    CELERY_BEAT_SCHEDULER_DB_ALIAS = None
+    CELERY_BEAT_SCHEDULE_FILENAME = str(VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db")
+
+# Формируем конфигурацию Beat scheduler
+beat_scheduler_config = {}
+if CELERY_BEAT_SCHEDULER:
+    # Используем django-celery-beat
+    beat_scheduler_config['beat_scheduler'] = CELERY_BEAT_SCHEDULER
+    if CELERY_BEAT_SCHEDULER_DB_ALIAS:
+        beat_scheduler_config['beat_scheduler_db_alias'] = CELERY_BEAT_SCHEDULER_DB_ALIAS
+else:
+    # Используем локальный файл
+    beat_scheduler_config['beat_schedule_filename'] = CELERY_BEAT_SCHEDULE_FILENAME
+
 celery_app.conf.update(
-    beat_schedule_filename=str(VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db"),
-    broker_url=f'sqla+sqlite:///{VIRTUAL_ENV_DIR}/celery/celerydb.sqlite',
-    result_backend=f'db+sqlite:///{VIRTUAL_ENV_DIR}/celery/results.sqlite',
+    **beat_scheduler_config,
     
     # Маршруты задач из всех модулей
     task_routes=module_manager.get_all_task_routes(),
