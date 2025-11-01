@@ -1,6 +1,7 @@
 from django.db import connection
 from psycopg2 import sql
 from decimal import Decimal
+from src.core.bi_analysis.services.services import build_dataset_query
 
 PG_NUMERIC = {
     'smallint', 'integer', 'bigint',
@@ -38,19 +39,24 @@ def _probe_type(table: str, column: str) -> str:
 
 def get_rows_for_chart(dataset, chart_fields):
     """
-    :param dataset: объект DataSet (или строка с именем итоговой таблицы)
+    :param dataset: объект DataSet
     :param chart_fields: список объектов DataSetField (или dict с полями name, aggregation, expression/source_column)
     :return: список словарей (одна строка — одна агрегированная группа)
     """
-    # Получаем имя итоговой таблицы
-    table_name = getattr(dataset, 'table_name', None) or getattr(dataset, 'table_ref', None) or dataset
-    if not isinstance(table_name, str):
-        raise ValueError('dataset должен быть объектом с table_name/table_ref или строкой')
+    # Проверяем, что dataset - это объект Dataset с метаданными
+    if not hasattr(dataset, 'tables'):
+        # Fallback для старых датасетов, которые могут использовать table_ref
+        table_name = getattr(dataset, 'table_name', None) or getattr(dataset, 'table_ref', None) or dataset
+        if isinstance(table_name, str):
+            return _get_rows_for_chart_legacy(dataset, chart_fields, table_name)
+        else:
+            raise ValueError('dataset должен быть объектом Dataset или строкой с именем таблицы')
 
     # --------- ДОПОЛНЯЕМ aggregation из DataSetField, если не указано ---------
     ds_fields_map = {}
     if hasattr(dataset, 'fields'):
         ds_fields_map = {f.name: f for f in dataset.fields.all()}
+    
     enriched_fields = []
     for field in chart_fields:
         name = getattr(field, 'name', None) or field.get('name')
@@ -62,7 +68,9 @@ def get_rows_for_chart(dataset, chart_fields):
         if not aggregation and name in ds_fields_map:
             aggregation = getattr(ds_fields_map[name], 'aggregation', None)
         # Если всё ещё нет, то ставим 'none'
-        new_field = dict(field)
+        new_field = dict(field) if not isinstance(field, dict) else field.copy()
+        if not isinstance(new_field, dict):
+            new_field = {'name': name}
         new_field['aggregation'] = aggregation or 'none'
         enriched_fields.append(new_field)
     chart_fields = enriched_fields
@@ -71,18 +79,140 @@ def get_rows_for_chart(dataset, chart_fields):
     select_exprs = []
     group_by_exprs = []
 
-    def get_agg_sql(agg, col):
+    def get_agg_sql(agg, col_expr):
+        """col_expr - это уже SQL выражение для колонки"""
         if agg is None or agg.lower() == 'none':
-            return sql.Identifier(col), False
+            return col_expr, False
 
         agg_l = agg.lower()
 
         if agg_l == 'count':
-            return sql.SQL('COUNT({col})').format(col=sql.Identifier(col)), True
+            return sql.SQL('COUNT({})').format(col_expr), True
 
         elif agg_l == 'ucount':
-            return sql.SQL('COUNT(DISTINCT {col})').format(col=sql.Identifier(col)), True
+            return sql.SQL('COUNT(DISTINCT {})').format(col_expr), True
 
+        elif agg_l == 'sum':
+            return sql.SQL(
+                "SUM( NULLIF( "
+                "       regexp_replace( "
+                "           replace({}::text, ',', '.'), "
+                "           '[^0-9\\.-]', '', 'g' "
+                "       ), "
+                "       '' "
+                "   )::numeric )"
+            ).format(col_expr), True
+
+        elif agg_l == 'avg':
+            return sql.SQL('AVG({})').format(col_expr), True
+
+        elif agg_l == 'max':
+            return sql.SQL('MAX({})').format(col_expr), True
+
+        elif agg_l == 'min':
+            return sql.SQL('MIN({})').format(col_expr), True
+
+        else:
+            return col_expr, False
+
+    # Получаем маппинг полей датасета для получения правильных выражений
+    ds_fields_map_full = {f.name: f for f in dataset.fields.all()}
+    
+    # Получаем базовый запрос датасета
+    base_query = build_dataset_query(dataset)
+    
+    # Строим SELECT с агрегациями для chart_fields
+    for field in chart_fields:
+        output_name = field.get('name')
+        if not output_name:
+            continue
+        
+        # Получаем исходное поле датасета
+        ds_field = ds_fields_map_full.get(output_name)
+        
+        # Определяем выражение для колонки
+        if ds_field and ds_field.expression:
+            # Используем expression из поля датасета
+            col_expr = sql.SQL(ds_field.expression)
+        else:
+            # Используем имя поля напрямую (поле уже должно быть в SELECT базового запроса)
+            col_expr = sql.Identifier(output_name)
+        
+        # Получаем агрегацию
+        aggregation = field.get('aggregation', 'none')
+        
+        # Применяем агрегацию
+        agg_expr, is_agg = get_agg_sql(aggregation, col_expr)
+        
+        select_exprs.append(
+            sql.SQL('{} AS {}').format(
+                agg_expr,
+                sql.Identifier(output_name)
+            )
+        )
+        
+        if not is_agg:
+            group_by_exprs.append(col_expr)
+
+    # Строим итоговый запрос: SELECT с агрегациями FROM (базовый запрос)
+    subquery = sql.SQL('({}) AS dataset_query').format(base_query)
+    
+    final_query_parts = [
+        sql.SQL('SELECT {}').format(sql.SQL(', ').join(select_exprs)),
+        sql.SQL('FROM {}').format(subquery)
+    ]
+    
+    if group_by_exprs:
+        final_query_parts.append(
+            sql.SQL('GROUP BY {}').format(sql.SQL(', ').join(group_by_exprs))
+        )
+    
+    final_query = sql.SQL(' ').join(final_query_parts)
+
+    with connection.cursor() as cursor:
+        cursor.execute(final_query)
+        columns = [col[0] for col in cursor.description]
+        result = [
+            dict(zip(columns, row))
+            for row in cursor.fetchall()
+        ]
+
+    return result
+
+
+def _get_rows_for_chart_legacy(dataset, chart_fields, table_name):
+    """Старая реализация для обратной совместимости с table_ref"""
+    ds_fields_map = {}
+    if hasattr(dataset, 'fields'):
+        ds_fields_map = {f.name: f for f in dataset.fields.all()}
+    
+    enriched_fields = []
+    for field in chart_fields:
+        name = getattr(field, 'name', None) or field.get('name')
+        aggregation = (
+            getattr(field, 'aggregation', None) or
+            field.get('aggregation')
+        )
+        if not aggregation and name in ds_fields_map:
+            aggregation = getattr(ds_fields_map[name], 'aggregation', None)
+        new_field = dict(field) if not isinstance(field, dict) else field.copy()
+        if not isinstance(new_field, dict):
+            new_field = {'name': name}
+        new_field['aggregation'] = aggregation or 'none'
+        enriched_fields.append(new_field)
+    chart_fields = enriched_fields
+
+    select_exprs = []
+    group_by_exprs = []
+
+    def get_agg_sql(agg, col):
+        if agg is None or agg.lower() == 'none':
+            return sql.Identifier(col), False
+        agg_l = agg.lower()
+        if agg_l == 'count':
+            return sql.SQL('COUNT({col})').format(col=sql.Identifier(col)), True
+        elif agg_l == 'ucount':
+            return sql.SQL('COUNT(DISTINCT {col})').format(col=sql.Identifier(col)), True
         elif agg_l == 'sum':
             return sql.SQL(
                 "SUM( NULLIF( "
@@ -93,33 +223,24 @@ def get_rows_for_chart(dataset, chart_fields):
                 "       '' "
                 "   )::numeric )"
             ).format(col=sql.Identifier(col)), True
-
         elif agg_l == 'avg':
             return sql.SQL('AVG({col})').format(col=sql.Identifier(col)), True
-
         else:
             return sql.Identifier(col), False
 
     for field in chart_fields:
-        output_name = getattr(field, 'name', None) or field.get('name')
+        output_name = field.get('name')
         column = (
-            getattr(field, 'expression', None)
-            or getattr(field, 'source_column', None)
-            or field.get('expression')
-            or field.get('source_column')
-            or output_name
+            field.get('expression') or
+            field.get('source_column') or
+            output_name
         )
-        aggregation = getattr(field, 'aggregation', None) or field.get('aggregation', 'none')
-
+        aggregation = field.get('aggregation', 'none')
         agg_expr, is_agg = get_agg_sql(aggregation, column)
-        expr = sql.SQL('{} AS {}').format(
-            agg_expr,
-            sql.Identifier(output_name)
-        )
+        expr = sql.SQL('{} AS {}').format(agg_expr, sql.Identifier(output_name))
         select_exprs.append(expr)
         if not is_agg:
             group_by_exprs.append(sql.Identifier(column))
-        
 
     query = sql.SQL('SELECT {} FROM {}').format(
         sql.SQL(', ').join(select_exprs),
@@ -143,9 +264,6 @@ def get_rows_for_chart(dataset, chart_fields):
     with connection.cursor() as cursor:
         cursor.execute(query)
         columns = [col[0] for col in cursor.description]
-        result = [
-            dict(zip(columns, row))
-            for row in cursor.fetchall()
-        ]
+        result = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     return result
