@@ -129,6 +129,16 @@ def get_rows_for_chart(dataset, chart_fields):
         query += sql.SQL(' GROUP BY {}').format(
             sql.SQL(', ').join(group_by_exprs)
         )
+    
+    # Добавляем сортировку по первому полю без агрегации (обычно это ось X)
+    # Это важно для анализа графиков AI-ассистентом
+    if group_by_exprs:
+        # Сортируем по первому полю в GROUP BY (обычно ось X)
+        query += sql.SQL(' ORDER BY {}').format(group_by_exprs[0])
+    elif chart_fields:
+        # Если нет группировки, сортируем по первому полю
+        first_field_name = getattr(chart_fields[0], 'name', None) or chart_fields[0].get('name')
+        query += sql.SQL(' ORDER BY {}').format(sql.Identifier(first_field_name))
 
     with connection.cursor() as cursor:
         cursor.execute(query)

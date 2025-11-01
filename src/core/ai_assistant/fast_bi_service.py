@@ -34,7 +34,6 @@ try:
     OLLAMA_AVAILABLE = True
 except ImportError:
     OLLAMA_AVAILABLE = False
-    print("⚠️ llama_index.llms.ollama не установлен. Установите: llama-index-llms-ollama")
 
 
 # -----------------------------
@@ -64,11 +63,9 @@ class OllamaLLMManager:
         
         # Если LLM уже инициализирован для этой модели - возвращаем его
         if self._llm is not None and self._model_name == model:
-            print(f"♻️ Используем уже загруженную модель ({model})")
             return self._llm
         
         # Инициализируем новый LLM
-        print(f"🤖 Инициализирую LLM ({model})...")
         if not OLLAMA_AVAILABLE:
             raise RuntimeError("llama_index.llms.ollama не установлен")
         
@@ -80,10 +77,8 @@ class OllamaLLMManager:
                 # Не задаем num_predict здесь - он будет задаваться для каждого запроса отдельно
             )
             self._model_name = model
-            print(f"✅ LLM инициализирован и будет переиспользоваться")
             return self._llm
         except Exception as e:
-            print(f"❌ Ошибка инициализации LLM: {e}")
             raise
 
 
@@ -190,7 +185,6 @@ def _call_ollama_direct(
                 except json.JSONDecodeError:
                     continue
         
-        print(f"📊 Сгенерировано токенов: ~{token_count}")
         return full_response
     else:
         # Обычный режим
@@ -351,11 +345,26 @@ class FastBIService:
         extra = f"-- schema: {schema}\n-- table: {self.table_name}\n"
         
         prompt = extra + (
-            f"Ты data-engineer. Напиши ОДИН DuckDB SQL-запрос (только SELECT) по таблице '{self.table_name}'. "
+            f"Ты data-engineer. Напиши ОДИН ПРОСТОЙ DuckDB SQL-запрос (только SELECT) по таблице '{self.table_name}'. "
             "Учитывай типы столбцов. НЕЛЬЗЯ делать DDL/DML. НЕЛЬЗЯ читать внешние файлы. "
+            "\n"
+            "ВАЖНЫЕ ПРАВИЛА ДЛЯ SQL:\n"
+            "1. НЕ используй оконные функции (RANK, DENSE_RANK, ROW_NUMBER, PERCENTILE_CONT, etc.)\n"
+            "2. НЕ используй FILTER в COUNT или других агрегатных функциях\n"
+            "3. НЕ используй агрегатные функции в GROUP BY\n"
+            "4. НЕ используй сложные подзапросы с агрегациями\n"
+            "5. Используй только базовые агрегатные функции: AVG(), MIN(), MAX(), COUNT(), SUM()\n"
+            "6. Если нужна статистика - сделай простой SELECT с агрегациями БЕЗ GROUP BY или с простым GROUP BY по колонке\n"
+            "7. Для показа данных используй простой SELECT * FROM table или SELECT columns FROM table\n"
+            "8. Если вопрос сложный - сделай простой SELECT всех данных, анализ будет в комментарии\n"
+            "9. НЕ добавляй LIMIT если в вопросе явно не просят ограничить количество строк\n"
+            "10. Если просят показать ВСЕ данные - не используй LIMIT вообще\n"
+            "\n"
             f"СХЕМА И СВОДКИ (JSON):\n{json.dumps(meta_min, ensure_ascii=False)}\n\n"
             f"ВОПРОС ПОЛЬЗОВАТЕЛЯ:\n{question}\n\n"
-            f"Верни ТОЛЬКО SQL, без пояснений. Обязательно используй только таблицу {self.table_name}."
+            f"Верни ТОЛЬКО SQL, без пояснений. Обязательно используй только таблицу {self.table_name}. "
+            "Помни: ПРОСТОЙ SQL запрос, без сложных конструкций! "
+            "Если нужно показать все данные - НЕ используй LIMIT!"
         )
         return prompt
     
@@ -366,15 +375,11 @@ class FastBIService:
         """
         prompt = self._build_sql_prompt(question)
         
-        print(f"📝 Длина промпта для SQL: {len(prompt)} символов")
-        print(f"🎯 Лимит токенов: {SQL_GENERATION_TOKENS}")
-        
         start_time = time.time()
         
         # Пытаемся использовать прямой API Ollama (быстрее в 10+ раз)
         if USE_DIRECT_API:
             try:
-                print(f"⚡ Используем прямой API Ollama")
                 
                 if stream_callback:
                     # Streaming режим с callback
@@ -400,18 +405,16 @@ class FastBIService:
                     )
                 
                 elapsed = time.time() - start_time
-                print(f"⚡ SQL генерация (прямой API): {elapsed:.2f}с")
                 
                 sql_raw = _extract_sql_from_text(resp_text)
                 sql = _only_select(sql_raw)
                 return sql
                 
             except Exception as e:
-                print(f"⚠️ Прямой API не сработал ({e}), откат на llama_index...")
                 # Откат на llama_index ниже
+                pass
         
         # Fallback: используем llama_index (медленнее, но надежнее)
-        print(f"🐢 Используем llama_index (медленнее)")
         if stream_callback:
             # Streaming режим
             full_response = ""
@@ -426,7 +429,6 @@ class FastBIService:
                 stream_callback({'type': 'sql_generation', 'text': text})
             
             resp_text = full_response
-            print(f"📊 Сгенерировано токенов: ~{token_count}")
         else:
             # Обычный режим
             resp = self.llm.complete(
@@ -436,7 +438,6 @@ class FastBIService:
             resp_text = resp.text
         
         elapsed = time.time() - start_time
-        print(f"⚡ SQL генерация (llama_index): {elapsed:.2f}с")
         
         sql_raw = _extract_sql_from_text(resp_text)
         sql = _only_select(sql_raw)
@@ -454,7 +455,6 @@ class FastBIService:
         if elapsed > SQL_TIMEOUT_SEC:
             raise TimeoutError(f"SQL выполнялся слишком долго: {elapsed:.1f}s")
         
-        print(f"🗄️ SQL выполнение: {elapsed:.3f}с")
         return df
     
     def _commentary(self, question: str, df: pd.DataFrame, stream_callback=None) -> str:
@@ -481,15 +481,11 @@ class FastBIService:
             f"Данные:\n{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
         
-        print(f"📝 Длина промпта для комментария: {len(prompt)} символов")
-        print(f"🎯 Лимит токенов: {COMMENTARY_TOKENS}")
-        
         start_time = time.time()
         
         # Пытаемся использовать прямой API Ollama (быстрее в 10+ раз)
         if USE_DIRECT_API:
             try:
-                print(f"⚡ Используем прямой API Ollama")
                 
                 if stream_callback:
                     # Streaming режим с callback
@@ -515,16 +511,14 @@ class FastBIService:
                     )
                 
                 elapsed = time.time() - start_time
-                print(f"💭 Анализ (прямой API): {elapsed:.3f}с")
                 
                 return resp_text.strip()
                 
             except Exception as e:
-                print(f"⚠️ Прямой API не сработал ({e}), откат на llama_index...")
                 # Откат на llama_index ниже
+                pass
         
         # Fallback: используем llama_index (медленнее, но надежнее)
-        print(f"🐢 Используем llama_index (медленнее)")
         if stream_callback:
             # Streaming режим
             full_response = ""
@@ -539,7 +533,6 @@ class FastBIService:
                 stream_callback({'type': 'commentary', 'text': text})
             
             resp_text = full_response.strip()
-            print(f"📊 Сгенерировано токенов: ~{token_count}")
         else:
             # Обычный режим
             resp = self.llm.complete(
@@ -549,7 +542,6 @@ class FastBIService:
             resp_text = resp.text.strip()
         
         elapsed = time.time() - start_time
-        print(f"💭 Анализ (llama_index): {elapsed:.3f}с")
         
         return resp_text
     
@@ -596,7 +588,6 @@ class FastBIService:
                 comment = self._commentary(question, df, stream_callback)
             
             total_time = time.time() - total_start
-            print(f"⏱️ Общее время: {total_time:.2f}с")
             
             # Конвертируем DataFrame в JSON-сериализуемый формат
             # Преобразуем datetime колонки в строки для JSON сериализации
@@ -659,11 +650,10 @@ def preload_ollama_model(model: str = DEFAULT_MODEL, keep_alive: str = "5m"):
             from .fast_bi_service import preload_ollama_model
             try:
                 preload_ollama_model()
-            except Exception as e:
-                print(f"⚠️ Не удалось предзагрузить модель: {e}")
+            except Exception:
+                pass
     """
     if not OLLAMA_AVAILABLE:
-        print("⚠️ llama_index.llms.ollama не установлен - предзагрузка невозможна")
         return False
     
     try:
@@ -671,7 +661,6 @@ def preload_ollama_model(model: str = DEFAULT_MODEL, keep_alive: str = "5m"):
         llm_manager.get_llm(model=model, keep_alive=keep_alive)
         return True
     except Exception as e:
-        print(f"❌ Ошибка предзагрузки модели: {e}")
         return False
 
 
