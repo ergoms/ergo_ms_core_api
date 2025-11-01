@@ -6,7 +6,3 @@ urlpatterns = [
     path('bi_query/', BIQueryView.as_view(), name='ai-assistant-bi-query'),
     path('ollama_status/', OllamaStatusView.as_view(), name='ai-assistant-ollama-status'),
 ]
-
-
-
-

@@ -92,8 +92,8 @@ class OllamaLLMManager:
 # -----------------------------
 DEFAULT_MODEL = "mistral7b-tuned"
 OLLAMA_BASE_URL = "http://localhost:11434"  # Базовый URL Ollama API
-SQL_GENERATION_TOKENS = 128  # Лимит токенов для генерации SQL
-COMMENTARY_TOKENS = 80  # Лимит токенов для комментария (уменьшено с 192)
+SQL_GENERATION_TOKENS = 256  # Лимит токенов для генерации SQL
+COMMENTARY_TOKENS = 192  # Лимит токенов для комментария (уменьшено с 192)
 STATS_TOP_K = 10
 SQL_TIMEOUT_SEC = 30
 USE_DIRECT_API = True  # Использовать прямой API Ollama (быстрее в 10+ раз)
