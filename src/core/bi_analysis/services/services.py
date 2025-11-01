@@ -1,8 +1,9 @@
 import csv
 from uuid import uuid4
-from django.db import connection, transaction
+from django.db import connection, transaction, models
 from rest_framework.exceptions import ValidationError
 import pandas as pd
+from psycopg2 import sql
 
 from src.core.bi_analysis.bi_datasets.models import DataSetField, DataSetTable, FileUpload
 
@@ -10,6 +11,7 @@ def populate_initial_fields(dataset, temp_table_name, staging_table=None):
     """
     Создаёт DataSetField для каждой колонки temp_table_name с дефолтными type/aggregation.
     Если имя столбца вида <table>__<col> — ищет соответствующую DataSetTable.
+    УСТАРЕВШАЯ ФУНКЦИЯ - используется только для обратной совместимости.
     """
     cols = introspect_columns(temp_table_name)
     ds_tables = {t.table_name: t for t in DataSetTable.objects.filter(dataset=dataset)}
@@ -40,53 +42,110 @@ def populate_initial_fields(dataset, temp_table_name, staging_table=None):
         ))
     DataSetField.objects.bulk_create(objs)
 
+
+def populate_initial_fields_from_file(dataset, file_upload, source_table):
+    """
+    Создаёт DataSetField для каждой колонки из файла без создания таблицы в БД.
+    Читает файл напрямую через pandas для получения списка колонок.
+    """
+    try:
+        df = read_file_to_dataframe(file_upload.id)
+        cols = list(df.columns.astype(str))
+    except Exception as e:
+        # Fallback: используем columns_info если есть
+        if file_upload.columns_info and 'columns' in file_upload.columns_info:
+            cols = file_upload.columns_info['columns']
+        else:
+            raise ValidationError(f"Не удалось прочитать колонки из файла: {str(e)}")
+    
+    objs = []
+    for idx, col in enumerate(cols):
+        objs.append(DataSetField(
+            dataset=dataset,
+            name=col,
+            source_table=source_table,
+            source_column=col,
+            order=idx
+        ))
+    
+    if objs:
+        DataSetField.objects.bulk_create(objs)
+
 def create_temp_table_from_source(dataset):
-    raw = dataset.table_ref
-    if not raw:
-        raise ValidationError("Не задано поле table_ref…")
-    if '.' in raw:
-        schema, table = raw.split('.', 1)
-    else:
-        schema, table = 'public', raw
+    """
+    УСТАРЕВШАЯ ФУНКЦИЯ - больше не создает temp таблицы.
+    Оставлена для обратной совместимости.
+    """
+    print(f"[WARNING] create_temp_table_from_source вызвана - функция устарела")
+    raise ValidationError("Создание temp таблиц больше не поддерживается. Используйте новую архитектуру с чтением файлов напрямую.")
 
-    with connection.cursor() as cursor:
-        cursor.execute(f'SELECT * FROM "{schema}"."{table}" LIMIT 0')
-        temp_name = f"temp_{uuid4().hex}"
-        cursor.execute(f'CREATE TABLE "{temp_name}" AS SELECT * FROM "{schema}"."{table}";')
-    print(f"[CREATE TEMP] table_ref={dataset.table_ref}, temp_name={temp_name}")
-    return temp_name
+def find_existing_temp_table_for_file(file_upload_id):
+    """
+    Ищет существующую staging таблицу для данного файла.
+    Проверяет таблицы через DataSetTable и также все staging_ таблицы с нужными колонками.
+    """
+    try:
+        upload = FileUpload.objects.get(pk=file_upload_id)
+        
+        # Сначала проверяем через DataSetTable
+        existing_tables = DataSetTable.objects.filter(file_upload_id=file_upload_id)
+        for ds_table in existing_tables:
+            # Ищем staging или temp таблицы (temp для обратной совместимости)
+            if ds_table.table_name.startswith(('staging_', 'temp_')):
+                if table_exists(ds_table.table_name):
+                    return ds_table.table_name
+        
+        # Если не нашли через DataSetTable, проверяем все staging_ таблицы
+        # Загружаем ожидаемые колонки из файла для сравнения
+        cols_from_file = []
+        if upload.file_type == 'xlsx':
+            df = pd.read_excel(upload.file.path, header=0, nrows=0)
+            cols_from_file = list(df.columns.astype(str))
+        elif upload.file_type in ('csv', 'txt'):
+            with open(upload.file.path, 'r', encoding='cp1251', errors='replace', newline='') as f:
+                reader = csv.reader(f)
+                cols_from_file = next(reader, [])
+        
+        if cols_from_file:
+            # Ищем все staging_ таблицы с таким же набором колонок
+            # Также проверяем temp_ для обратной совместимости
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT tablename 
+                    FROM pg_tables 
+                    WHERE schemaname = 'public' 
+                    AND (tablename LIKE 'staging_%' OR tablename LIKE 'temp_%')
+                """)
+                staging_tables = [row[0] for row in cursor.fetchall()]
+                
+                for staging_table in staging_tables:
+                    try:
+                        existing_cols = introspect_columns(staging_table)
+                        # Сравниваем наборы колонок
+                        if set(existing_cols) == set(cols_from_file):
+                            return staging_table
+                    except:
+                        continue
+    except Exception as e:
+        print(f"[FIND STAGING TABLE] Error: {e}")
+    
+    return None
 
-def import_file_upload_to_table(file_upload_id, dataset=None):
-    upload  = FileUpload.objects.get(pk=file_upload_id)
-    path    = upload.file.path
-    staging = f"temp_{uuid4().hex}"
-
-    mapping = {}
-    if dataset is not None:
-        fields = DataSetField.objects.filter(dataset=dataset)
-        mapping = {f.source_column: f.name for f in fields if f.name != f.source_column}
-
-    if upload.file_type == 'xlsx':
-        df = pd.read_excel(path, header=0)
-    elif upload.file_type in ('csv', 'txt'):
-        with open(path, 'r', encoding='cp1251', errors='replace', newline='') as f:
-            reader = csv.reader(f)
-            rows   = list(reader)
-        if not rows:
-            raise ValidationError("Пустой файл")
-        cols = rows[0]
-        data = rows[1:]
-        cols = [mapping.get(col, col) for col in cols]
-        return _create_table_and_load(staging, cols, data)
-    else:
-        raise ValidationError(f"Неподдерживаемый тип файла: {upload.file_type}")
-
-    if mapping:
-        df = df.rename(columns=mapping)
-
-    cols = list(df.columns.astype(str))
-    data = df.fillna('').astype(str).values.tolist()
-    return _create_table_and_load(staging, cols, data)
+def import_file_upload_to_table(file_upload_id, dataset=None, reuse_existing=True):
+    """
+    УСТАРЕВШАЯ ФУНКЦИЯ - больше не создает таблицы в БД.
+    Оставлена для обратной совместимости со старым кодом.
+    
+    НОВАЯ АРХИТЕКТУРА: данные читаются напрямую из файлов через pandas
+    без создания материализованных таблиц.
+    
+    Эта функция больше не должна вызываться в новом коде.
+    Используйте read_file_to_dataframe() вместо этого.
+    """
+    # Не создаем таблицы - это устаревший подход
+    # Возвращаем None или пустую строку для обратной совместимости
+    print(f"[WARNING] import_file_upload_to_table вызвана для file_id={file_upload_id} - функция устарела")
+    return None
 
 
 def _create_table_and_load(staging, cols, rows):
@@ -133,21 +192,28 @@ def safe_drop_table(table_name):
 
 def auto_join_table(dataset, table, left_column, right_column,
                     join_type: str = "INNER JOIN"):
-    
+    """
+    Добавляет JOIN к датасету. Теперь не создает материализованные таблицы,
+    а только обновляет метаданные DataSetTable.
+    """
     if "JOIN" not in join_type.upper():
         join_type = f"{join_type.strip().upper()} JOIN"
 
-    dataset.refresh_from_db(fields=["table_ref"])
-    src_name   = dataset.table_ref
-    base_name  = src_name[:-7] if src_name.endswith("_joined") else src_name
-    target_name = f"{base_name}_joined"
-    work_name   = f"{target_name}_{uuid4().hex[:6]}"
+    # Получаем главную таблицу для проверки существования
+    main_table = dataset.tables.filter(joined_on_type__isnull=True).first()
+    if not main_table:
+        raise ValueError("Не найдена главная таблица для датасета")
+    
+    main_table_name = main_table.table_name
+    if not table_exists(main_table_name):
+        raise ValueError(f"Таблица {main_table_name} не найдена, JOIN невозможен")
+    
+    if not table_exists(table.table_name):
+        raise ValueError(f"Таблица {table.table_name} не найдена, JOIN невозможен")
 
-    if not table_exists(src_name):
-        raise ValueError(f"Таблица {src_name} не найдена, JOIN невозможен")
-
+    # Проверяем наличие общих значений для валидации JOIN
     with connection.cursor() as c:
-        c.execute(f'SELECT DISTINCT "{left_column}" FROM "{src_name}" LIMIT 5000')
+        c.execute(f'SELECT DISTINCT "{left_column}" FROM "{main_table_name}" LIMIT 5000')
         main_vals = {r[0] for r in c.fetchall()}
         c.execute(f'SELECT DISTINCT "{right_column}" FROM "{table.table_name}" LIMIT 5000')
         join_vals = {r[0] for r in c.fetchall()}
@@ -155,85 +221,130 @@ def auto_join_table(dataset, table, left_column, right_column,
     if not (main_vals & join_vals):
         raise ValueError("Нет общих значений; авто-JOIN прерван")
 
-    main_cols = introspect_columns(src_name)
-    join_cols = introspect_columns(table.table_name)
-    left_set   = set(main_cols)
-    select_sql = []
+    # Обновляем метаданные таблицы для JOIN
+    # joined_on_left - колонка в главной (или предыдущей) таблице
+    # joined_on_right - колонка в присоединяемой таблице
+    table.joined_on_type = join_type
+    table.joined_on_left = left_column
+    table.joined_on_right = right_column
+    table.save(update_fields=['joined_on_type', 'joined_on_left', 'joined_on_right'])
 
-    select_sql += [f'a."{col}" AS "{col}"' for col in main_cols]
-
-    for col in join_cols:
-        if col in left_set:
-            continue
-        select_sql.append(f'b."{col}" AS "{col}"')
-
-    select_clause = ", ".join(select_sql)
-
-    create_sql = f'''
-        CREATE TABLE "{work_name}" AS
-        SELECT {select_clause}
-        FROM "{src_name}"  a
-        {join_type} "{table.table_name}" b
-              ON a."{left_column}" = b."{right_column}";'''
-
-    with transaction.atomic():
-        with connection.cursor() as c:
-            c.execute(create_sql)
-            safe_drop_table(target_name)
-            c.execute(f'ALTER TABLE "{work_name}" RENAME TO "{target_name}";')
-
-    dataset.table_ref = target_name
-    dataset.save(update_fields=["table_ref"])
+    # Синхронизируем поля датасета после добавления JOIN
+    # (можно добавить новые поля из присоединенной таблицы)
+    sync_dataset_fields_after_join(dataset, table)
 
     return left_column
 
 def rebuild_dataset_joins(dataset):
     """
-    Полностью перестраивает temp_<…>_joined от нуля:
-    1.  Берёт главную temp-таблицу (joined_on is NULL).
-    2.  Ставит её в dataset.table_ref.
-    3.  Идёт по оставшимся DataSetTable-ам (joined_on ≠ NULL) в порядке id
-        и последовательно вызывает auto_join_table().
+    Перестраивает JOIN'ы для датасета на основе метаданных.
+    Теперь не создает материализованные таблицы, только обновляет метаданные.
     """
-    from .services import auto_join_table, safe_drop_table
-
     base_tbl = dataset.tables.filter(joined_on_type__isnull=True).first()
     if not base_tbl:
         raise ValueError("Не найдена главная таблица")
 
-    if dataset.table_ref and dataset.table_ref.endswith("_joined"):
-        safe_drop_table(dataset.table_ref)
+    # Для файловых источников таблицы не нужны - данные читаются напрямую из файлов
+    # Для БД источников проверяем существование таблицы только если это реальная таблица БД
+    if base_tbl.file_upload_id is None and base_tbl.table_name:
+        # Это БД таблица, проверяем существование
+        if not table_exists(base_tbl.table_name):
+            raise ValueError(f"Таблица {base_tbl.table_name} не существует")
 
+    # Обновляем table_ref на главную таблицу (для обратной совместимости)
     dataset.table_ref = base_tbl.table_name
     dataset.save(update_fields=["table_ref"])
 
+    # Обновляем метаданные JOIN'ов для всех присоединенных таблиц
     for t in (dataset.tables.filter(joined_on_type__isnull=False).order_by("id")):
+        if not t.joined_on_left or not t.joined_on_right:
+            continue
+            
+        # Для файловых источников таблицы не нужны - данные читаются напрямую из файлов
+        # Для БД источников проверяем существование таблицы
+        if t.file_upload_id is None and t.table_name:
+            # Это БД таблица, проверяем существование
+            if not table_exists(t.table_name):
+                print(f"[WARNING] Таблица {t.table_name} для JOIN не существует, пропускаем")
+                continue
+        
+        # Проверяем валидность JOIN (есть ли общие значения)
+        # Только для БД источников (для файловых источников проверка не нужна, данные читаются на лету)
+        if base_tbl.file_upload_id is None and t.file_upload_id is None:
+            # Обе таблицы - БД источники, проверяем через SQL
+            try:
+                main_table_name = base_tbl.table_name
+                with connection.cursor() as c:
+                    c.execute(f'SELECT DISTINCT "{t.joined_on_left}" FROM "{main_table_name}" LIMIT 5000')
+                    main_vals = {r[0] for r in c.fetchall()}
+                    c.execute(f'SELECT DISTINCT "{t.joined_on_right}" FROM "{t.table_name}" LIMIT 5000')
+                    join_vals = {r[0] for r in c.fetchall()}
+                
+                if not (main_vals & join_vals):
+                    print(f"[WARNING] Нет общих значений для JOIN таблицы {t.id}, пропускаем")
+                    continue
+            except Exception as e:
+                print(f"[WARNING] Ошибка проверки JOIN для таблицы {t.id}: {e}")
+                continue
+        # Для файловых источников проверку пропускаем - валидация будет при выполнении запроса
+        
         print(f"Table id={t.id} joined_on_type={t.joined_on_type} joined_on_left={t.joined_on_left} joined_on_right={t.joined_on_right}")
-        ensure_temp_table_exists(t)
-        auto_join_table(
-            dataset,
-            t,
-            t.joined_on_left,
-            t.joined_on_right,
-            t.joined_on_type or "INNER JOIN",
-        )
-    sync_dataset_fields_with_current_table(dataset)
+    
+    # Синхронизируем поля после всех JOIN'ов
+    sync_dataset_fields_after_all_joins(dataset)
+
+
+def sync_dataset_fields_after_all_joins(dataset):
+    """
+    Синхронизирует поля датасета после всех JOIN'ов.
+    Строит запрос и проверяет доступные колонки.
+    """
+    try:
+        # Используем build_dataset_query для получения списка колонок
+        query = build_dataset_query(dataset, limit=0)
+        
+        # Выполняем запрос для получения структуры
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            columns = [col[0] for col in cursor.description]
+        
+        # Получаем существующие поля
+        existing_fields = {f.name: f for f in DataSetField.objects.filter(dataset=dataset)}
+        
+        # Добавляем недостающие поля (используя логику определения source_table)
+        for idx, col_name in enumerate(columns):
+            if col_name not in existing_fields:
+                # Определяем source_table для нового поля
+                # Пробуем найти колонку в одной из таблиц датасета
+                source_table = None
+                for table in dataset.tables.all():
+                    try:
+                        table_cols = introspect_columns(table.table_name)
+                        if col_name in table_cols:
+                            source_table = table
+                            break
+                    except:
+                        continue
+                
+                if source_table:
+                    DataSetField.objects.create(
+                        dataset=dataset,
+                        name=col_name,
+                        source_table=source_table,
+                        source_column=col_name,
+                        order=idx
+                    )
+    except Exception as e:
+        print(f"[SYNC FIELDS AFTER JOINS] Ошибка: {e}")
+        # Не прерываем выполнение
 
 def create_temp_table_from_staging(staging_name):
     """
-    Создаёт temp_... таблицу на основе staging_... таблицы (по имени).
+    УСТАРЕВШАЯ ФУНКЦИЯ - больше не создает temp таблицы.
+    Оставлена для обратной совместимости.
     """
-    if '.' in staging_name:
-        schema, table = staging_name.split('.', 1)
-    else:
-        schema, table = 'public', staging_name
-
-    with connection.cursor() as cursor:
-        cursor.execute(f'SELECT * FROM \"{schema}\".\"{table}\" LIMIT 0')
-        temp_name = f"temp_{uuid4().hex}"
-        cursor.execute(f'CREATE TABLE \"{temp_name}\" AS SELECT * FROM \"{schema}\".\"{table}\";')
-    print(f"[CREATE TEMP] staging={staging_name}, temp={temp_name}")
-    return temp_name
+    print(f"[WARNING] create_temp_table_from_staging вызвана для {staging_name} - функция устарела")
+    raise ValidationError("Создание temp таблиц больше не поддерживается. Используйте новую архитектуру с чтением файлов напрямую.")
 
 def get_columns_with_aliases(left_table, right_table):
     left_cols = introspect_columns(left_table)
@@ -251,25 +362,14 @@ def get_columns_with_aliases(left_table, right_table):
 
 def ensure_temp_table_exists(ds_table):
     """
-    Гарантирует, что физическая temp-таблица для DataSetTable существует.
-    Если её ещё нет (или name указывает на staging_), создаёт и обновляет model.
+    УСТАРЕВШАЯ ФУНКЦИЯ - больше не создает таблицы.
+    Оставлена для обратной совместимости, но не выполняет никаких действий.
+    Для файловых источников таблицы не нужны - данные читаются напрямую из файлов.
     """
-    with connection.cursor() as c:
-        c.execute("SELECT to_regclass(%s)", [ds_table.table_name])
-        exists = c.fetchone()[0] is not None
-
-    if exists and ds_table.table_name.startswith('temp_'):
-        return
-
-    if ds_table.table_name.startswith('staging_'):
-        new_name = create_temp_table_from_staging(ds_table.table_name)
-
-    else:
-        staging  = import_file_upload_to_table(ds_table.file_upload.id)
-        new_name = create_temp_table_from_staging(staging)
-
-    ds_table.table_name = new_name
-    ds_table.save(update_fields=['table_name'])
+    # Функция больше не создает таблицы - они не нужны при новой архитектуре
+    # Для файловых источников данные читаются напрямую через pandas
+    # Для БД источников таблицы уже существуют в БД
+    pass
     
 def sync_dataset_fields_with_current_table(dataset):
     table_name = dataset.table_ref
@@ -303,5 +403,295 @@ def sync_dataset_fields_with_current_table(dataset):
     for col, field in existing_fields.items():
         if col not in columns:
             field.delete()
+
+
+def read_file_to_dataframe(file_upload_id):
+    """Читает файл в pandas DataFrame"""
+    upload = FileUpload.objects.get(pk=file_upload_id)
+    path = upload.file.path
+    
+    if upload.file_type == 'xlsx':
+        return pd.read_excel(path, header=0)
+    elif upload.file_type in ('csv', 'txt'):
+        return pd.read_csv(path, encoding='cp1251', on_bad_lines='skip')
+    else:
+        raise ValidationError(f"Неподдерживаемый тип файла: {upload.file_type}")
+
+
+def dataframe_to_sql_values(df, table_alias='t0'):
+    """
+    Преобразует DataFrame в SQL.
+    Для небольших файлов использует VALUES, для больших - временную таблицу на время запроса.
+    Временная таблица автоматически удалится после выполнения запроса.
+    """
+    if df.empty:
+        return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
+    
+    # Для файлов больше 1000 строк используем временную таблицу
+    # Для меньших файлов используем VALUES (быстрее для PostgreSQL)
+    MAX_VALUES_ROWS = 1000
+    
+    if len(df) > MAX_VALUES_ROWS:
+        # Используем временную таблицу, которая удалится автоматически после запроса
+        temp_table_name = f"temp_query_{uuid4().hex[:16]}"
+        
+        # Создаем таблицу
+        col_defs = ", ".join(
+            f'"{str(c).replace(chr(34), chr(34) + chr(34))}" TEXT' 
+            for c in df.columns
+        )
+        
+        with connection.cursor() as cursor:
+            # Создаем временную таблицу (ON COMMIT DROP - удалится после транзакции)
+            cursor.execute(f'CREATE TEMPORARY TABLE "{temp_table_name}" ({col_defs}) ON COMMIT DROP;')
+            
+            # Вставляем данные пакетами
+            placeholders = ", ".join(["%s"] * len(df.columns))
+            insert_sql = f'INSERT INTO "{temp_table_name}" VALUES ({placeholders})'
+            
+            data_rows = []
+            for _, row in df.iterrows():
+                values = []
+                for val in row.values:
+                    if pd.isna(val):
+                        values.append(None)
+                    else:
+                        values.append(str(val))
+                data_rows.append(values)
+            
+            if data_rows:
+                cursor.executemany(insert_sql, data_rows)
+        
+        # Возвращаем ссылку на временную таблицу
+        return sql.SQL('"{}" AS {}').format(
+            sql.Identifier(temp_table_name),
+            sql.Identifier(table_alias)
+        ), None
+    else:
+        # Для небольших файлов используем VALUES
+        data_rows = []
+        for _, row in df.iterrows():
+            values = []
+            for val in row.values:
+                if pd.isna(val):
+                    values.append('NULL')
+                else:
+                    # Экранируем значения для SQL
+                    val_str = str(val).replace("'", "''")
+                    values.append(f"'{val_str}'")
+            data_rows.append(f"({', '.join(values)})")
+        
+        # Создаем список колонок
+        col_defs = []
+        for col in df.columns:
+            col_name = str(col).replace('"', '""')
+            col_defs.append(f'"{col_name}"')
+        
+        # Строим VALUES подзапрос
+        if len(data_rows) == 0:
+            return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
+        
+        values_clause = ',\n'.join(data_rows)
+        col_list = ', '.join(col_defs)
+        
+        # Используем подзапрос с VALUES
+        values_query = f"""
+            (VALUES {values_clause}) AS {table_alias}({col_list})
+        """
+        
+        return sql.SQL(values_query), None
+
+
+def build_dataset_query(dataset, select_fields=None, limit=None, where_clause=None):
+    """
+    Строит SQL-запрос для датасета на основе метаданных таблиц и полей.
+    Для файловых источников читает данные напрямую из файлов без создания таблиц.
+    
+    Args:
+        dataset: объект Dataset
+        select_fields: список имен полей для SELECT (None = все поля)
+        limit: лимит строк
+        where_clause: дополнительное условие WHERE
+    
+    Returns:
+        SQL объект для выполнения запроса
+    """
+    # Получаем главную таблицу (без JOIN)
+    main_table = dataset.tables.filter(joined_on_type__isnull=True).first()
+    if not main_table:
+        raise ValueError("Не найдена главная таблица для датасета")
+    
+    # Алиас для главной таблицы
+    main_alias = 't0'
+    
+    # Определяем, является ли источник файловым
+    is_file_source = main_table.file_upload_id is not None
+    
+    if is_file_source:
+        # Для файловых источников читаем данные напрямую из файла
+        try:
+            df = read_file_to_dataframe(main_table.file_upload_id)
+            from_with_alias, _ = dataframe_to_sql_values(df, main_alias)
+        except Exception as e:
+            raise ValueError(f"Ошибка чтения файла: {str(e)}")
+    else:
+        # Для БД источников используем прямое подключение к таблице
+        table_name = main_table.table_name
+        if '.' in table_name:
+            schema, table = table_name.split('.', 1)
+            from_clause = sql.SQL('{}.{}').format(
+                sql.Identifier(schema),
+                sql.Identifier(table)
+            )
+        else:
+            from_clause = sql.Identifier(table_name)
+        
+        from_with_alias = sql.SQL('{} AS {}').format(from_clause, sql.Identifier(main_alias))
+    
+    # Собираем JOIN'ы
+    joins = []
+    joined_tables = dataset.tables.filter(joined_on_type__isnull=False).order_by('id')
+    
+    # Маппинг для отслеживания алиасов таблиц
+    table_id_to_alias = {main_table.id: main_alias}
+    
+    for idx, join_table in enumerate(joined_tables, start=1):
+        if not join_table.joined_on_left or not join_table.joined_on_right:
+            continue
+        
+        # Алиас для таблицы в JOIN
+        table_alias = f't{idx}'
+        table_id_to_alias[join_table.id] = table_alias
+        
+        # Определяем, является ли присоединяемая таблица файловым источником
+        is_join_file_source = join_table.file_upload_id is not None
+        
+        if is_join_file_source:
+            # Для файловых источников читаем данные напрямую из файла
+            try:
+                df_join = read_file_to_dataframe(join_table.file_upload_id)
+                join_table_ref, _ = dataframe_to_sql_values(df_join, table_alias)
+            except Exception as e:
+                raise ValueError(f"Ошибка чтения файла для JOIN: {str(e)}")
+        else:
+            # Для БД источников используем прямое подключение к таблице
+            join_table_name = join_table.table_name
+            if '.' in join_table_name:
+                join_schema, join_table_only = join_table_name.split('.', 1)
+                join_table_ref = sql.SQL('{}.{}').format(
+                    sql.Identifier(join_schema),
+                    sql.Identifier(join_table_only)
+                )
+            else:
+                join_table_ref = sql.Identifier(join_table_name)
+            
+            join_table_ref = sql.SQL('{} AS {}').format(join_table_ref, sql.Identifier(table_alias))
+        
+        # Тип JOIN
+        join_type = (join_table.joined_on_type or 'LEFT JOIN').strip().upper()
+        if 'JOIN' not in join_type:
+            join_type = f'{join_type} JOIN'
+        
+        # Определяем левую таблицу для JOIN
+        # joined_on_left - это колонка в главной таблице (или предыдущей joined таблице)
+        # Для простоты будем считать, что left_column всегда из главной таблицы
+        left_table_alias = main_alias  # По умолчанию главная таблица
+        
+        # Условие JOIN: left_column из левой таблицы = right_column из join таблицы
+        join_condition = sql.SQL('{}.{} = {}.{}').format(
+            sql.Identifier(left_table_alias),
+            sql.Identifier(join_table.joined_on_left),
+            sql.Identifier(table_alias),
+            sql.Identifier(join_table.joined_on_right)
+        )
+        
+        if is_join_file_source:
+            # Для файловых источников VALUES уже содержит алиас, поэтому просто добавляем JOIN
+            join_clause = sql.SQL('{} {} ON {}').format(
+                sql.SQL(join_type),
+                join_table_ref,
+                join_condition
+            )
+        else:
+            join_clause = sql.SQL('{} {} ON {}').format(
+                sql.SQL(join_type),
+                join_table_ref,
+                join_condition
+            )
+        joins.append(join_clause)
+    
+    # Строим SELECT часть
+    if select_fields is None:
+        # Берем все поля датасета
+        fields = dataset.fields.all().order_by('order')
+    else:
+        # Берем только указанные поля
+        fields = dataset.fields.filter(name__in=select_fields).order_by('order')
+    
+    select_parts = []
+    table_aliases = {}
+    
+    # Маппинг таблиц к алиасам (используем уже построенный table_id_to_alias)
+    table_aliases = table_id_to_alias.copy()
+    
+    for field in fields:
+        # Определяем выражение для поля
+        if field.expression:
+            # Используем выражение напрямую (должно содержать валидный SQL)
+            # Осторожно: expression может содержать сложный SQL, поэтому используем SQL()
+            # Будем предполагать, что expression уже содержит правильный SQL с алиасами
+            field_expr = sql.SQL(field.expression)
+        else:
+            # Используем source_column из source_table
+            table_alias = table_aliases.get(field.source_table.id, main_alias)
+            field_expr = sql.SQL('{}.{}').format(
+                sql.Identifier(table_alias),
+                sql.Identifier(field.source_column)
+            )
+        
+        select_parts.append(
+            sql.SQL('{} AS {}').format(
+                field_expr,
+                sql.Identifier(field.name)
+            )
+        )
+    
+    if not select_parts:
+        # Если нет полей, выбираем все колонки из главной таблицы
+        select_parts.append(sql.SQL('{}.*').format(sql.Identifier(main_alias)))
+    
+    # Собираем итоговый запрос
+    query_parts = [
+        sql.SQL('SELECT {}').format(sql.SQL(', ').join(select_parts)),
+        sql.SQL('FROM {}').format(from_with_alias)
+    ]
+    
+    # Добавляем JOIN'ы
+    query_parts.extend(joins)
+    
+    # Добавляем WHERE если есть
+    if where_clause:
+        query_parts.append(sql.SQL('WHERE {}').format(sql.SQL(where_clause)))
+    
+    # Добавляем LIMIT если есть
+    if limit is not None:
+        query_parts.append(sql.SQL('LIMIT {}').format(sql.Literal(limit)))
+    
+    final_query = sql.SQL(' ').join(query_parts)
+    return final_query
+
+
+def get_dataset_table_alias(dataset, table_id):
+    """Возвращает алиас таблицы в запросе датасета."""
+    main_table = dataset.tables.filter(joined_on_type__isnull=True).first()
+    if main_table and main_table.id == table_id:
+        return 't0'
+    
+    joined_tables = dataset.tables.filter(joined_on_type__isnull=False).order_by('id')
+    for idx, join_table in enumerate(joined_tables, start=1):
+        if join_table.id == table_id:
+            return f't{idx}'
+    
+    return 't0'  # По умолчанию
 
 

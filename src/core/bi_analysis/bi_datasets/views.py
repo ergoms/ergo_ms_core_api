@@ -38,9 +38,11 @@ from src.core.bi_analysis.services.services import (
     create_temp_table_from_source,
     import_file_upload_to_table,
     populate_initial_fields,
+    populate_initial_fields_from_file,
     auto_join_table,
     introspect_columns,
-    rebuild_dataset_joins
+    rebuild_dataset_joins,
+    table_exists
 )
 
 from ..bi_charts.methods import get_rows_for_chart
@@ -82,19 +84,17 @@ class DatasetListCreateView(generics.ListCreateAPIView):
         if not dataset.file_source:
             raise ValidationError("file_source is required for dataset creation")
 
-        staging_name = import_file_upload_to_table(dataset.file_source.id)
-
-        dataset.table_ref = staging_name
+        # НЕ создаем таблицы в БД - используем метаданные и читаем файлы напрямую
+        # table_ref оставляем пустым или используем имя файла для обратной совместимости
+        dataset.table_ref = None  # Больше не нужна материализованная таблица
         dataset.save(update_fields=['table_ref'])
 
-        temp_name = create_temp_table_from_source(dataset)
-        dataset.table_ref = temp_name
-        dataset.save(update_fields=['table_ref'])
-
+        # Создаем DataSetTable с ссылкой на file_upload
+        # table_name может быть пустым или содержать имя для отображения
         main_table = DataSetTable.objects.create(
             dataset=dataset,
             connection=dataset.connection,
-            table_name=temp_name,
+            table_name=dataset.file_source.original_filename or f"file_{dataset.file_source.id}",  # Имя для отображения
             joined_on={},
             file_upload=dataset.file_source 
         )
@@ -103,7 +103,8 @@ class DatasetListCreateView(generics.ListCreateAPIView):
             main_table.columns_info = dataset.file_source.columns_info
             main_table.save(update_fields=["display_name", "columns_info"])
 
-        populate_initial_fields(dataset, temp_name, staging_table=main_table)
+        # Создаем поля на основе информации о колонках из файла
+        populate_initial_fields_from_file(dataset, dataset.file_source, main_table)
         
         fields_data = self.request.data.get('fields', [])
         if fields_data:
@@ -323,22 +324,21 @@ class AddTableToDatasetView(APIView):
         file_upload = FileUpload.objects.get(pk=file_id)
         connection = file_upload.connection or dataset.connection
 
-        staging_name = import_file_upload_to_table(file_upload.id)
-
-        from ..services.services import create_temp_table_from_staging
-        temp_name = create_temp_table_from_staging(staging_name)
+        # НЕ создаем таблицы в БД - используем только метаданные
+        # table_name используется только для отображения/идентификации
+        table_display_name = file_upload.original_filename or f"file_{file_upload.id}"
 
         data_table = DataSetTable.objects.create(
             dataset=dataset,
             connection=connection,
-            table_name=temp_name,
+            table_name=table_display_name,  # Имя для отображения, не реальная таблица
             joined_on={},
             file_upload=file_upload
         )
 
         return Response({
             "id": data_table.id,
-            "table_ref": data_table.table_name,
+            "table_ref": None,  # Больше не используется
             "name": data_table.table_name,
             "display_name": file_upload.original_filename,
         })
@@ -352,30 +352,48 @@ class DatasetPreviewView(APIView):
 
     def get(self, request, pk):
         dataset = Dataset.objects.filter(pk=pk, owner=request.user).first()
-        print(f"[PREVIEW] dataset.id={dataset.id}, table_ref={dataset.table_ref}")
         if not dataset:
             return Response({"detail": "Not found"}, status=404)
 
         limit = int(request.query_params.get('limit', 10))
-        if not dataset.table_ref or not dataset.table_ref.startswith(('staging_', 'temp_')):
-            return Response({"detail": "Таблица ещё не создана для датасета"}, status=400)
-        base_table = dataset.table_ref
-
-        if '.' in base_table:
-            schema, table = base_table.split('.', 1)
-        else:
-            schema, table = 'public', base_table
-
+        
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f'SELECT * FROM "{schema}"."{table}" LIMIT %s',
-                    [limit],
-                )
-                rows = cursor.fetchall()
-                columns = [col[0] for col in cursor.description]
-        except ProgrammingError:
-            return Response({"detail": f"Table {schema}.{table} does not exist"}, status=404)
+            from src.core.bi_analysis.services.services import build_dataset_query
+            
+            # Проверяем, есть ли таблицы в датасете
+            if not dataset.tables.exists():
+                # Fallback для старых датасетов с table_ref
+                if not dataset.table_ref:
+                    return Response({"detail": "Таблица ещё не создана для датасета"}, status=400)
+                
+                base_table = dataset.table_ref
+                if '.' in base_table:
+                    schema, table = base_table.split('.', 1)
+                else:
+                    schema, table = 'public', base_table
+                
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f'SELECT * FROM "{schema}"."{table}" LIMIT %s',
+                        [limit],
+                    )
+                    rows = cursor.fetchall()
+                    columns = [col[0] for col in cursor.description]
+            else:
+                # Используем новую логику с динамическим SQL
+                query = build_dataset_query(dataset, limit=limit)
+                
+                with connection.cursor() as cursor:
+                    cursor.execute(query)
+                    rows = cursor.fetchall()
+                    columns = [col[0] for col in cursor.description]
+                    
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+        except ProgrammingError as e:
+            return Response({"detail": f"Ошибка выполнения запроса: {str(e)}"}, status=500)
+        except Exception as e:
+            return Response({"detail": f"Ошибка: {str(e)}"}, status=500)
 
         return Response({
             "columns": columns,
@@ -409,66 +427,151 @@ class DatasetDraftPreviewView(APIView):
     def post(self, request):
         """
         Принимает черновик датасета (главная таблица + join'ы), возвращает предпросмотр данных.
+        Работает без создания постоянных таблиц - читает файлы напрямую через pandas.
         """
+        from src.core.bi_analysis.services.services import read_file_to_dataframe, dataframe_to_sql_values
+        from psycopg2 import sql
+        
         data = request.data
         connection_id = data.get('connection_id')
-        main_table    = data.get('mainTable')
+        main_table = data.get('mainTable')
         joined_tables = data.get('joinedTables', [])
-        limit         = int(data.get('limit', 20))
+        limit = int(data.get('limit', 20))
 
-        # 1. Импортируем главную таблицу во временную (если надо)
-        staging_tables = {}
-
-        def import_table(tbl):
-            if 'file_id' in tbl:
-                # из FileUpload
-                return import_file_upload_to_table(tbl['file_id'])
-            elif 'table_name' in tbl:
-                return tbl['table_name']
-            else:
-                raise ValidationError("Не удалось определить источник таблицы")
-
-        main_staging = import_table(main_table)
-        staging_tables['main'] = main_staging
-
-        # 2. Импортируем все joinedTables
-        joined_stagings = []
-        for jt in joined_tables:
-            staging = import_table(jt)
-            joined_stagings.append({
-                **jt, 'staging': staging
-            })
-
-        # 3. Формируем SELECT и JOIN'ы
-        select_sql = []
+        # Определяем, является ли главная таблица файловым источником
+        is_main_file = 'file_id' in main_table and main_table.get('file_id')
+        
+        # Формируем FROM для главной таблицы
         main_alias = 'a'
-        main_cols = introspect_columns(main_staging)
-        select_sql += [f'{main_alias}."{col}" AS "{col}"' for col in main_cols]
+        
+        if is_main_file:
+            # Для файловых источников читаем данные напрямую
+            try:
+                df_main = read_file_to_dataframe(main_table['file_id'])
+                main_from, _ = dataframe_to_sql_values(df_main, main_alias)
+                main_cols = list(df_main.columns.astype(str))
+            except Exception as e:
+                raise ValidationError(f"Ошибка чтения главного файла: {str(e)}")
+        else:
+            # Для БД источников используем прямое подключение
+            table_name = main_table.get('table_name')
+            if not table_name:
+                raise ValidationError("Не указано имя таблицы для БД источника")
+            
+            if '.' in table_name:
+                schema, table = table_name.split('.', 1)
+                main_from = sql.SQL('{}.{} AS {}').format(
+                    sql.Identifier(schema),
+                    sql.Identifier(table),
+                    sql.Identifier(main_alias)
+                )
+            else:
+                main_from = sql.SQL('{} AS {}').format(
+                    sql.Identifier(table_name),
+                    sql.Identifier(main_alias)
+                )
+            
+            # Получаем колонки из БД таблицы
+            main_cols = introspect_columns(table_name)
+        
+        # Формируем SELECT - берем все колонки главной таблицы
+        select_parts = [sql.SQL('{}.{} AS {}').format(
+            sql.Identifier(main_alias),
+            sql.Identifier(col),
+            sql.Identifier(col)
+        ) for col in main_cols]
+        
+        # Обрабатываем JOIN'ы
         join_clauses = []
-        alias = ord('b')
-
-        for jt in joined_stagings:
-            tbl_alias = chr(alias)
-            cols = introspect_columns(jt['staging'])
-            select_sql += [f'{tbl_alias}."{col}" AS "{col}"' for col in cols if col not in main_cols]
-
-            # LEFT JOIN "staging" b ON a."left_col" = b."right_col"
+        alias_idx = ord('b')
+        all_cols = set(main_cols)
+        
+        for jt in joined_tables:
+            tbl_alias = chr(alias_idx)
+            alias_idx += 1
+            
+            # Определяем, является ли JOIN таблица файловым источником
+            is_join_file = 'file_id' in jt and jt.get('file_id')
+            
+            if is_join_file:
+                # Для файловых источников читаем данные напрямую
+                try:
+                    df_join = read_file_to_dataframe(jt['file_id'])
+                    join_from, _ = dataframe_to_sql_values(df_join, tbl_alias)
+                    join_cols = list(df_join.columns.astype(str))
+                except Exception as e:
+                    raise ValidationError(f"Ошибка чтения файла для JOIN: {str(e)}")
+            else:
+                # Для БД источников используем прямое подключение
+                table_name = jt.get('table_name')
+                if not table_name:
+                    raise ValidationError("Не указано имя таблицы для JOIN БД источника")
+                
+                if '.' in table_name:
+                    schema, table = table_name.split('.', 1)
+                    join_from = sql.SQL('{}.{} AS {}').format(
+                        sql.Identifier(schema),
+                        sql.Identifier(table),
+                        sql.Identifier(tbl_alias)
+                    )
+                else:
+                    join_from = sql.SQL('{} AS {}').format(
+                        sql.Identifier(table_name),
+                        sql.Identifier(tbl_alias)
+                    )
+                
+                join_cols = introspect_columns(table_name)
+            
+            # Добавляем колонки из JOIN таблицы (только уникальные)
+            for col in join_cols:
+                if col not in all_cols:
+                    select_parts.append(sql.SQL('{}.{} AS {}').format(
+                        sql.Identifier(tbl_alias),
+                        sql.Identifier(col),
+                        sql.Identifier(col)
+                    ))
+                    all_cols.add(col)
+            
+            # Формируем условие JOIN
             join_type = jt.get('joinType', 'LEFT JOIN').strip().upper()
-            if not join_type.endswith('JOIN'):
-                join_type += ' JOIN'
+            if 'JOIN' not in join_type:
+                join_type = f'{join_type} JOIN'
+            
             lines = jt.get('lines') or []
             if not lines or not lines[0].get('left') or not lines[0].get('right'):
                 raise ValidationError("Не указаны поля для join'а")
+            
             left_col = lines[0]['left']
             right_col = lines[0]['right']
-            join_clause = f"{join_type} \"{jt['staging']}\" {tbl_alias} ON {main_alias}.\"{left_col}\" = {tbl_alias}.\"{right_col}\""
+            
+            join_condition = sql.SQL('{}.{} = {}.{}').format(
+                sql.Identifier(main_alias),
+                sql.Identifier(left_col),
+                sql.Identifier(tbl_alias),
+                sql.Identifier(right_col)
+            )
+            
+            join_clause = sql.SQL('{} {} ON {}').format(
+                sql.SQL(join_type),
+                join_from,
+                join_condition
+            )
             join_clauses.append(join_clause)
-            alias += 1
-
-        sql = f'SELECT {", ".join(select_sql)} FROM "{main_staging}" {main_alias} ' + " ".join(join_clauses) + f' LIMIT {limit}'
-
+        
+        # Собираем итоговый запрос
+        query_parts = [
+            sql.SQL('SELECT {}').format(sql.SQL(', ').join(select_parts)),
+            sql.SQL('FROM {}').format(main_from)
+        ]
+        
+        query_parts.extend(join_clauses)
+        query_parts.append(sql.SQL('LIMIT {}').format(sql.Literal(limit)))
+        
+        final_query = sql.SQL(' ').join(query_parts)
+        
+        # Выполняем запрос
         with connection.cursor() as cursor:
-            cursor.execute(sql)
+            cursor.execute(final_query)
             rows = cursor.fetchall()
             columns = [col[0] for col in cursor.description]
 
