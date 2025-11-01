@@ -110,9 +110,16 @@ class DatasetListCreateView(generics.ListCreateAPIView):
         if fields_data:
             for field in fields_data:
                 obj = dataset.fields.filter(name=field.get('name')).first()
-                if obj and 'aggregation' in field:
-                    obj.aggregation = field['aggregation']
-                    obj.save(update_fields=['aggregation'])
+                if obj:
+                    update_fields = []
+                    if 'aggregation' in field:
+                        obj.aggregation = field['aggregation']
+                        update_fields.append('aggregation')
+                    if 'type' in field:
+                        obj.type = field['type']
+                        update_fields.append('type')
+                    if update_fields:
+                        obj.save(update_fields=update_fields)
         params_data = self.request.data.get('params')
         if params_data is not None:
             # поддержка формата из фронта: [{name,type,defaultValue,sourceUsage,...}]
