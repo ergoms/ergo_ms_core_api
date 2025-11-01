@@ -390,25 +390,18 @@ class DatasetColumnsAPIView(APIView):
         if not dataset:
             return Response({"detail": "Dataset not found"}, status=404)
 
-        if not dataset.table_ref or not dataset.table_ref.startswith(("staging_", "temp_")):
-            return Response({"detail": "Таблица ещё не создана для датасета"}, status=400)
+        # Получаем поля датасета с их типами
+        fields = dataset.fields.all()
+        cols = []
+        for f in fields:
+            cols.append({
+                "id": f.id,
+                "name": f.name,
+                "type": f.type,
+                "aggregation": f.aggregation,
+            })
 
-        base_table = dataset.table_ref
-        if "." in base_table:
-            schema, table = base_table.split(".", 1)
-        else:
-            schema, table = "public", base_table
-
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f'SELECT * FROM "{schema}"."{table}" LIMIT 0'
-                )
-                columns = [col[0] for col in cursor.description]
-        except ProgrammingError:
-            return Response({"detail": f"Table {schema}.{table} does not exist"}, status=404)
-
-        return Response({"columns": columns})
+        return Response({"columns": cols})
 
 class DatasetDraftPreviewView(APIView):
     permission_classes = [IsAuthenticated]
