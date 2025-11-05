@@ -4,7 +4,7 @@
 Этот файл содержит различные вспомогательные методы, которые используются в других частях модуля и приложения.
 """
 
-from typing import Dict
+from typing import Dict, Tuple, Optional
 
 from django.core.mail import send_mail
 from django.conf import settings
@@ -26,7 +26,7 @@ def parse_errors_to_dict(error_dict: Dict[str, list]) -> Dict[str, str]:
         
     return parsed_errors
 
-def send_confirmation_email(email: str, code: str) -> None:
+def send_confirmation_email(email: str, code: str) -> Tuple[bool, Optional[str]]:
     """
     Отправляет email с кодом подтверждения.
 
@@ -35,20 +35,55 @@ def send_confirmation_email(email: str, code: str) -> None:
         code (str): Код подтверждения.
 
     Возвращает:
-        None
+        tuple[bool, str]: (успех, сообщение об ошибке или None)
     """
-    default_from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        default_from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+        
+        if not default_from_email:
+            error_msg = "SMTP не настроен: отсутствует DEFAULT_FROM_EMAIL"
+            logger.error(error_msg)
+            return False, error_msg
 
-    subject = "Код подтверждения ERGO MS"
-    message = f"Ваш код подтверждения: {code}"
-    from_email = default_from_email
-    recipient_list = [email]
+        subject = "Код подтверждения ERGO MS"
+        message = f"Ваш код подтверждения: {code}"
+        from_email = default_from_email
+        recipient_list = [email]
 
-    send_mail(subject,
-              message, 
-              from_email, 
-              recipient_list, 
-              fail_silently=False)
+        send_mail(subject,
+                  message, 
+                  from_email, 
+                  recipient_list, 
+                  fail_silently=False)
+        
+        return True, None
+        
+    except Exception as e:
+        error_str = str(e)
+        error_type = type(e).__name__
+        
+        # Более информативные сообщения об ошибках
+        if "SMTPAuthenticationError" in error_type or "535" in error_str:
+            error_msg = (
+                "Ошибка аутентификации SMTP. Проверьте:\n"
+                "1. Правильность EMAIL_HOST_USER и EMAIL_HOST_PASSWORD в .env\n"
+                "2. Для Gmail/Mail.ru может потребоваться пароль приложения вместо обычного пароля\n"
+                "3. Убедитесь, что EMAIL_USE_TLS настроен правильно"
+            )
+        elif "SMTPConnectError" in error_type or "Connection refused" in error_str:
+            error_msg = (
+                "Не удалось подключиться к SMTP серверу. Проверьте:\n"
+                "1. Правильность EMAIL_HOST и EMAIL_PORT в .env\n"
+                "2. Доступность SMTP сервера"
+            )
+        else:
+            error_msg = f"Ошибка отправки email: {error_str}"
+        
+        logger.error(f"SMTP Error ({error_type}): {error_msg}", exc_info=True)
+        return False, error_msg
     
 def convert_snake_to_camel(snake_text: str) -> str:
     """

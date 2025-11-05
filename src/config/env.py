@@ -50,9 +50,12 @@ if os.path.exists(ENV_FILE_PATH):
             if line and not line.startswith('#') and '=' in line:
                 key = line.split('=', 1)[0].strip()
                 main_env_vars.add(key)
-    environ.Env.read_env(ENV_FILE_PATH)
+    # Загружаем переменные из .env файла в os.environ
+    env.read_env(ENV_FILE_PATH)
     logger.info(f"✅ Загружен основной .env файл из корня проекта: {ENV_FILE_PATH}")
     logger.info(f"   Найдено переменных: {len(main_env_vars)}")
+else:
+    logger.warning(f"⚠️  Файл .env не найден по пути: {ENV_FILE_PATH}")
 
 # Затем добавляем переменные из modules (они имеют приоритет над основным .env)
 if modules_env_vars:
