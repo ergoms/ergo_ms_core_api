@@ -37,6 +37,19 @@ except ImportError:
 
 
 # -----------------------------
+# Константы (из настроек Django)
+# -----------------------------
+# Получаем настройки из Django settings с fallback на значения по умолчанию
+DEFAULT_MODEL = getattr(settings, 'OLLAMA_DEFAULT_MODEL', 'mistral7b-tuned')
+OLLAMA_BASE_URL = getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434')
+SQL_GENERATION_TOKENS = 256  # Лимит токенов для генерации SQL
+COMMENTARY_TOKENS = 192  # Лимит токенов для комментария (уменьшено с 192)
+STATS_TOP_K = 10
+SQL_TIMEOUT_SEC = 30
+USE_DIRECT_API = getattr(settings, 'OLLAMA_USE_DIRECT_API', True)  # Использовать прямой API Ollama (быстрее в 10+ раз)
+
+
+# -----------------------------
 # Singleton для LLM
 # -----------------------------
 class OllamaLLMManager:
@@ -47,22 +60,33 @@ class OllamaLLMManager:
     _instance = None
     _llm = None
     _model_name = None
+    _base_url = None
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(OllamaLLMManager, cls).__new__(cls)
         return cls._instance
     
-    def get_llm(self, model: str = None, keep_alive: str = "5m"):
+    def get_llm(self, model: str = None, base_url: str = None, keep_alive: str = "5m"):
         """
         Возвращает единственный экземпляр LLM.
-        Если модель еще не инициализирована или запрошена другая модель - инициализирует заново.
+        Если модель еще не инициализирована или запрошена другая модель/base_url - инициализирует заново.
+        
+        Args:
+            model: Название модели Ollama
+            base_url: Базовый URL Ollama API (если None, используется из настроек)
+            keep_alive: Время жизни модели в памяти
         """
         if model is None:
-            model = "mistral7b-tuned"  # Будет определено как DEFAULT_MODEL ниже
+            model = DEFAULT_MODEL  # Используем модель из настроек
         
-        # Если LLM уже инициализирован для этой модели - возвращаем его
-        if self._llm is not None and self._model_name == model:
+        if base_url is None:
+            base_url = OLLAMA_BASE_URL  # Используем URL из настроек
+        
+        # Если LLM уже инициализирован для этой модели и base_url - возвращаем его
+        if (self._llm is not None and 
+            self._model_name == model and 
+            self._base_url == base_url):
             return self._llm
         
         # Инициализируем новый LLM
@@ -70,28 +94,19 @@ class OllamaLLMManager:
             raise RuntimeError("llama_index.llms.ollama не установлен")
         
         try:
+            # Используем базовый URL Ollama из параметра или настроек
             self._llm = Ollama(
                 model=model,
+                base_url=base_url,
                 request_timeout=180.0,
                 keep_alive=keep_alive,
                 # Не задаем num_predict здесь - он будет задаваться для каждого запроса отдельно
             )
             self._model_name = model
+            self._base_url = base_url
             return self._llm
         except Exception as e:
             raise
-
-
-# -----------------------------
-# Константы
-# -----------------------------
-DEFAULT_MODEL = "mistral7b-tuned"
-OLLAMA_BASE_URL = "http://localhost:11434"  # Базовый URL Ollama API
-SQL_GENERATION_TOKENS = 256  # Лимит токенов для генерации SQL
-COMMENTARY_TOKENS = 192  # Лимит токенов для комментария (уменьшено с 192)
-STATS_TOP_K = 10
-SQL_TIMEOUT_SEC = 30
-USE_DIRECT_API = True  # Использовать прямой API Ollama (быстрее в 10+ раз)
 
 
 # -----------------------------
@@ -129,6 +144,7 @@ def _call_ollama_direct(
     prompt: str,
     model: str,
     num_predict: int,
+    base_url: str = None,
     temperature: float = 0.1,
     stream: bool = False,
     stream_callback=None
@@ -140,6 +156,7 @@ def _call_ollama_direct(
         prompt: Промпт для модели
         model: Название модели
         num_predict: Максимальное количество токенов для генерации
+        base_url: Базовый URL Ollama API (если None, используется из настроек)
         temperature: Температура (0.1 для SQL, 0.3 для комментариев)
         stream: Включить streaming
         stream_callback: Функция обратного вызова для streaming
@@ -147,7 +164,10 @@ def _call_ollama_direct(
     Returns:
         Полный ответ от модели
     """
-    url = f"{OLLAMA_BASE_URL}/api/generate"
+    if base_url is None:
+        base_url = OLLAMA_BASE_URL
+    
+    url = f"{base_url}/api/generate"
     payload = {
         "model": model,
         "prompt": prompt,
@@ -205,11 +225,43 @@ class FastBIService:
     
     def __init__(
         self,
-        model: str = DEFAULT_MODEL,
+        model: str = None,
         keep_alive: str = "5m",
+        ollama_config: Dict[str, Any] = None,
     ):
+        """
+        Args:
+            model: Название модели Ollama (если None, используется из настроек)
+            keep_alive: Время жизни модели в памяти
+            ollama_config: Словарь с настройками Ollama из module-config (переопределяет общие настройки)
+                - base_url: URL Ollama API
+                - model: Название модели
+                - temperature: Температура для генерации
+                - context_window: Размер окна контекста
+                - sql_generation_tokens: Лимит токенов для SQL генерации
+                - commentary_tokens: Лимит токенов для комментариев
+        """
         if not OLLAMA_AVAILABLE:
             raise RuntimeError("llama_index.llms.ollama не установлен")
+        
+        # Используем настройки из конфига модуля или общие настройки
+        if ollama_config:
+            self.ollama_base_url = ollama_config.get('base_url') or OLLAMA_BASE_URL
+            self.model = model or ollama_config.get('model') or DEFAULT_MODEL
+            self.temperature_sql = ollama_config.get('temperature', 0.1)
+            self.context_window = ollama_config.get('context_window', 4096)
+            self.sql_generation_tokens = ollama_config.get('sql_generation_tokens', SQL_GENERATION_TOKENS)
+            self.commentary_tokens = ollama_config.get('commentary_tokens', COMMENTARY_TOKENS)
+        else:
+            self.ollama_base_url = OLLAMA_BASE_URL
+            self.model = model or DEFAULT_MODEL
+            self.temperature_sql = 0.1
+            self.context_window = 4096
+            self.sql_generation_tokens = SQL_GENERATION_TOKENS
+            self.commentary_tokens = COMMENTARY_TOKENS
+        
+        # Температура для комментариев (обычно выше)
+        self.temperature_commentary = self.temperature_sql * 3 if self.temperature_sql < 0.3 else 0.3
             
         # Создаем новое DuckDB соединение (изолированное для каждого запроса)
         self.con = duckdb.connect()
@@ -217,8 +269,9 @@ class FastBIService:
         self.meta: Optional[Dict] = None
         
         # Получаем единственный экземпляр LLM через Singleton
+        # Используем настройки модуля для base_url
         llm_manager = OllamaLLMManager()
-        self.llm = llm_manager.get_llm(model=model, keep_alive=keep_alive)
+        self.llm = llm_manager.get_llm(model=self.model, base_url=self.ollama_base_url, keep_alive=keep_alive)
     
     def load_file(self, file_path: str, table_name: str = "t") -> Dict[str, Any]:
         """
@@ -388,9 +441,10 @@ class FastBIService:
                     
                     resp_text = _call_ollama_direct(
                         prompt=prompt,
-                        model=DEFAULT_MODEL,
-                        num_predict=SQL_GENERATION_TOKENS,
-                        temperature=0.1,  # Низкая температура для точного SQL
+                        model=self.model,
+                        base_url=self.ollama_base_url,
+                        num_predict=self.sql_generation_tokens,
+                        temperature=self.temperature_sql,
                         stream=True,
                         stream_callback=direct_stream_callback
                     )
@@ -398,9 +452,10 @@ class FastBIService:
                     # Обычный режим
                     resp_text = _call_ollama_direct(
                         prompt=prompt,
-                        model=DEFAULT_MODEL,
-                        num_predict=SQL_GENERATION_TOKENS,
-                        temperature=0.1,
+                        model=self.model,
+                        base_url=self.ollama_base_url,
+                        num_predict=self.sql_generation_tokens,
+                        temperature=self.temperature_sql,
                         stream=False
                     )
                 
@@ -421,7 +476,7 @@ class FastBIService:
             token_count = 0
             for chunk in self.llm.stream_complete(
                 prompt,
-                additional_kwargs={"num_predict": SQL_GENERATION_TOKENS}
+                additional_kwargs={"num_predict": self.sql_generation_tokens}
             ):
                 text = chunk.delta
                 full_response += text
@@ -433,7 +488,7 @@ class FastBIService:
             # Обычный режим
             resp = self.llm.complete(
                 prompt,
-                additional_kwargs={"num_predict": SQL_GENERATION_TOKENS}
+                additional_kwargs={"num_predict": self.sql_generation_tokens}
             )
             resp_text = resp.text
         
@@ -494,9 +549,10 @@ class FastBIService:
                     
                     resp_text = _call_ollama_direct(
                         prompt=prompt,
-                        model=DEFAULT_MODEL,
-                        num_predict=COMMENTARY_TOKENS,
-                        temperature=0.3,  # Чуть выше для более естественного комментария
+                        model=self.model,
+                        base_url=self.ollama_base_url,
+                        num_predict=self.commentary_tokens,
+                        temperature=self.temperature_commentary,
                         stream=True,
                         stream_callback=direct_stream_callback
                     )
@@ -504,9 +560,10 @@ class FastBIService:
                     # Обычный режим
                     resp_text = _call_ollama_direct(
                         prompt=prompt,
-                        model=DEFAULT_MODEL,
-                        num_predict=COMMENTARY_TOKENS,
-                        temperature=0.3,
+                        model=self.model,
+                        base_url=self.ollama_base_url,
+                        num_predict=self.commentary_tokens,
+                        temperature=self.temperature_commentary,
                         stream=False
                     )
                 
@@ -525,7 +582,7 @@ class FastBIService:
             token_count = 0
             for chunk in self.llm.stream_complete(
                 prompt,
-                additional_kwargs={"num_predict": COMMENTARY_TOKENS}
+                additional_kwargs={"num_predict": self.commentary_tokens}
             ):
                 text = chunk.delta
                 full_response += text
@@ -537,7 +594,7 @@ class FastBIService:
             # Обычный режим
             resp = self.llm.complete(
                 prompt,
-                additional_kwargs={"num_predict": COMMENTARY_TOKENS}
+                additional_kwargs={"num_predict": self.commentary_tokens}
             )
             resp_text = resp.text.strip()
         
