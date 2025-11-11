@@ -8,6 +8,10 @@ import sys
 from typing import Dict, List, Type, Optional
 from pathlib import Path
 
+import django
+from django.core.management import get_commands
+from django.apps import apps
+
 from commands.base import PoetryCommand
 
 from src.core.utils.auto_api.auto_config import get_env_deploy_type
@@ -32,7 +36,6 @@ class CommandDiscovery:
             deploy_type = get_env_deploy_type()
             os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
             
-            import django
             if not django.conf.settings.configured:
                 django.setup()
             
@@ -45,7 +48,6 @@ class CommandDiscovery:
         self._init_django()
         
         try:
-            from django.core.management import get_commands
             return get_commands()
         except Exception as e:
             print(f"Ошибка при получении Django команд: {e}")
@@ -58,8 +60,6 @@ class CommandDiscovery:
         commands = []
         
         try:
-            from django.apps import apps
-            
             for app_config in apps.get_app_configs():
                 app_path = Path(app_config.path)
                 commands_path = app_path / 'management' / 'commands'
