@@ -6,7 +6,7 @@ from django.http import StreamingHttpResponse
 import json
 
 from src.core.bi_analysis.bi_datasets.models import FileUpload, Dataset
-from .fast_bi_service import FastBIService, OLLAMA_AVAILABLE, OllamaLLMManager
+from .fast_bi_service import FastBIService, OLLAMA_AVAILABLE, OllamaLLMManager, DEFAULT_MODEL, OLLAMA_BASE_URL
 from src.core.bi_analysis.bi_charts.models import Chart
 import pandas as pd
 import numpy as np
@@ -67,6 +67,7 @@ class BIQueryView(APIView):
         question = request.data.get('question')
         want_commentary = request.data.get('want_commentary', True)
         use_stream = request.data.get('stream', True)  # По умолчанию streaming включен
+        ollama_config = request.data.get('ollama_config')  # Настройки Ollama из module-config
         
         if not file_id:
             return Response({
@@ -91,18 +92,18 @@ class BIQueryView(APIView):
         
         # Если запрошен streaming режим
         if use_stream:
-            return self._streaming_response(file_upload, question, want_commentary)
+            return self._streaming_response(file_upload, question, want_commentary, ollama_config)
         
         # Обычный режим (без streaming)
-        return self._regular_response(file_upload, question, want_commentary)
+        return self._regular_response(file_upload, question, want_commentary, ollama_config)
     
-    def _streaming_response(self, file_upload, question, want_commentary):
+    def _streaming_response(self, file_upload, question, want_commentary, ollama_config=None):
         """Возвращает streaming ответ через Server-Sent Events."""
         def event_stream():
             service = None
             try:
-                # Инициализируем сервис
-                service = FastBIService()
+                # Инициализируем сервис с настройками модуля
+                service = FastBIService(ollama_config=ollama_config)
                 
                 # Отправляем начальное событие
                 yield f"data: {json.dumps({'type': 'start', 'message': 'Начинаю обработку...'})}\n\n"
@@ -194,10 +195,11 @@ class BIQueryView(APIView):
         response['X-Accel-Buffering'] = 'no'
         return response
     
-    def _regular_response(self, file_upload, question, want_commentary):
+    def _regular_response(self, file_upload, question, want_commentary, ollama_config=None):
         """Возвращает обычный (не streaming) ответ."""
         try:
-            service = FastBIService()
+            # Инициализируем сервис с настройками модуля
+            service = FastBIService(ollama_config=ollama_config)
             
             load_result = service.load_file(
                 file_path=file_upload.file.path,
@@ -254,7 +256,7 @@ class OllamaStatusView(APIView):
         try:
             # Используем Singleton - модель уже загружена или будет загружена один раз
             llm_manager = OllamaLLMManager()
-            llm = llm_manager.get_llm(model="mistral7b-tuned", keep_alive="5m")
+            llm = llm_manager.get_llm(model=DEFAULT_MODEL, keep_alive="5m")
             
             # Проверяем, что модель доступна
             if llm:
@@ -386,7 +388,7 @@ class ChartAnalysisView(APIView):
                 from .fast_bi_service import OllamaLLMManager
                 
                 llm_manager = OllamaLLMManager()
-                llm = llm_manager.get_llm(model="mistral7b-tuned", keep_alive="5m")
+                llm = llm_manager.get_llm(model=DEFAULT_MODEL, keep_alive="5m")
                 
                 # Streaming анализ
                 analysis_text = ""
@@ -483,7 +485,7 @@ class ChartAnalysisView(APIView):
             from .fast_bi_service import OllamaLLMManager
             
             llm_manager = OllamaLLMManager()
-            llm = llm_manager.get_llm(model="mistral7b-tuned", keep_alive="5m")
+            llm = llm_manager.get_llm(model=DEFAULT_MODEL, keep_alive="5m")
             
             # Получаем анализ
             response = llm.complete(analysis_prompt)
@@ -800,6 +802,80 @@ class ChartAnalysisView(APIView):
             return f"{trend}\n{pattern}\n{volatility}\nСреднее значение: {avg_val:.2f}"
         except:
             return "Анализ визуального паттерна недоступен"
+
+
+class ChatView(APIView):
+    """
+    POST /api/ai_assistant/chat/
+    Простой RAG чат для общих вопросов
+    
+    Body:
+    {
+        "message": "Как работает система?"
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        if not OLLAMA_AVAILABLE:
+            return Response({
+                'success': False,
+                'error': 'Ollama не установлен. Установите: pip install llama-index-llms-ollama'
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        
+        message = request.data.get('message')
+        ollama_config = request.data.get('ollama_config')  # Настройки Ollama из module-config
+        
+        if not message or not message.strip():
+            return Response({
+                'success': False,
+                'error': 'Не указано сообщение'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Используем настройки из конфига модуля или общие настройки
+            if ollama_config:
+                base_url = ollama_config.get('base_url') or OLLAMA_BASE_URL
+                model = ollama_config.get('model') or DEFAULT_MODEL
+                temperature = ollama_config.get('temperature', 0.3)
+                max_tokens = ollama_config.get('max_tokens', 512)
+            else:
+                base_url = OLLAMA_BASE_URL
+                model = DEFAULT_MODEL
+                temperature = 0.3
+                max_tokens = 512
+            
+            # Используем Ollama для генерации ответа
+            llm_manager = OllamaLLMManager()
+            llm = llm_manager.get_llm(model=model, base_url=base_url, keep_alive="5m")
+            
+            # Системный промпт для RAG чата
+            system_prompt = """Ты - полезный AI ассистент системы ERGO MS. 
+Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
+Отвечай кратко, по делу и дружелюбно на русском языке.
+Если не знаешь ответа, честно скажи об этом."""
+            
+            # Формируем сообщения
+            full_prompt = f"{system_prompt}\n\nВопрос пользователя: {message}"
+            
+            # Генерируем ответ с учетом настроек модуля
+            response = llm.complete(full_prompt, additional_kwargs={
+                "num_predict": max_tokens,
+                "temperature": temperature
+            })
+            answer = response.text.strip()
+            
+            return Response({
+                'success': True,
+                'response': answer,
+                'message': answer,  # Для совместимости
+            }, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e),
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 
