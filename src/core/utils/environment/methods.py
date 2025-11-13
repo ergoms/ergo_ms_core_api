@@ -29,6 +29,8 @@ def _find_env_files(configs_dir: str) -> List[Tuple[str, str]]:
     # Рекурсивный поиск .env файлов
     for env_file in configs_path.rglob('.env*'):
         if env_file.is_file():
+            if env_file.name.endswith('.env.example'):
+                continue
             relative_path = env_file.relative_to(configs_path)
             env_files.append((str(env_file), str(relative_path)))
     
@@ -186,6 +188,8 @@ def _find_env_files_in_directory(directory: str, source_name: str) -> List[Tuple
     # Рекурсивный поиск .env файлов
     for env_file in search_path.rglob('*.env*'):
         if env_file.is_file():
+            if env_file.name.endswith('.env.example'):
+                continue
             # Создаем относительный путь от корня проекта
             try:
                 relative_path = env_file.relative_to(search_path)
