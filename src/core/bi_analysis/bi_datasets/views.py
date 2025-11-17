@@ -18,7 +18,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from openpyxl import load_workbook
-import pandas as pd
 import tempfile, os, openpyxl, csv
 
 from src.core.bi_analysis.bi_datasets.models import Dataset, FileUpload, DataSetTable, DataSetField, DatasetParam
@@ -445,6 +444,21 @@ class DatasetDraftPreviewView(APIView):
         joined_tables = data.get('joinedTables', [])
         limit = int(data.get('limit', 20))
 
+        def get_sheet_name(table_dict):
+            if not isinstance(table_dict, dict):
+                return None
+            sheet = (
+                table_dict.get('sheet_name') or
+                table_dict.get('sheetName') or
+                table_dict.get('sheet')
+            )
+            if sheet:
+                return sheet
+            nested_file = table_dict.get('file_upload') or {}
+            if isinstance(nested_file, dict):
+                return nested_file.get('sheet_name') or nested_file.get('sheet')
+            return None
+
         # Определяем, является ли главная таблица файловым источником
         is_main_file = 'file_id' in main_table and main_table.get('file_id')
         
@@ -454,9 +468,12 @@ class DatasetDraftPreviewView(APIView):
         if is_main_file:
             # Для файловых источников читаем данные напрямую
             try:
-                df_main = read_file_to_dataframe(main_table['file_id'])
+                df_main = read_file_to_dataframe(
+                    main_table['file_id'],
+                    sheet_name=get_sheet_name(main_table)
+                )
                 main_from, _ = dataframe_to_sql_values(df_main, main_alias)
-                main_cols = list(df_main.columns.astype(str))
+                main_cols = [str(col) for col in df_main.columns]
             except Exception as e:
                 raise ValidationError(f"Ошибка чтения главного файла: {str(e)}")
         else:
@@ -503,9 +520,12 @@ class DatasetDraftPreviewView(APIView):
             if is_join_file:
                 # Для файловых источников читаем данные напрямую
                 try:
-                    df_join = read_file_to_dataframe(jt['file_id'])
+                    df_join = read_file_to_dataframe(
+                        jt['file_id'],
+                        sheet_name=get_sheet_name(jt)
+                    )
                     join_from, _ = dataframe_to_sql_values(df_join, tbl_alias)
-                    join_cols = list(df_join.columns.astype(str))
+                    join_cols = [str(col) for col in df_join.columns]
                 except Exception as e:
                     raise ValidationError(f"Ошибка чтения файла для JOIN: {str(e)}")
             else:
@@ -1081,11 +1101,31 @@ class XlsxTempPreviewView(APIView):
             return Response({"error": "Временный файл не найден"}, status=status.HTTP_404_NOT_FOUND)
 
         try:
-            df     = pd.read_excel(temp_path, header=0 if has_header else None)
-            values = df.fillna('').astype(str).values.tolist()
+            wb = load_workbook(filename=temp_path, read_only=True, data_only=True)
+            try:
+                ws = wb.active
+            except IndexError:
+                wb.close()
+                return Response({"parsed": []})
+
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                normalized = [("" if cell is None else str(cell)) for cell in row]
+                rows.append(normalized)
+                if len(rows) >= 200:
+                    break
+            wb.close()
+
+            if not rows:
+                return Response({"parsed": []})
+
             if has_header:
-                values.insert(0, list(df.columns))
-            return Response({"parsed": values})
+                header, *body = rows
+                parsed = [list(header), *body]
+            else:
+                parsed = rows
+
+            return Response({"parsed": parsed})
         except Exception as exc:
             return Response({"error": f"Ошибка при чтении Excel: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

@@ -1,11 +1,57 @@
 import csv
 from uuid import uuid4
+from math import isnan
 from django.db import connection, transaction, models
 from rest_framework.exceptions import ValidationError
-import pandas as pd
 from psycopg2 import sql
+from openpyxl import load_workbook
 
 from src.core.bi_analysis.bi_datasets.models import DataSetField, DataSetTable, FileUpload
+
+
+class TableData:
+    __slots__ = ('columns', 'rows')
+
+    def __init__(self, columns, rows):
+        self.columns = columns or []
+        self.rows = rows or []
+
+    def __len__(self):
+        return len(self.rows)
+
+    def limited(self, limit):
+        if limit is None or limit <= 0 or len(self.rows) <= limit:
+            return self
+        return TableData(self.columns, self.rows[:limit])
+
+
+def _normalize_header(header):
+    if not header:
+        return []
+    normalized = []
+    for col in header:
+        if col is None:
+            normalized.append('')
+        else:
+            normalized.append(str(col))
+    return normalized
+
+
+def _ensure_row(values, expected_len):
+    row = list(values or [])
+    if expected_len and len(row) < expected_len:
+        row.extend([None] * (expected_len - len(row)))
+    elif expected_len and len(row) > expected_len:
+        row = row[:expected_len]
+    return row
+
+
+def _is_null(val):
+    if val is None:
+        return True
+    if isinstance(val, float):
+        return isnan(val)
+    return False
 
 def populate_initial_fields(dataset, temp_table_name, staging_table=None):
     """
@@ -49,8 +95,12 @@ def populate_initial_fields_from_file(dataset, file_upload, source_table):
     Читает файл напрямую через pandas для получения списка колонок.
     """
     try:
-        df = read_file_to_dataframe(file_upload.id)
-        cols = list(df.columns.astype(str))
+        table = read_file_to_dataframe(
+            file_upload.id,
+            sheet_name=getattr(source_table, 'sheet_name', None),
+            row_limit=0
+        )
+        cols = table.columns
     except Exception as e:
         # Fallback: используем columns_info если есть
         if file_upload.columns_info and 'columns' in file_upload.columns_info:
@@ -98,14 +148,12 @@ def find_existing_temp_table_for_file(file_upload_id):
         # Если не нашли через DataSetTable, проверяем все staging_ таблицы
         # Загружаем ожидаемые колонки из файла для сравнения
         cols_from_file = []
-        if upload.file_type == 'xlsx':
-            df = pd.read_excel(upload.file.path, header=0, nrows=0)
-            cols_from_file = list(df.columns.astype(str))
-        elif upload.file_type in ('csv', 'txt'):
-            with open(upload.file.path, 'r', encoding='cp1251', errors='replace', newline='') as f:
-                reader = csv.reader(f)
-                cols_from_file = next(reader, [])
-        
+        if upload.file_type in ('xlsx', 'csv', 'txt'):
+            table = read_file_to_dataframe(upload.id, row_limit=0)
+            cols_from_file = table.columns
+        else:
+            cols_from_file = []
+
         if cols_from_file:
             # Ищем все staging_ таблицы с таким же набором колонок
             # Также проверяем temp_ для обратной совместимости
@@ -405,101 +453,110 @@ def sync_dataset_fields_with_current_table(dataset):
             field.delete()
 
 
-def read_file_to_dataframe(file_upload_id):
-    """Читает файл в pandas DataFrame"""
+DEFAULT_PREVIEW_LIMIT = 1000
+
+
+def _read_excel_table(path, sheet_name=None, row_limit=DEFAULT_PREVIEW_LIMIT):
+    wb = load_workbook(filename=path, read_only=True, data_only=True)
+    try:
+        if sheet_name:
+            if sheet_name not in wb.sheetnames:
+                wb.close()
+                raise ValidationError(f"Лист '{sheet_name}' не найден в файле")
+            ws = wb[sheet_name]
+        else:
+            ws = wb[wb.sheetnames[0]]
+    except IndexError:
+        wb.close()
+        return TableData([], [])
+
+    rows_iter = ws.iter_rows(values_only=True)
+    header = next(rows_iter, None)
+    columns = _normalize_header(header)
+
+    if row_limit == 0:
+        wb.close()
+        return TableData(columns, [])
+
+    rows = []
+    for row in rows_iter:
+        rows.append(_ensure_row(row, len(columns)))
+        if row_limit and row_limit > 0 and len(rows) >= row_limit:
+            break
+
+    wb.close()
+    return TableData(columns, rows)
+
+
+def _read_csv_table(path, row_limit=DEFAULT_PREVIEW_LIMIT, encoding='cp1251'):
+    with open(path, 'r', encoding=encoding, errors='replace', newline='') as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        columns = _normalize_header(header)
+
+        if row_limit == 0:
+            return TableData(columns, [])
+
+        rows = []
+        for row in reader:
+            rows.append(_ensure_row(row, len(columns)))
+            if row_limit and row_limit > 0 and len(rows) >= row_limit:
+                break
+
+    return TableData(columns, rows)
+
+
+def read_file_to_dataframe(file_upload_id, sheet_name=None, row_limit=DEFAULT_PREVIEW_LIMIT):
+    """Читает файл в табличную структуру (без pandas)."""
     upload = FileUpload.objects.get(pk=file_upload_id)
     path = upload.file.path
-    
+    sheet = sheet_name or getattr(upload, 'sheet_name', None)
+
     if upload.file_type == 'xlsx':
-        return pd.read_excel(path, header=0)
+        return _read_excel_table(path, sheet, row_limit=row_limit)
     elif upload.file_type in ('csv', 'txt'):
-        return pd.read_csv(path, encoding='cp1251', on_bad_lines='skip')
+        return _read_csv_table(path, row_limit=row_limit)
     else:
         raise ValidationError(f"Неподдерживаемый тип файла: {upload.file_type}")
 
 
-def dataframe_to_sql_values(df, table_alias='t0'):
+def dataframe_to_sql_values(table, table_alias='t0'):
     """
-    Преобразует DataFrame в SQL.
-    Для небольших файлов использует VALUES, для больших - временную таблицу на время запроса.
-    Временная таблица автоматически удалится после выполнения запроса.
+    Преобразует TableData в SQL (VALUES ...).
     """
-    if df.empty:
+    if not table.columns:
         return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
-    
-    # Для файлов больше 1000 строк используем временную таблицу
-    # Для меньших файлов используем VALUES (быстрее для PostgreSQL)
-    MAX_VALUES_ROWS = 1000
-    
-    if len(df) > MAX_VALUES_ROWS:
-        # Используем временную таблицу, которая удалится автоматически после запроса
-        temp_table_name = f"temp_query_{uuid4().hex[:16]}"
-        
-        # Создаем таблицу
-        col_defs = ", ".join(
-            f'"{str(c).replace(chr(34), chr(34) + chr(34))}" TEXT' 
-            for c in df.columns
-        )
-        
-        with connection.cursor() as cursor:
-            # Создаем временную таблицу (ON COMMIT DROP - удалится после транзакции)
-            cursor.execute(f'CREATE TEMPORARY TABLE "{temp_table_name}" ({col_defs}) ON COMMIT DROP;')
-            
-            # Вставляем данные пакетами
-            placeholders = ", ".join(["%s"] * len(df.columns))
-            insert_sql = f'INSERT INTO "{temp_table_name}" VALUES ({placeholders})'
-            
-            data_rows = []
-            for _, row in df.iterrows():
-                values = []
-                for val in row.values:
-                    if pd.isna(val):
-                        values.append(None)
-                    else:
-                        values.append(str(val))
-                data_rows.append(values)
-            
-            if data_rows:
-                cursor.executemany(insert_sql, data_rows)
-        
-        # Возвращаем ссылку на временную таблицу
-        return sql.SQL('"{}" AS {}').format(
-            sql.Identifier(temp_table_name),
-            sql.Identifier(table_alias)
-        ), None
-    else:
-        # Для небольших файлов используем VALUES
-        data_rows = []
-        for _, row in df.iterrows():
-            values = []
-            for val in row.values:
-                if pd.isna(val):
-                    values.append('NULL')
-                else:
-                    # Экранируем значения для SQL
-                    val_str = str(val).replace("'", "''")
-                    values.append(f"'{val_str}'")
-            data_rows.append(f"({', '.join(values)})")
-        
-        # Создаем список колонок
-        col_defs = []
-        for col in df.columns:
-            col_name = str(col).replace('"', '""')
-            col_defs.append(f'"{col_name}"')
-        
-        # Строим VALUES подзапрос
-        if len(data_rows) == 0:
-            return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
-        
-        values_clause = ',\n'.join(data_rows)
-        col_list = ', '.join(col_defs)
-        
-        # Используем подзапрос с VALUES
-        values_query = f"""
-            (VALUES {values_clause}) AS {table_alias}({col_list})
-        """
-        
-        return sql.SQL(values_query), None
+
+    limited = table.limited(DEFAULT_PREVIEW_LIMIT)
+    if len(limited) == 0:
+        return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
+
+    def sanitize(val):
+        if _is_null(val):
+            return 'NULL'
+        val_str = str(val).replace("'", "''")
+        return f"'{val_str}'"
+
+    data_rows = []
+    for row in limited.rows:
+        sanitized = [sanitize(val) for val in row]
+        data_rows.append(f"({', '.join(sanitized)})")
+
+    col_defs = []
+    for col in limited.columns:
+        col_name = str(col).replace('"', '""')
+        if not col_name:
+            col_name = 'column'
+        col_defs.append(f'"{col_name}"')
+
+    values_clause = ',\n'.join(data_rows)
+    col_list = ', '.join(col_defs)
+
+    values_query = f"""
+        (VALUES {values_clause}) AS {table_alias}({col_list})
+    """
+
+    return sql.SQL(values_query), None
 
 
 def build_dataset_query(dataset, select_fields=None, limit=None, where_clause=None):
@@ -530,7 +587,10 @@ def build_dataset_query(dataset, select_fields=None, limit=None, where_clause=No
     if is_file_source:
         # Для файловых источников читаем данные напрямую из файла
         try:
-            df = read_file_to_dataframe(main_table.file_upload_id)
+            df = read_file_to_dataframe(
+                main_table.file_upload_id,
+                sheet_name=getattr(main_table, 'sheet_name', None)
+            )
             from_with_alias, _ = dataframe_to_sql_values(df, main_alias)
         except Exception as e:
             raise ValueError(f"Ошибка чтения файла: {str(e)}")
@@ -569,7 +629,10 @@ def build_dataset_query(dataset, select_fields=None, limit=None, where_clause=No
         if is_join_file_source:
             # Для файловых источников читаем данные напрямую из файла
             try:
-                df_join = read_file_to_dataframe(join_table.file_upload_id)
+                df_join = read_file_to_dataframe(
+                    join_table.file_upload_id,
+                    sheet_name=getattr(join_table, 'sheet_name', None)
+                )
                 join_table_ref, _ = dataframe_to_sql_values(df_join, table_alias)
             except Exception as e:
                 raise ValueError(f"Ошибка чтения файла для JOIN: {str(e)}")
