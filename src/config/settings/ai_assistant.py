@@ -13,3 +13,5 @@ OLLAMA_DEFAULT_MODEL = env.str('OLLAMA_DEFAULT_MODEL', default='mistral7b-tuned'
 # Использовать прямой API Ollama (быстрее в 10+ раз)
 OLLAMA_USE_DIRECT_API = env.bool('OLLAMA_USE_DIRECT_API', default=True)
 
+
+

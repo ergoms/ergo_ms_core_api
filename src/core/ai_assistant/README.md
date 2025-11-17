@@ -39,16 +39,35 @@ POST /api/ai_assistant/bi_query/
 ## Архитектура
 
 ```
-User Query → FastBIService → DuckDB + Ollama → SQL Results
+User Query → FastBIService → DuckDB → Ollama (HTTP) → SQL + Insights
 ```
 
-## Конфигурация
+- Используется только локальный Ollama API (HTTP клиент)
+- Конфигурация описана в `config.py` (`RuntimeLLMConfig`)
+- Параметры можно переопределять через module-config (`ollama_config` в запросе)
 
-`fast_bi_service.py`:
+### Ключевые параметры
+
 ```python
-DEFAULT_MODEL = "mistral7b-tuned"  # Модель Ollama
-MAX_OUTPUT_TOKENS = 256            # Максимум токенов в ответе
-SQL_TIMEOUT_SEC = 30               # Таймаут SQL запроса
+provider="auto"          # auto | ollama
+model="mistral7b-tuned"  # модель по умолчанию
+sql_tokens=256           # лимит токенов для генерации SQL
+commentary_tokens=192    # лимит токенов для комментариев
+compute_device="gpu"     # gpu / cpu (0 GPU = CPU)
+request_timeout=120.0    # таймаут HTTP запроса к Ollama
+concurrency_limit=8      # пул соединений HTTP клиента
+base_url="http://localhost:11434"  # адрес Ollama
+```
+
+Пример `ollama_config`:
+
+```json
+{
+  "base_url": "http://127.0.0.1:11434",
+  "model": "mistral",
+  "compute_device": "cpu",
+  "sql_tokens": 200
+}
 ```
 
 ## Безопасность
@@ -61,9 +80,8 @@ SQL_TIMEOUT_SEC = 30               # Таймаут SQL запроса
 
 ## Требования
 
-- **Ollama** - запущен и доступен
-- **Модель** - загружена в Ollama (например `mistral`)
-- **Python пакеты**: `duckdb`, `sqlparse`, `llama-index-llms-ollama`
+- **DuckDB**, **pandas**, **sqlparse**
+- **Ollama** с загруженной моделью (`ollama pull mistral`)
 
 ## Troubleshooting
 
