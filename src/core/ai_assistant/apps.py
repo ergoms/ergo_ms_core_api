@@ -6,3 +6,4 @@ class AiAssistantConfig(AppConfig):
     name = 'src.core.ai_assistant'
     label = 'ai_assistant'
 
+
