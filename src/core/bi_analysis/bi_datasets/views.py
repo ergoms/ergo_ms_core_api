@@ -445,6 +445,21 @@ class DatasetDraftPreviewView(APIView):
         joined_tables = data.get('joinedTables', [])
         limit = int(data.get('limit', 20))
 
+        def get_sheet_name(table_dict):
+            if not isinstance(table_dict, dict):
+                return None
+            sheet = (
+                table_dict.get('sheet_name') or
+                table_dict.get('sheetName') or
+                table_dict.get('sheet')
+            )
+            if sheet:
+                return sheet
+            nested_file = table_dict.get('file_upload') or {}
+            if isinstance(nested_file, dict):
+                return nested_file.get('sheet_name') or nested_file.get('sheet')
+            return None
+
         # Определяем, является ли главная таблица файловым источником
         is_main_file = 'file_id' in main_table and main_table.get('file_id')
         
@@ -454,7 +469,10 @@ class DatasetDraftPreviewView(APIView):
         if is_main_file:
             # Для файловых источников читаем данные напрямую
             try:
-                df_main = read_file_to_dataframe(main_table['file_id'])
+                df_main = read_file_to_dataframe(
+                    main_table['file_id'],
+                    sheet_name=get_sheet_name(main_table)
+                )
                 main_from, _ = dataframe_to_sql_values(df_main, main_alias)
                 main_cols = list(df_main.columns.astype(str))
             except Exception as e:
@@ -503,7 +521,10 @@ class DatasetDraftPreviewView(APIView):
             if is_join_file:
                 # Для файловых источников читаем данные напрямую
                 try:
-                    df_join = read_file_to_dataframe(jt['file_id'])
+                    df_join = read_file_to_dataframe(
+                        jt['file_id'],
+                        sheet_name=get_sheet_name(jt)
+                    )
                     join_from, _ = dataframe_to_sql_values(df_join, tbl_alias)
                     join_cols = list(df_join.columns.astype(str))
                 except Exception as e:

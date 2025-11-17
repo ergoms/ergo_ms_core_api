@@ -38,7 +38,8 @@ class DataSetTableSerializer(serializers.ModelSerializer):
             'id', 'dataset', 'connection', 'table_name', 'alias',
             'joined_on', 'order', 'table_ref', 'display_name',
             'file_upload_id', 'file_upload_name', 'columns_info',
-            'joined_on_type', 'joined_on_left', 'joined_on_right'
+            'joined_on_type', 'joined_on_left', 'joined_on_right',
+            'sheet_name'
         ]
         read_only_fields = ['id']
         
