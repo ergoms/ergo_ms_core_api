@@ -5,7 +5,6 @@ from src.core.bi_analysis.bi_connections.models import Connection
 from src.core.bi_analysis.bi_datasets.models import FileUpload, Dataset, DataSetTable, DataSetField, DatasetParam
 
 import os
-import pandas as pd
 import openpyxl, csv
 
 User = get_user_model()
