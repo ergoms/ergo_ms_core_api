@@ -506,8 +506,23 @@ def _read_csv_table(path, row_limit=DEFAULT_PREVIEW_LIMIT, encoding='cp1251'):
     return TableData(columns, rows)
 
 
-def read_file_to_dataframe(file_upload_id, sheet_name=None, row_limit=DEFAULT_PREVIEW_LIMIT):
-    """Читает файл в табличную структуру (без pandas)."""
+def read_file_to_dataframe(file_upload_id, sheet_name=None, row_limit=DEFAULT_PREVIEW_LIMIT, use_polars=True):
+    """
+    Читает файл в табличную структуру.
+    Использует polars для максимальной производительности, если доступен.
+    """
+    # Пробуем использовать polars для ускорения
+    if use_polars:
+        try:
+            from src.core.bi_analysis.tasks import _read_file_with_polars
+            columns, rows = _read_file_with_polars(file_upload_id, sheet_name, row_limit)
+            return TableData(columns, rows)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Не удалось использовать polars, используется fallback метод: {str(e)}")
+    
+    # Fallback на старый метод
     upload = FileUpload.objects.get(pk=file_upload_id)
     path = upload.file.path
     sheet = sheet_name or getattr(upload, 'sheet_name', None)
@@ -559,7 +574,7 @@ def dataframe_to_sql_values(table, table_alias='t0'):
     return sql.SQL(values_query), None
 
 
-def build_dataset_query(dataset, select_fields=None, limit=None, where_clause=None):
+def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, where_clause=None, search=None):
     """
     Строит SQL-запрос для датасета на основе метаданных таблиц и полей.
     Для файловых источников читает данные напрямую из файлов без создания таблиц.
@@ -568,7 +583,9 @@ def build_dataset_query(dataset, select_fields=None, limit=None, where_clause=No
         dataset: объект Dataset
         select_fields: список имен полей для SELECT (None = все поля)
         limit: лимит строк
+        offset: смещение для пагинации
         where_clause: дополнительное условие WHERE
+        search: строка поиска (будет добавлена в WHERE как LIKE по всем текстовым полям)
     
     Returns:
         SQL объект для выполнения запроса
@@ -732,9 +749,39 @@ def build_dataset_query(dataset, select_fields=None, limit=None, where_clause=No
     # Добавляем JOIN'ы
     query_parts.extend(joins)
     
-    # Добавляем WHERE если есть
+    # Собираем условия WHERE
+    where_conditions = []
+    
     if where_clause:
-        query_parts.append(sql.SQL('WHERE {}').format(sql.SQL(where_clause)))
+        where_conditions.append(sql.SQL(where_clause))
+    
+    # Добавляем поиск по всем текстовым полям
+    if search:
+        search_conditions = []
+        # Получаем все поля для поиска
+        search_fields = dataset.fields.all() if select_fields is None else dataset.fields.filter(name__in=select_fields)
+        
+        for field in search_fields:
+            table_alias = table_aliases.get(field.source_table.id, main_alias)
+            # Ищем только в текстовых полях (предполагаем, что все поля могут быть текстовыми)
+            search_conditions.append(
+                sql.SQL('CAST({}.{} AS TEXT) ILIKE {}').format(
+                    sql.Identifier(table_alias),
+                    sql.Identifier(field.source_column),
+                    sql.Literal(f'%{search}%')
+                )
+            )
+        
+        if search_conditions:
+            where_conditions.append(sql.SQL('({})').format(sql.SQL(' OR ').join(search_conditions)))
+    
+    # Добавляем WHERE если есть условия
+    if where_conditions:
+        query_parts.append(sql.SQL('WHERE {}').format(sql.SQL(' AND ').join(where_conditions)))
+    
+    # Добавляем OFFSET если есть
+    if offset is not None and offset > 0:
+        query_parts.append(sql.SQL('OFFSET {}').format(sql.Literal(offset)))
     
     # Добавляем LIMIT если есть
     if limit is not None:
