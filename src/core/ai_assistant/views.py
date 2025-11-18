@@ -6,7 +6,9 @@ from django.http import StreamingHttpResponse
 import json
 
 from src.core.bi_analysis.bi_datasets.models import FileUpload, Dataset
-from .fast_bi_service import FastBIService, OLLAMA_AVAILABLE, OllamaLLMManager, DEFAULT_MODEL, OLLAMA_BASE_URL
+from .fast_bi_service import FastBIService, DEFAULT_MODEL, OLLAMA_BASE_URL
+from .config import build_runtime_config
+from .llm_clients import build_llm_client, LLMClientError
 from src.core.bi_analysis.bi_charts.models import Chart
 import pandas as pd
 import numpy as np
@@ -41,6 +43,25 @@ class UserFilesListView(APIView):
         })
 
 
+def _create_ollama_client(ollama_config=None):
+    runtime_config = build_runtime_config(ollama_config or {})
+    provider_name = runtime_config.provider.value if hasattr(runtime_config.provider, "value") else str(runtime_config.provider)
+    base_url = runtime_config.provider_config.get("base_url", runtime_config.base_url or OLLAMA_BASE_URL)
+    client = build_llm_client(
+        provider=provider_name,
+        model=runtime_config.model,
+        base_url=base_url,
+        request_timeout=runtime_config.request_timeout,
+        stream_timeout=runtime_config.stream_timeout,
+        concurrency_limit=runtime_config.concurrency_limit,
+        max_retries=runtime_config.max_retries,
+        keep_alive=runtime_config.keep_alive,
+        provider_config=runtime_config.provider_config,
+        device_config=runtime_config.device_config,
+    )
+    return runtime_config, client
+
+
 class BIQueryView(APIView):
     """
     POST /api/ai_assistant/bi_query/
@@ -57,12 +78,6 @@ class BIQueryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def post(self, request):
-        if not OLLAMA_AVAILABLE:
-            return Response({
-                'success': False,
-                'error': 'Ollama не установлен. Установите: pip install llama-index-llms-ollama'
-            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        
         file_id = request.data.get('file_id')
         question = request.data.get('question')
         want_commentary = request.data.get('want_commentary', True)
@@ -247,29 +262,14 @@ class OllamaStatusView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
-        if not OLLAMA_AVAILABLE:
-            return Response({
-                'available': False,
-                'message': 'llama-index-llms-ollama не установлен'
-            })
-        
         try:
-            # Используем Singleton - модель уже загружена или будет загружена один раз
-            llm_manager = OllamaLLMManager()
-            llm = llm_manager.get_llm(model=DEFAULT_MODEL, keep_alive="5m")
-            
-            # Проверяем, что модель доступна
-            if llm:
-                return Response({
-                    'available': True,
-                    'message': 'Ollama доступен',
-                    'model_loaded': llm_manager._model_name
-                })
-            else:
-                return Response({
-                    'available': False,
-                    'message': 'Не удалось инициализировать LLM'
-                })
+            _, client = _create_ollama_client({'model': DEFAULT_MODEL})
+            client.complete("ping", num_predict=1, temperature=0.0, stream=False)
+            return Response({
+                'available': True,
+                'message': 'Ollama доступен',
+                'model_loaded': DEFAULT_MODEL
+            })
         except Exception as e:
             return Response({
                 'available': False,
@@ -291,12 +291,6 @@ class ChartAnalysisView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def post(self, request):
-        if not OLLAMA_AVAILABLE:
-            return Response({
-                'success': False,
-                'error': 'Ollama не установлен. Установите: pip install llama-index-llms-ollama'
-            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        
         chart_id = request.data.get('chart_id')
         use_stream = request.data.get('stream', True)
         
@@ -378,24 +372,23 @@ class ChartAnalysisView(APIView):
                 # Создаем DataFrame
                 df = pd.DataFrame(rows)
                 
-                # Анализируем график БЕЗ SQL - используем уже полученные данные
                 yield f"data: {json.dumps({'type': 'stage', 'message': '💭 Анализирую график...'})}\n\n"
                 
-                # Формируем промпт для анализа
                 analysis_prompt = self._generate_analysis_prompt(chart, df)
+                runtime_config, client = _create_ollama_client()
+                try:
+                    analysis_text = client.complete(
+                        analysis_prompt,
+                        num_predict=runtime_config.commentary_tokens,
+                        temperature=runtime_config.temperature_commentary,
+                        stream=False,
+                    )
+                except Exception as error:
+                    yield f"data: {json.dumps({'type': 'error', 'message': str(error)}, ensure_ascii=False)}\n\n"
+                    return
                 
-                # Генерируем анализ через Ollama напрямую
-                from .fast_bi_service import OllamaLLMManager
-                
-                llm_manager = OllamaLLMManager()
-                llm = llm_manager.get_llm(model=DEFAULT_MODEL, keep_alive="5m")
-                
-                # Streaming анализ
-                analysis_text = ""
-                for token in llm.stream_complete(analysis_prompt):
-                    chunk = token.delta
-                    analysis_text += chunk
-                    yield f"data: {json.dumps({'type': 'commentary', 'text': chunk}, ensure_ascii=False)}\n\n"
+                if analysis_text:
+                    yield f"data: {json.dumps({'type': 'commentary', 'text': analysis_text}, ensure_ascii=False)}\n\n"
                 
                 # Отправляем финальные данные
                 final_data = {
@@ -478,25 +471,21 @@ class ChartAnalysisView(APIView):
             # Создаем DataFrame
             df = pd.DataFrame(rows)
             
-            # Формируем промпт для анализа
             analysis_prompt = self._generate_analysis_prompt(chart, df)
-            
-            # Генерируем анализ через Ollama напрямую
-            from .fast_bi_service import OllamaLLMManager
-            
-            llm_manager = OllamaLLMManager()
-            llm = llm_manager.get_llm(model=DEFAULT_MODEL, keep_alive="5m")
-            
-            # Получаем анализ
-            response = llm.complete(analysis_prompt)
-            analysis_text = response.text
+            runtime_config, client = _create_ollama_client()
+            response_text = client.complete(
+                analysis_prompt,
+                num_predict=runtime_config.commentary_tokens,
+                temperature=runtime_config.temperature_commentary,
+                stream=False,
+            )
             
             return Response({
                 'success': True,
                 'chart_name': chart.name,
                 'sql': None,  # Нет SQL для анализа графика
                 'data': rows[:100],  # Первые 100 строк
-                'comment': analysis_text,
+                'comment': response_text,
                 'rows': len(rows),
                 'columns': list(df.columns),
             }, status=status.HTTP_200_OK)
@@ -817,12 +806,6 @@ class ChatView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def post(self, request):
-        if not OLLAMA_AVAILABLE:
-            return Response({
-                'success': False,
-                'error': 'Ollama не установлен. Установите: pip install llama-index-llms-ollama'
-            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        
         message = request.data.get('message')
         ollama_config = request.data.get('ollama_config')  # Настройки Ollama из module-config
         
@@ -833,23 +816,10 @@ class ChatView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Используем настройки из конфига модуля или общие настройки
-            if ollama_config:
-                base_url = ollama_config.get('base_url') or OLLAMA_BASE_URL
-                model = ollama_config.get('model') or DEFAULT_MODEL
-                temperature = ollama_config.get('temperature', 0.3)
-                max_tokens = ollama_config.get('max_tokens', 512)
-            else:
-                base_url = OLLAMA_BASE_URL
-                model = DEFAULT_MODEL
-                temperature = 0.3
-                max_tokens = 512
-            
-            # Используем Ollama для генерации ответа
-            llm_manager = OllamaLLMManager()
-            llm = llm_manager.get_llm(model=model, base_url=base_url, keep_alive="5m")
-            
-            # Системный промпт для RAG чата
+            runtime_config, client = _create_ollama_client(ollama_config)
+            temperature = (ollama_config or {}).get('temperature', 0.3)
+            max_tokens = (ollama_config or {}).get('max_tokens', 512)
+
             system_prompt = """Ты - полезный AI ассистент системы ERGO MS. 
 Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
 Отвечай кратко, по делу и дружелюбно на русском языке.
@@ -858,12 +828,12 @@ class ChatView(APIView):
             # Формируем сообщения
             full_prompt = f"{system_prompt}\n\nВопрос пользователя: {message}"
             
-            # Генерируем ответ с учетом настроек модуля
-            response = llm.complete(full_prompt, additional_kwargs={
-                "num_predict": max_tokens,
-                "temperature": temperature
-            })
-            answer = response.text.strip()
+            answer = client.complete(
+                full_prompt,
+                num_predict=max_tokens,
+                temperature=temperature,
+                stream=False,
+            ).strip()
             
             return Response({
                 'success': True,

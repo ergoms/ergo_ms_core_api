@@ -361,7 +361,20 @@ class DatasetPreviewView(APIView):
         if not dataset:
             return Response({"detail": "Not found"}, status=404)
 
-        limit = int(request.query_params.get('limit', 10))
+        limit = int(request.query_params.get('limit', 1000))
+        offset = int(request.query_params.get('offset', 0))
+        search = request.query_params.get('search', '').strip()
+        use_async = request.query_params.get('async', 'false').lower() == 'true'
+        
+        # Для больших лимитов используем асинхронную обработку
+        if use_async or limit > 100:
+            from src.core.bi_analysis.tasks import process_dataset_preview
+            task = process_dataset_preview.delay(pk, limit)
+            return Response({
+                "task_id": task.id,
+                "status": "processing",
+                "message": "Предпросмотр обрабатывается асинхронно"
+            }, status=202)
         
         try:
             from src.core.bi_analysis.services.services import build_dataset_query
@@ -378,16 +391,36 @@ class DatasetPreviewView(APIView):
                 else:
                     schema, table = 'public', base_table
                 
+                # Строим запрос с поиском и пагинацией
+                query_parts = [f'SELECT * FROM "{schema}"."{table}"']
+                
+                if search:
+                    # Получаем колонки для поиска
+                    with connection.cursor() as cursor:
+                        cursor.execute(f'SELECT * FROM "{schema}"."{table}" LIMIT 0')
+                        columns = [col[0] for col in cursor.description]
+                    
+                    search_conditions = [f'CAST("{col}" AS TEXT) ILIKE %s' for col in columns]
+                    query_parts.append(f"WHERE ({' OR '.join(search_conditions)})")
+                    params = [f'%{search}%'] * len(columns)
+                else:
+                    params = []
+                
+                query_parts.append(f'LIMIT %s OFFSET %s')
+                params.extend([limit, offset])
+                
                 with connection.cursor() as cursor:
-                    cursor.execute(
-                        f'SELECT * FROM "{schema}"."{table}" LIMIT %s',
-                        [limit],
-                    )
+                    cursor.execute(' '.join(query_parts), params)
                     rows = cursor.fetchall()
                     columns = [col[0] for col in cursor.description]
             else:
                 # Используем новую логику с динамическим SQL
-                query = build_dataset_query(dataset, limit=limit)
+                query = build_dataset_query(
+                    dataset, 
+                    limit=limit, 
+                    offset=offset,
+                    search=search if search else None
+                )
                 
                 with connection.cursor() as cursor:
                     cursor.execute(query)
@@ -403,8 +436,66 @@ class DatasetPreviewView(APIView):
 
         return Response({
             "columns": columns,
-            "rows": rows
+            "rows": rows,
+            "has_more": len(rows) == limit  # Указываем, есть ли еще данные
         })
+
+
+class DatasetPreviewTaskStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Получает статус и результат асинхронной задачи предпросмотра.
+        """
+        task_id = request.query_params.get('task_id')
+        if not task_id:
+            return Response({"detail": "Не указан task_id"}, status=400)
+        
+        try:
+            from celery.result import AsyncResult
+            from src.config.celery import celery_app
+            
+            task = AsyncResult(task_id, app=celery_app)
+            
+            if task.state == 'PENDING':
+                response = {
+                    'task_id': task_id,
+                    'status': 'pending',
+                    'message': 'Задача ожидает выполнения'
+                }
+            elif task.state == 'PROGRESS':
+                response = {
+                    'task_id': task_id,
+                    'status': 'processing',
+                    'message': 'Задача выполняется',
+                    'progress': task.info.get('progress', 0) if isinstance(task.info, dict) else None
+                }
+            elif task.state == 'SUCCESS':
+                result = task.result
+                response = {
+                    'task_id': task_id,
+                    'status': 'success',
+                    'result': result
+                }
+            elif task.state == 'FAILURE':
+                response = {
+                    'task_id': task_id,
+                    'status': 'failure',
+                    'error': str(task.info) if task.info else 'Неизвестная ошибка'
+                }
+            else:
+                response = {
+                    'task_id': task_id,
+                    'status': task.state.lower(),
+                    'message': f'Статус задачи: {task.state}'
+                }
+            
+            return Response(response, status=200)
+            
+        except Exception as e:
+            return Response({"detail": f"Ошибка получения статуса задачи: {str(e)}"}, status=500)
+
 
 class DatasetColumnsAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -433,12 +524,31 @@ class DatasetDraftPreviewView(APIView):
     def post(self, request):
         """
         Принимает черновик датасета (главная таблица + join'ы), возвращает предпросмотр данных.
-        Работает без создания постоянных таблиц - читает файлы напрямую через pandas.
+        Работает без создания постоянных таблиц - читает файлы напрямую через polars.
+        Поддерживает асинхронную обработку через celery для больших файлов.
         """
         from src.core.bi_analysis.services.services import read_file_to_dataframe, dataframe_to_sql_values
         from psycopg2 import sql
         
         data = request.data
+        use_async = data.get('async', False)
+        limit = int(data.get('limit', 20))
+        
+        # Для больших лимитов или множества файлов используем асинхронную обработку
+        file_count = sum([
+            1 if 'file_id' in data.get('mainTable', {}) and data.get('mainTable', {}).get('file_id') else 0,
+            sum([1 if 'file_id' in jt and jt.get('file_id') else 0 for jt in data.get('joinedTables', [])])
+        ])
+        
+        if use_async or limit > 100 or file_count > 2:
+            from src.core.bi_analysis.tasks import process_draft_preview
+            task = process_draft_preview.delay(data)
+            return Response({
+                "task_id": task.id,
+                "status": "processing",
+                "message": "Предпросмотр обрабатывается асинхронно"
+            }, status=202)
+        
         connection_id = data.get('connection_id')
         main_table = data.get('mainTable')
         joined_tables = data.get('joinedTables', [])
@@ -1090,17 +1200,84 @@ class XlsxSheetListView(APIView):
 class XlsxTempPreviewView(APIView):
     """
     POST /xlsx/preview/  — предпросмотр содержимого временного .xlsx-файла
+    Использует Celery для асинхронной обработки больших файлов с polars, чанкингом и векторизацией.
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         temp_path     = request.data.get('temp_path')
         has_header    = request.data.get('has_header', 'true').lower() == 'true'
+        sheet_name    = request.data.get('sheet_name')
+        row_limit     = int(request.data.get('row_limit', 200))
+        use_async     = request.data.get('async', 'false').lower() == 'true'
 
         if not temp_path or not os.path.exists(temp_path):
             return Response({"error": "Временный файл не найден"}, status=status.HTTP_404_NOT_FOUND)
 
+        # Определяем размер файла для выбора стратегии
+        file_size = os.path.getsize(temp_path)
+        # Для файлов больше 5MB или при явном запросе используем асинхронную обработку
+        should_use_async = use_async or file_size > 5 * 1024 * 1024 or row_limit > 500
+
+        if should_use_async:
+            from src.core.bi_analysis.tasks import process_file_preview
+            task = process_file_preview.delay(temp_path, sheet_name, row_limit, has_header)
+            return Response({
+                "task_id": task.id,
+                "status": "processing",
+                "message": "Предпросмотр обрабатывается асинхронно"
+            }, status=202)
+
+        # Синхронная обработка для маленьких файлов
         try:
+            # Пробуем использовать polars для быстрой обработки
+            try:
+                import polars as pl
+                
+                file_ext = os.path.splitext(temp_path)[1].lower()
+                
+                if file_ext in ('.xlsx', '.xls'):
+                    if sheet_name:
+                        df = pl.read_excel(temp_path, sheet_name=sheet_name)
+                    else:
+                        df = pl.read_excel(temp_path, sheet_index=0)
+                    
+                    if row_limit and row_limit > 0:
+                        df = df.head(row_limit)
+                    
+                    columns = df.columns
+                    rows_list = df.to_numpy().tolist()
+                    
+                    if has_header and rows_list:
+                        parsed = [list(columns), *rows_list]
+                    else:
+                        parsed = rows_list
+                    
+                    return Response({"parsed": parsed})
+                    
+                elif file_ext in ('.csv', '.txt'):
+                    try:
+                        df = pl.read_csv(temp_path, encoding='utf8', try_parse_dates=True)
+                    except:
+                        df = pl.read_csv(temp_path, encoding='cp1251', try_parse_dates=True)
+                    
+                    if row_limit and row_limit > 0:
+                        df = df.head(row_limit)
+                    
+                    columns = df.columns
+                    rows_list = df.to_numpy().tolist()
+                    
+                    if has_header and rows_list:
+                        parsed = [list(columns), *rows_list]
+                    else:
+                        parsed = rows_list
+                    
+                    return Response({"parsed": parsed})
+            except ImportError:
+                # Fallback на openpyxl если polars не установлен
+                pass
+
+            # Fallback на openpyxl
             wb = load_workbook(filename=temp_path, read_only=True, data_only=True)
             try:
                 ws = wb.active
@@ -1112,7 +1289,7 @@ class XlsxTempPreviewView(APIView):
             for row in ws.iter_rows(values_only=True):
                 normalized = [("" if cell is None else str(cell)) for cell in row]
                 rows.append(normalized)
-                if len(rows) >= 200:
+                if len(rows) >= row_limit:
                     break
             wb.close()
 
@@ -1127,7 +1304,66 @@ class XlsxTempPreviewView(APIView):
 
             return Response({"parsed": parsed})
         except Exception as exc:
-            return Response({"error": f"Ошибка при чтении Excel: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": f"Ошибка при чтении файла: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FilePreviewTaskStatusView(APIView):
+    """
+    GET /xlsx/preview/task-status/  — получение статуса задачи предпросмотра файла
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """
+        Получает статус и результат асинхронной задачи предпросмотра файла.
+        """
+        task_id = request.query_params.get('task_id')
+        if not task_id:
+            return Response({"detail": "Не указан task_id"}, status=400)
+        
+        try:
+            from celery.result import AsyncResult
+            from src.config.celery import celery_app
+            
+            task = AsyncResult(task_id, app=celery_app)
+            
+            if task.state == 'PENDING':
+                response = {
+                    'task_id': task_id,
+                    'status': 'pending',
+                    'message': 'Задача ожидает выполнения'
+                }
+            elif task.state == 'PROGRESS':
+                response = {
+                    'task_id': task_id,
+                    'status': 'processing',
+                    'message': task.info.get('message', 'Задача выполняется') if isinstance(task.info, dict) else 'Задача выполняется',
+                    'progress': task.info.get('progress', 0) if isinstance(task.info, dict) else None
+                }
+            elif task.state == 'SUCCESS':
+                result = task.result
+                response = {
+                    'task_id': task_id,
+                    'status': 'success',
+                    'result': result
+                }
+            elif task.state == 'FAILURE':
+                response = {
+                    'task_id': task_id,
+                    'status': 'failure',
+                    'error': str(task.info) if task.info else 'Неизвестная ошибка'
+                }
+            else:
+                response = {
+                    'task_id': task_id,
+                    'status': task.state.lower(),
+                    'message': f'Статус задачи: {task.state}'
+                }
+            
+            return Response(response, status=200)
+            
+        except Exception as e:
+            return Response({"detail": f"Ошибка получения статуса задачи: {str(e)}"}, status=500)
 
 # ==============================================================================
 # Field values endpoint
