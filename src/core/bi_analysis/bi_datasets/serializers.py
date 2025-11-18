@@ -254,6 +254,11 @@ class FileUploadSerializer(serializers.ModelSerializer):
             'owner': {'read_only': True},
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Кэш для проверки существования файлов в рамках одного запроса
+        self._file_exists_cache = {}
+
     def get_file_url(self, obj):
         try:
             return obj.file.url if obj.file else None
@@ -268,13 +273,22 @@ class FileUploadSerializer(serializers.ModelSerializer):
             return None
     
     def get_exists(self, obj):
-        """Проверяет существование файла на диске"""
-        try:
-            if obj.file and obj.file.path:
-                return os.path.exists(obj.file.path)
-            return False
-        except ValueError:
-            return False
+        """Проверяет существование файла на диске с кэшированием"""
+        # Используем id файла как ключ кэша
+        cache_key = obj.id if obj.id else id(obj)
+        
+        if cache_key not in self._file_exists_cache:
+            try:
+                if obj.file and hasattr(obj.file, 'path'):
+                    file_path = obj.file.path
+                    # Кэшируем результат проверки
+                    self._file_exists_cache[cache_key] = os.path.exists(file_path)
+                else:
+                    self._file_exists_cache[cache_key] = False
+            except (ValueError, AttributeError):
+                self._file_exists_cache[cache_key] = False
+        
+        return self._file_exists_cache[cache_key]
     
     def get_missing(self, obj):
         """Возвращает True если файл отсутствует"""

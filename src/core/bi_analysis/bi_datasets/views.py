@@ -105,7 +105,9 @@ class DatasetListCreateView(generics.ListCreateAPIView):
         # Создаем поля на основе информации о колонках из файла
         populate_initial_fields_from_file(dataset, dataset.file_source, main_table)
         
-        fields_data = self.request.data.get('fields', [])
+        # Безопасный доступ к request.data
+        request_data = getattr(self.request, 'data', {})
+        fields_data = request_data.get('fields', []) if isinstance(request_data, dict) else []
         if fields_data:
             for field in fields_data:
                 obj = dataset.fields.filter(name=field.get('name')).first()
@@ -119,7 +121,7 @@ class DatasetListCreateView(generics.ListCreateAPIView):
                         update_fields.append('type')
                     if update_fields:
                         obj.save(update_fields=update_fields)
-        params_data = self.request.data.get('params')
+        params_data = request_data.get('params') if isinstance(request_data, dict) else None
         if params_data is not None:
             # поддержка формата из фронта: [{name,type,defaultValue,sourceUsage,...}]
             try:
@@ -148,7 +150,8 @@ class DatasetRemoveRelationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
-        right_id = request.data.get("right_table_id")
+        request_data = getattr(request, 'data', {})
+        right_id = request_data.get("right_table_id") if isinstance(request_data, dict) else None
         if not right_id:
             return Response(
                 {"success": False, "error": "right_table_id is required"}, status=400
@@ -233,11 +236,14 @@ class DatasetJoinTableView(APIView):
     def post(self, request, pk, *args, **kwargs):
         dataset = get_object_or_404(Dataset, pk=pk)
 
-        staging_name = request.data.get("staging_name") or request.data.get("stagingName")
-        left_column  = request.data.get("left_column")  or request.data.get("leftColumn")
-        right_column = request.data.get("right_column") or request.data.get("rightColumn")
-        join_type    = (request.data.get("join_type")   or
-                        request.data.get("joinType")    or
+        request_data = getattr(request, 'data', {})
+        if not isinstance(request_data, dict):
+            request_data = {}
+        staging_name = request_data.get("staging_name") or request_data.get("stagingName")
+        left_column  = request_data.get("left_column")  or request_data.get("leftColumn")
+        right_column = request_data.get("right_column") or request_data.get("rightColumn")
+        join_type    = (request_data.get("join_type")   or
+                        request_data.get("joinType")    or
                         "INNER JOIN").upper()
 
         if not all([staging_name, left_column, right_column]):
@@ -269,9 +275,12 @@ class DatasetAddRelationView(APIView):
         from src.core.bi_analysis.bi_datasets.models import DataSetTable, FileUpload
 
         dataset = Dataset.objects.get(id=dataset_id)
-        right_table_id = int(request.data.get('rightTableId'))
-        join_type = request.data.get('joinType')
-        lines = request.data.get('lines', [])
+        request_data = getattr(request, 'data', {})
+        if not isinstance(request_data, dict):
+            request_data = {}
+        right_table_id = int(request_data.get('rightTableId', 0))
+        join_type = request_data.get('joinType')
+        lines = request_data.get('lines', [])
         if not lines:
             return Response({'error': 'Нет пар колонок для соединения'}, status=400)
         left_col = lines[0]['left']
@@ -279,7 +288,8 @@ class DatasetAddRelationView(APIView):
 
         file_upload = None
 
-        file_id = request.data.get("file_id")
+        request_data = getattr(request, 'data', {})
+        file_id = request_data.get("file_id") if isinstance(request_data, dict) else None
         if file_id:
             try:
                 file_upload = FileUpload.objects.get(pk=file_id)
@@ -324,7 +334,8 @@ class AddTableToDatasetView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
-        file_id = request.data.get('file_id')
+        request_data = getattr(request, 'data', {})
+        file_id = request_data.get('file_id') if isinstance(request_data, dict) else None
         dataset = Dataset.objects.get(pk=pk)
 
         file_upload = FileUpload.objects.get(pk=file_id)
@@ -734,7 +745,8 @@ class RenameDatasetColumnsView(APIView):
 
     def patch(self, request, pk):
         dataset = Dataset.objects.get(pk=pk, owner=request.user)
-        renames = request.data.get('renames', [])
+        request_data = getattr(request, 'data', {})
+        renames = request_data.get('renames', []) if isinstance(request_data, dict) else []
         table_ref = dataset.table_ref
         schema, table = ('public', table_ref)
         if '.' in table_ref:
@@ -836,7 +848,7 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     def perform_create(self, serializer):
         instance = serializer.save(owner=self.request.user)
-        columns_info = self._extract_columns_info(instance)
+        columns_info = extract_columns_info(instance)
         instance.columns_info = columns_info
         instance.save(update_fields=['columns_info'])
 
@@ -872,8 +884,10 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_update(self, serializer):
         file = self.request.FILES.get('file')
-        name = self.request.data.get('name')
-        sheet = self.request.data.get('sheet')  # Добавляем поддержку листа
+        # Безопасный доступ к request.data для избежания ошибок типизации
+        request_data = getattr(self.request, 'data', {})
+        name = request_data.get('name') if isinstance(request_data, dict) else None
+        sheet = request_data.get('sheet') if isinstance(request_data, dict) else None
         file_type = (file.name.split('.')[-1].lower()
                      if file else 
                      (name.split('.')[-1].lower() if name and '.' in name else None))
@@ -952,30 +966,9 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
                 file_type=file_type
             )
 
-        columns_info = self._extract_columns_info(instance)
+        columns_info = extract_columns_info(instance)
         instance.columns_info = columns_info
         instance.save(update_fields=['columns_info'])
-
-    @staticmethod
-    def _extract_columns_info(instance):
-        path = instance.file.path
-        if instance.file_type == 'xlsx':
-            try:
-                wb = load_workbook(filename=path, read_only=True)
-                sheet = wb.active
-                columns = [cell.value for cell in next(sheet.rows)]
-                return {'columns': columns}
-            except Exception:
-                return {'columns': []}
-        elif instance.file_type == 'csv':
-            try:
-                with open(path, encoding='utf-8') as f:
-                    reader = csv.reader(f)
-                    columns = next(reader, [])
-                return {'columns': columns}
-            except Exception:
-                return {'columns': []}
-        return {'columns': []}
 
     def perform_destroy(self, instance):
         # удаляем сам файл
@@ -1005,13 +998,17 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
     @staticmethod
     def _parse_xlsx(path, has_header):
         wb = load_workbook(filename=path, read_only=True)
-        sheet = wb.sheetnames[0]
-        ws = wb[sheet]
-        data = list(ws.values)
-        if not has_header:
-            return data, wb.sheetnames
-        headers, *body = data
-        return [list(headers), *body], wb.sheetnames
+        try:
+            sheet = wb.sheetnames[0]
+            ws = wb[sheet]
+            data = list(ws.values)
+            sheetnames = wb.sheetnames
+            if not has_header:
+                return data, sheetnames
+            headers, *body = data
+            return [list(headers), *body], sheetnames
+        finally:
+            wb.close()
 
 class FileUploadByConnectionView(generics.ListAPIView):
     """
@@ -1022,7 +1019,11 @@ class FileUploadByConnectionView(generics.ListAPIView):
 
     def get_queryset(self):
         conn_id = self.kwargs['connection_id']
-        return FileUpload.objects.filter(owner=self.request.user, connection_id=conn_id).order_by('-uploaded_at')
+        # Оптимизация: используем select_related для уменьшения количества запросов к БД
+        return FileUpload.objects.filter(
+            owner=self.request.user, 
+            connection_id=conn_id
+        ).select_related('connection', 'owner').order_by('-uploaded_at')
     
 class DatasetRowsAggAPIView(APIView):
     """
@@ -1032,7 +1033,9 @@ class DatasetRowsAggAPIView(APIView):
     def post(self, request, pk):
         ds = get_object_or_404(Dataset, pk=pk)
         chart_fields = []
-        for group_key, field_list in (request.data.get('fields') or {}).items():
+        request_data = getattr(request, 'data', {})
+        fields_data = request_data.get('fields', {}) if isinstance(request_data, dict) else {}
+        for group_key, field_list in (fields_data or {}).items():
             chart_fields.extend(field_list)
         data = get_rows_for_chart(ds, chart_fields)
         return Response(data)
@@ -1057,50 +1060,85 @@ def detect_column_type(values):
     return "string"
 
 def extract_columns_info(instance):
+    """
+    Оптимизированная функция для извлечения информации о колонках.
+    Читает только первые 200 строк вместо всего файла для ускорения.
+    """
     path = instance.file.path
+    MAX_ROWS_TO_READ = 200  # Ограничиваем чтение для ускорения
+    
     if instance.file_type == 'xlsx':
         try:
-            wb = openpyxl.load_workbook(filename=path, read_only=True)
+            wb = openpyxl.load_workbook(filename=path, read_only=True, data_only=True)
             sheet = wb.active
-            rows = list(sheet.iter_rows(values_only=True))
+            
+            # Читаем только первые MAX_ROWS_TO_READ строк вместо всего файла
+            rows = []
+            for idx, row in enumerate(sheet.iter_rows(values_only=True)):
+                if idx >= MAX_ROWS_TO_READ:
+                    break
+                rows.append(row)
+            
+            if not rows:
+                return {'columns': [], 'types': []}
+            
             headers = rows[0] if rows else []
             columns = list(headers)
             types = []
+            
+            # Используем только первые 50 строк для определения типов (как было)
+            sample_rows = rows[1:51] if len(rows) > 1 else []
             for col_idx in range(len(columns)):
-                col_values = [row[col_idx] for row in rows[1:50] if len(row) > col_idx]  # до 50 строк
+                col_values = [row[col_idx] for row in sample_rows if len(row) > col_idx and row[col_idx] is not None]
                 types.append(detect_column_type(col_values))
+            
+            wb.close()
             return {'columns': columns, 'types': types}
         except Exception:
             return {'columns': [], 'types': []}
 
     elif instance.file_type == 'csv':
         try:
+            # Для CSV читаем построчно, останавливаемся после MAX_ROWS_TO_READ строк
+            rows = []
             with open(path, encoding='utf-8') as f:
                 reader = csv.reader(f)
-                rows = list(reader)
-                headers = rows[0] if rows else []
+                for idx, row in enumerate(reader):
+                    if idx >= MAX_ROWS_TO_READ:
+                        break
+                    rows.append(row)
+            
+            if not rows:
+                return {'columns': [], 'types': []}
+            
+            headers = rows[0] if rows else []
             columns = list(headers)
             types = []
+            
+            # Используем только первые 50 строк для определения типов
+            sample_rows = rows[1:51] if len(rows) > 1 else []
             for col_idx in range(len(columns)):
-                col_values = [row[col_idx] for row in rows[1:50] if len(row) > col_idx]
+                col_values = [row[col_idx] for row in sample_rows if len(row) > col_idx and row[col_idx]]
                 types.append(detect_column_type(col_values))
+            
             return {'columns': columns, 'types': types}
         except Exception:
             return {'columns': [], 'types': []}
     return {'columns': [], 'types': []}
 
-from openpyxl import load_workbook
-
 class FinalizeUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        temp_path         = request.data.get('temp_path')
-        name              = request.data.get('name')
-        original_filename = request.data.get('original_filename')
-        file_type         = request.data.get('file_type')
-        connection_id     = request.data.get('connection')
-        sheet             = request.data.get('sheet')
+        request_data = getattr(request, 'data', {})
+        if not isinstance(request_data, dict):
+            request_data = {}
+        temp_path         = request_data.get('temp_path')
+        name              = request_data.get('name')
+        original_filename = request_data.get('original_filename')
+        file_type         = request_data.get('file_type')
+        connection_id     = request_data.get('connection')
+        sheet             = request_data.get('sheet')
 
         if not all([temp_path, name, original_filename, file_type]):
             return Response(
@@ -1130,39 +1168,75 @@ class FinalizeUploadView(APIView):
         upload.save()
         
         if file_type == "xlsx" and sheet:
-            print(f"[DEBUG] Обрабатываем Excel файл с листом: {sheet}")
             try:
-                wb = load_workbook(temp_path, read_only=False)
-                print(f"[DEBUG] Доступные листы: {wb.sheetnames}")
-                
-                # Удаляем все листы кроме нужного
-                sheets_to_remove = [ws_name for ws_name in wb.sheetnames if ws_name != sheet]
-                for ws_name in sheets_to_remove:
-                    ws = wb[ws_name]
-                    wb.remove(ws)
-                
-                single_sheet_path = temp_path + "_single.xlsx"
-                wb.save(single_sheet_path)
-                wb.close()  # Явно закрываем workbook
-                print(f"[DEBUG] Сохраняем одностраничный файл: {single_sheet_path}")
-                
-                with open(single_sheet_path, 'rb') as f:
-                    upload.file.save(original_filename, File(f), save=True)  # save=True для сохранения в БД
-                print(f"[DEBUG] Файл сохранен в базу: {upload.file.path}")
-                
+                # Используем pandas для быстрого чтения и записи Excel (намного быстрее для больших файлов)
                 try:
-                    os.remove(single_sheet_path)
-                except Exception as e:
-                    print(f"[DEBUG] Ошибка при удалении временного файла: {e}")
+                    import pandas as pd
+                    
+                    # Читаем только нужный лист через pandas (быстро и эффективно)
+                    df = pd.read_excel(temp_path, sheet_name=sheet, engine='openpyxl')
+                    
+                    # Сохраняем во временный файл только с одним листом
+                    single_sheet_path = temp_path + "_single.xlsx"
+                    df.to_excel(single_sheet_path, sheet_name=sheet, index=False, engine='openpyxl')
+                    
+                    # Сохраняем файл в Django
+                    with open(single_sheet_path, 'rb') as f:
+                        upload.file.save(original_filename, File(f), save=True)
+                    
+                    # Удаляем временный файл
+                    try:
+                        os.remove(single_sheet_path)
+                    except Exception:
+                        pass
+                        
+                except ImportError:
+                    # Fallback на openpyxl если pandas недоступен
+                    # Оптимизированный подход: читаем только нужный лист и создаем новый файл
+                    source_wb = openpyxl.load_workbook(temp_path, read_only=True, data_only=True)
+                    
+                    if sheet not in source_wb.sheetnames:
+                        source_wb.close()
+                        raise ValueError(f"Лист '{sheet}' не найден в файле")
+                    
+                    # Создаем новый workbook только с нужным листом
+                    new_wb = openpyxl.Workbook()
+                    if new_wb.active:
+                        new_wb.remove(new_wb.active)
+                    
+                    # Копируем данные из исходного листа в новый
+                    source_sheet = source_wb[sheet]
+                    new_sheet = new_wb.create_sheet(title=sheet)
+                    
+                    # Копируем данные построчно
+                    for row in source_sheet.iter_rows(values_only=True):
+                        new_sheet.append(row)
+                    
+                    source_wb.close()
+                    
+                    # Сохраняем во временный файл
+                    single_sheet_path = temp_path + "_single.xlsx"
+                    new_wb.save(single_sheet_path)
+                    new_wb.close()
+                    
+                    # Сохраняем файл в Django
+                    with open(single_sheet_path, 'rb') as f:
+                        upload.file.save(original_filename, File(f), save=True)
+                    
+                    # Удаляем временный файл
+                    try:
+                        os.remove(single_sheet_path)
+                    except Exception:
+                        pass
                     
             except Exception as e:
-                print(f"[DEBUG] Ошибка при обработке листов: {e}")
                 # Если ошибка, сохраняем оригинальный файл
                 with open(temp_path, 'rb') as f:
                     upload.file.save(original_filename, File(f), save=True)
         else:
+            # Для не-Excel файлов или Excel без указания листа - просто копируем
             with open(temp_path, 'rb') as f:
-                upload.file.save(original_filename, File(f), save=True)  # save=True для сохранения в БД
+                upload.file.save(original_filename, File(f), save=True)
 
         upload.columns_info = extract_columns_info(upload)
         upload.save(update_fields=['columns_info'])
@@ -1193,7 +1267,9 @@ class XlsxSheetListView(APIView):
 
         try:
             wb = load_workbook(filename=file, read_only=True)
-            return Response({"filename": file.name, "sheets": wb.sheetnames})
+            sheets = wb.sheetnames
+            wb.close()
+            return Response({"filename": file.name, "sheets": sheets})
         except Exception as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1205,11 +1281,14 @@ class XlsxTempPreviewView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        temp_path     = request.data.get('temp_path')
-        has_header    = request.data.get('has_header', 'true').lower() == 'true'
-        sheet_name    = request.data.get('sheet_name')
-        row_limit     = int(request.data.get('row_limit', 200))
-        use_async     = request.data.get('async', 'false').lower() == 'true'
+        request_data = getattr(request, 'data', {})
+        if not isinstance(request_data, dict):
+            request_data = {}
+        temp_path     = request_data.get('temp_path')
+        has_header    = request_data.get('has_header', 'true').lower() == 'true' if isinstance(request_data.get('has_header'), str) else True
+        sheet_name    = request_data.get('sheet_name')
+        row_limit     = int(request_data.get('row_limit', 200))
+        use_async     = request_data.get('async', 'false').lower() == 'true' if isinstance(request_data.get('async'), str) else False
 
         if not temp_path or not os.path.exists(temp_path):
             return Response({"error": "Временный файл не найден"}, status=status.HTTP_404_NOT_FOUND)

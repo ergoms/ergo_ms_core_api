@@ -49,7 +49,8 @@ class ConnectionDetailView(generics.RetrieveUpdateDestroyAPIView):
         if getattr(self, 'swagger_fake_view', False):
             # Для генерации схемы Swagger возвращаем пустой queryset
             return Connection.objects.none()
-        return Connection.objects.filter(owner=self.request.user)
+        # Оптимизация: используем select_related для уменьшения количества запросов к БД
+        return Connection.objects.filter(owner=self.request.user).select_related('owner')
     
 class CheckConnectionView(APIView):
     permission_classes = [IsAuthenticated]
