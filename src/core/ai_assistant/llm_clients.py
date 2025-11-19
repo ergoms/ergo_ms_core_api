@@ -151,10 +151,20 @@ class HttpxOllamaClient(BaseLLMClient):
         raise LLMClientError("Ollama API недоступен") from last_error
 
     def _complete(self, payload: Dict[str, Any]) -> str:
-        response = self._client.post("/api/generate", json=payload)
-        response.raise_for_status()
-        data = response.json()
-        return data.get("response", "")
+        try:
+            response = self._client.post("/api/generate", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            return data.get("response", "")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                error_msg = f"Ollama API вернул 404. Проверьте:\n"
+                error_msg += f"1. URL: {self._base_url}/api/generate\n"
+                error_msg += f"2. Модель '{self.model}' существует? Выполните: ollama list\n"
+                error_msg += f"3. Если модели нет, установите: ollama pull {self.model}\n"
+                error_msg += f"Ответ сервера: {e.response.text}"
+                raise LLMClientError(error_msg) from e
+            raise
 
     def _stream(
         self,
@@ -162,23 +172,60 @@ class HttpxOllamaClient(BaseLLMClient):
         stream_callback: Optional[Callable[[str], None]],
     ) -> str:
         chunks: List[str] = []
-        with self._client.stream("POST", "/api/generate", json=payload) as response:
-            response.raise_for_status()
-            for raw_line in response.iter_lines():
-                if not raw_line:
-                    continue
+        try:
+            with self._client.stream("POST", "/api/generate", json=payload) as response:
+                # Для streaming response сначала проверяем статус
+                # Если статус не 200, raise_for_status выбросит исключение
                 try:
-                    data = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as status_error:
+                    # Если ошибка 404, читаем содержимое для получения деталей
+                    if status_error.response.status_code == 404:
+                        try:
+                            error_text = status_error.response.text
+                        except Exception:
+                            error_text = "Не удалось получить ответ сервера"
+                        error_msg = f"Ollama API вернул 404. Проверьте:\n"
+                        error_msg += f"1. URL: {self._base_url}/api/generate\n"
+                        error_msg += f"2. Модель '{self.model}' существует? Выполните: ollama list\n"
+                        error_msg += f"3. Если модели нет, установите: ollama pull {self.model}\n"
+                        error_msg += f"Ответ сервера: {error_text}"
+                        raise LLMClientError(error_msg) from status_error
+                    raise
+                
+                # Читаем streaming данные построчно
+                for raw_line in response.iter_lines():
+                    if not raw_line:
+                        continue
+                    try:
+                        data = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
 
-                text = data.get("response")
-                if text:
-                    chunks.append(text)
-                    if stream_callback:
-                        stream_callback(text)
-                if data.get("done"):
-                    break
+                    text = data.get("response")
+                    if text:
+                        chunks.append(text)
+                        if stream_callback:
+                            stream_callback(text)
+                    if data.get("done"):
+                        break
+        except LLMClientError:
+            # Пробрасываем наши ошибки как есть
+            raise
+        except httpx.HTTPStatusError as e:
+            # Обработка других HTTP ошибок
+            if e.response.status_code == 404:
+                try:
+                    error_text = e.response.text
+                except Exception:
+                    error_text = "Не удалось получить ответ сервера"
+                error_msg = f"Ollama API вернул 404. Проверьте:\n"
+                error_msg += f"1. URL: {self._base_url}/api/generate\n"
+                error_msg += f"2. Модель '{self.model}' существует? Выполните: ollama list\n"
+                error_msg += f"3. Если модели нет, установите: ollama pull {self.model}\n"
+                error_msg += f"Ответ сервера: {error_text}"
+                raise LLMClientError(error_msg) from e
+            raise
         return "".join(chunks)
 
 

@@ -1,12 +1,16 @@
 import csv
 from uuid import uuid4
-from math import isnan
+from math import isnan, isinf
+import math
 from django.db import connection, transaction, models
 from rest_framework.exceptions import ValidationError
 from psycopg2 import sql
 from openpyxl import load_workbook
+import logging
 
 from src.core.bi_analysis.bi_datasets.models import DataSetField, DataSetTable, FileUpload
+
+logger = logging.getLogger(__name__)
 
 
 class TableData:
@@ -135,7 +139,11 @@ def find_existing_temp_table_for_file(file_upload_id):
     Проверяет таблицы через DataSetTable и также все staging_ таблицы с нужными колонками.
     """
     try:
-        upload = FileUpload.objects.get(pk=file_upload_id)
+        try:
+            upload = FileUpload.objects.get(pk=file_upload_id)
+        except FileUpload.DoesNotExist:
+            logger.error(f"FileUpload с id={file_upload_id} не найден")
+            return None
         
         # Сначала проверяем через DataSetTable
         existing_tables = DataSetTable.objects.filter(file_upload_id=file_upload_id)
@@ -456,7 +464,7 @@ def sync_dataset_fields_with_current_table(dataset):
 DEFAULT_PREVIEW_LIMIT = 1000
 
 
-def _read_excel_table(path, sheet_name=None, row_limit=DEFAULT_PREVIEW_LIMIT):
+def _read_excel_table(path, sheet_name=None, row_limit=None):
     wb = load_workbook(filename=path, read_only=True, data_only=True)
     try:
         if sheet_name:
@@ -488,7 +496,7 @@ def _read_excel_table(path, sheet_name=None, row_limit=DEFAULT_PREVIEW_LIMIT):
     return TableData(columns, rows)
 
 
-def _read_csv_table(path, row_limit=DEFAULT_PREVIEW_LIMIT, encoding='cp1251'):
+def _read_csv_table(path, row_limit=None, encoding='cp1251'):
     with open(path, 'r', encoding=encoding, errors='replace', newline='') as f:
         reader = csv.reader(f)
         header = next(reader, None)
@@ -506,15 +514,45 @@ def _read_csv_table(path, row_limit=DEFAULT_PREVIEW_LIMIT, encoding='cp1251'):
     return TableData(columns, rows)
 
 
-def read_file_to_dataframe(file_upload_id, sheet_name=None, row_limit=DEFAULT_PREVIEW_LIMIT, use_polars=True):
+def read_file_to_dataframe(file_upload_id, sheet_name=None, row_limit=None, use_polars=True):
     """
     Читает файл в табличную структуру.
     Использует polars для максимальной производительности, если доступен.
+    Поддерживает чтение из бинарных файлов .bin.
     """
-    # Пробуем использовать polars для ускорения
+    try:
+        upload = FileUpload.objects.get(pk=file_upload_id)
+    except FileUpload.DoesNotExist:
+        raise ValidationError(f"FileUpload с id={file_upload_id} не найден")
+    
+    if not upload.file:
+        raise ValidationError(f"FileUpload {file_upload_id} не имеет файла")
+    
+    path = upload.file.path
+    
+    # Проверяем, является ли файл бинарным
+    from src.core.bi_analysis.bi_datasets.binary_storage import is_binary_file, read_from_binary
+    
+    # Если row_limit=None, читаем все данные. Если указан, используем его.
+    # Это универсальное решение для CSV и Excel через polars
+    
+    if is_binary_file(path) or upload.file_type == 'bin':
+        # Читаем из бинарного файла
+        try:
+            # Если row_limit=None, читаем все данные
+            columns, rows = read_from_binary(path, row_limit=row_limit)
+            return TableData(columns, rows)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Ошибка чтения бинарного файла: {str(e)}")
+            raise ValidationError(f"Ошибка чтения бинарного файла: {str(e)}")
+    
+    # Используем polars для чтения файлов (универсальное решение для CSV и Excel)
     if use_polars:
         try:
             from src.core.bi_analysis.tasks import _read_file_with_polars
+            # Передаем row_limit как есть: None = читать все данные, число = лимит
             columns, rows = _read_file_with_polars(file_upload_id, sheet_name, row_limit)
             return TableData(columns, rows)
         except Exception as e:
@@ -522,9 +560,7 @@ def read_file_to_dataframe(file_upload_id, sheet_name=None, row_limit=DEFAULT_PR
             logger = logging.getLogger(__name__)
             logger.warning(f"Не удалось использовать polars, используется fallback метод: {str(e)}")
     
-    # Fallback на старый метод
-    upload = FileUpload.objects.get(pk=file_upload_id)
-    path = upload.file.path
+    # Fallback на старый метод (только если polars недоступен)
     sheet = sheet_name or getattr(upload, 'sheet_name', None)
 
     if upload.file_type == 'xlsx':
@@ -535,27 +571,60 @@ def read_file_to_dataframe(file_upload_id, sheet_name=None, row_limit=DEFAULT_PR
         raise ValidationError(f"Неподдерживаемый тип файла: {upload.file_type}")
 
 
-def dataframe_to_sql_values(table, table_alias='t0'):
+def dataframe_to_sql_values(table, table_alias='t0', row_limit=None):
     """
     Преобразует TableData в SQL (VALUES ...).
+    
+    Args:
+        table: TableData объект с данными
+        table_alias: алиас таблицы в SQL запросе
+        row_limit: лимит строк для включения в VALUES. Если None, ограничиваем до разумного максимума.
     """
     if not table.columns:
         return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
 
-    limited = table.limited(DEFAULT_PREVIEW_LIMIT)
+    # Ограничиваем количество строк в VALUES clause для производительности
+    # Максимум 10000 строк, чтобы не создавать огромные SQL запросы
+    MAX_VALUES_ROWS = 10000
+    
+    if row_limit is not None and row_limit > 0:
+        # Если указан лимит, используем его, но не больше максимума
+        limited = table.limited(min(row_limit, MAX_VALUES_ROWS))
+    else:
+        # Если лимит не указан, ограничиваем до максимума
+        limited = table.limited(MAX_VALUES_ROWS)
+    
     if len(limited) == 0:
         return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
 
     def sanitize(val):
         if _is_null(val):
             return 'NULL'
+        # Обрабатываем разные типы данных
+        if isinstance(val, bool):
+            return 'TRUE' if val else 'FALSE'
+        if isinstance(val, (int, float)):
+            # Проверяем на infinity
+            if isinstance(val, float) and (math.isinf(val) or math.isnan(val)):
+                return 'NULL'
+            return str(val)
+        # Для строк экранируем кавычки
         val_str = str(val).replace("'", "''")
         return f"'{val_str}'"
 
     data_rows = []
     for row in limited.rows:
+        # Проверяем, что строка не пустая
+        if not row:
+            continue
         sanitized = [sanitize(val) for val in row]
-        data_rows.append(f"({', '.join(sanitized)})")
+        # Проверяем, что после санитизации есть данные
+        if sanitized:
+            data_rows.append(f"({', '.join(sanitized)})")
+    
+    # Если после обработки нет строк, возвращаем пустой результат
+    if not data_rows:
+        return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
 
     col_defs = []
     for col in limited.columns:
@@ -603,12 +672,25 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
     
     if is_file_source:
         # Для файловых источников читаем данные напрямую из файла
+        # Вычисляем сколько строк нужно прочитать: limit + offset (если есть)
+        # Для больших файлов читаем все данные, но лимит будет применен в SQL
+        file_read_limit = None
+        if limit is not None:
+            # Читаем достаточно данных с учетом offset
+            file_read_limit = limit + (offset or 0)
+            # Но если лимит очень большой, читаем все данные для эффективности
+            if file_read_limit > 50000:
+                file_read_limit = None
+        
         try:
             df = read_file_to_dataframe(
                 main_table.file_upload_id,
-                sheet_name=getattr(main_table, 'sheet_name', None)
+                sheet_name=getattr(main_table, 'sheet_name', None),
+                row_limit=file_read_limit
             )
-            from_with_alias, _ = dataframe_to_sql_values(df, main_alias)
+            # Передаем None для row_limit в dataframe_to_sql_values, чтобы включить все прочитанные данные
+            # Лимит и offset будут применены в SQL запросе через LIMIT/OFFSET clauses
+            from_with_alias, _ = dataframe_to_sql_values(df, main_alias, row_limit=None)
         except Exception as e:
             raise ValueError(f"Ошибка чтения файла: {str(e)}")
     else:
@@ -645,12 +727,15 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
         
         if is_join_file_source:
             # Для файловых источников читаем данные напрямую из файла
+            # Для JOIN таблиц также читаем все данные, лимит будет применен к итоговому запросу
             try:
                 df_join = read_file_to_dataframe(
                     join_table.file_upload_id,
-                    sheet_name=getattr(join_table, 'sheet_name', None)
+                    sheet_name=getattr(join_table, 'sheet_name', None),
+                    row_limit=None  # Читаем все данные для JOIN
                 )
-                join_table_ref, _ = dataframe_to_sql_values(df_join, table_alias)
+                # Передаем None для row_limit, чтобы включить все данные для JOIN
+                join_table_ref, _ = dataframe_to_sql_values(df_join, table_alias, row_limit=None)
             except Exception as e:
                 raise ValueError(f"Ошибка чтения файла для JOIN: {str(e)}")
         else:

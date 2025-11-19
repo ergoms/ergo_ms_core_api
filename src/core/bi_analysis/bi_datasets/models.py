@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from src.core.bi_analysis.bi_connections.models import Connection
+import uuid
 
 JSONField = models.JSONField
 
@@ -35,9 +36,16 @@ class FileUpload(models.Model):
 
     original_filename = models.CharField(max_length=255, blank=True, null=True)
     file_type = models.CharField(max_length=50, blank=True, null=True)
+    file_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, db_index=True)
 
     def __str__(self):
         return self.name
+    
+    def save(self, *args, **kwargs):
+        # Генерируем UUID при первом сохранении, если его еще нет
+        if not self.file_uuid:
+            self.file_uuid = uuid.uuid4()
+        super().save(*args, **kwargs)
 
 class Dataset(models.Model):
     name        = models.CharField(max_length=255)

@@ -32,7 +32,7 @@ class RuntimeLLMConfig:
     """
 
     provider: LLMProvider = LLMProvider.AUTO
-    model: str = getattr(settings, "OLLAMA_DEFAULT_MODEL", "mistral7b-tuned")
+    model: str = getattr(settings, "OLLAMA_DEFAULT_MODEL", "mistral:7b")
     base_url: str = getattr(settings, "OLLAMA_BASE_URL", "http://localhost:11434")
     request_timeout: float = getattr(settings, "AI_ASSISTANT_REQUEST_TIMEOUT", 120.0)
     stream_timeout: float = getattr(settings, "AI_ASSISTANT_STREAM_TIMEOUT", 45.0)

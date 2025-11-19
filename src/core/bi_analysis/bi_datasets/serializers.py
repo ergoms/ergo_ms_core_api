@@ -247,9 +247,9 @@ class FileUploadSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'file', 'file_url', 'file_path', 'uploaded_at',
             'owner', 'original_filename', 'file_type', 'connection', 'columns_info',
-            'exists', 'missing', 'file_not_found', 'error'
+            'file_uuid', 'exists', 'missing', 'file_not_found', 'error'
         ]
-        read_only_fields = ['id', 'uploaded_at']
+        read_only_fields = ['id', 'uploaded_at', 'file_uuid']
         extra_kwargs = {
             'owner': {'read_only': True},
         }

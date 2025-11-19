@@ -2,6 +2,7 @@ from uuid import uuid4
 from django.core.files import File
 from django.db import transaction, connection, ProgrammingError
 from django.shortcuts import get_object_or_404
+from django.http import Http404
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from .models import Connection
@@ -19,6 +20,9 @@ from rest_framework.views import APIView
 
 from openpyxl import load_workbook
 import tempfile, os, openpyxl, csv
+import logging
+
+logger = logging.getLogger(__name__)
 
 from src.core.bi_analysis.bi_datasets.models import Dataset, FileUpload, DataSetTable, DataSetField, DatasetParam
 from src.core.bi_analysis.bi_datasets.serializers import (
@@ -45,6 +49,7 @@ from src.core.bi_analysis.services.services import (
 )
 
 from ..bi_charts.methods import get_rows_for_chart
+
 
 # ==============================================================================
 # Dataset endpoints
@@ -292,16 +297,16 @@ class DatasetAddRelationView(APIView):
         file_id = request_data.get("file_id") if isinstance(request_data, dict) else None
         if file_id:
             try:
-                file_upload = FileUpload.objects.get(pk=file_id)
+                file_upload = FileUpload.objects.get(pk=file_id, owner=request.user)
             except FileUpload.DoesNotExist:
-                return Response({'error': f'Файл с id={file_id} не найден.'}, status=404)
+                return Response({'error': f'Файл с id={file_id} не найден или не принадлежит вам.'}, status=404)
         else:
             try:
-                ds_table = DataSetTable.objects.get(pk=right_table_id)
+                ds_table = DataSetTable.objects.get(pk=right_table_id, dataset__owner=request.user)
                 file_upload = ds_table.file_upload
             except DataSetTable.DoesNotExist:
                 try:
-                    file_upload = FileUpload.objects.get(pk=abs(right_table_id))
+                    file_upload = FileUpload.objects.get(pk=abs(right_table_id), owner=request.user)
                 except FileUpload.DoesNotExist:
                     return Response({'error': f'Не найден ни DataSetTable, ни FileUpload с id={right_table_id}'}, status=404)
         existing = dataset.tables.filter(pk=right_table_id).first()
@@ -336,9 +341,13 @@ class AddTableToDatasetView(APIView):
     def post(self, request, pk):
         request_data = getattr(request, 'data', {})
         file_id = request_data.get('file_id') if isinstance(request_data, dict) else None
-        dataset = Dataset.objects.get(pk=pk)
+        dataset = get_object_or_404(Dataset, pk=pk, owner=request.user)
 
-        file_upload = FileUpload.objects.get(pk=file_id)
+        try:
+            file_upload = FileUpload.objects.get(pk=file_id, owner=request.user)
+        except FileUpload.DoesNotExist:
+            return Response({'error': f'Файл с id={file_id} не найден или не принадлежит вам.'}, status=404)
+        
         connection = file_upload.connection or dataset.connection
 
         # НЕ создаем таблицы в БД - используем только метаданные
@@ -379,64 +388,38 @@ class DatasetPreviewView(APIView):
         
         # Для больших лимитов используем асинхронную обработку
         if use_async or limit > 100:
-            from src.core.bi_analysis.tasks import process_dataset_preview
-            task = process_dataset_preview.delay(pk, limit)
-            return Response({
-                "task_id": task.id,
-                "status": "processing",
-                "message": "Предпросмотр обрабатывается асинхронно"
-            }, status=202)
+            try:
+                from src.core.bi_analysis.tasks import process_dataset_preview
+                task = process_dataset_preview.delay(pk, limit)
+                return Response({
+                    "task_id": task.id,
+                    "status": "processing",
+                    "message": "Предпросмотр обрабатывается асинхронно"
+                }, status=202)
+            except Exception as e:
+                # Если Celery недоступен (ошибка подключения к БД и т.д.), используем синхронный режим
+                logger.warning(f"Не удалось запустить асинхронную задачу Celery: {str(e)}. Используется синхронный режим.")
+                # Продолжаем выполнение в синхронном режиме ниже
         
         try:
             from src.core.bi_analysis.services.services import build_dataset_query
             
             # Проверяем, есть ли таблицы в датасете
             if not dataset.tables.exists():
-                # Fallback для старых датасетов с table_ref
-                if not dataset.table_ref:
-                    return Response({"detail": "Таблица ещё не создана для датасета"}, status=400)
-                
-                base_table = dataset.table_ref
-                if '.' in base_table:
-                    schema, table = base_table.split('.', 1)
-                else:
-                    schema, table = 'public', base_table
-                
-                # Строим запрос с поиском и пагинацией
-                query_parts = [f'SELECT * FROM "{schema}"."{table}"']
-                
-                if search:
-                    # Получаем колонки для поиска
-                    with connection.cursor() as cursor:
-                        cursor.execute(f'SELECT * FROM "{schema}"."{table}" LIMIT 0')
-                        columns = [col[0] for col in cursor.description]
-                    
-                    search_conditions = [f'CAST("{col}" AS TEXT) ILIKE %s' for col in columns]
-                    query_parts.append(f"WHERE ({' OR '.join(search_conditions)})")
-                    params = [f'%{search}%'] * len(columns)
-                else:
-                    params = []
-                
-                query_parts.append(f'LIMIT %s OFFSET %s')
-                params.extend([limit, offset])
-                
-                with connection.cursor() as cursor:
-                    cursor.execute(' '.join(query_parts), params)
-                    rows = cursor.fetchall()
-                    columns = [col[0] for col in cursor.description]
-            else:
-                # Используем новую логику с динамическим SQL
-                query = build_dataset_query(
-                    dataset, 
-                    limit=limit, 
-                    offset=offset,
-                    search=search if search else None
-                )
-                
-                with connection.cursor() as cursor:
-                    cursor.execute(query)
-                    rows = cursor.fetchall()
-                    columns = [col[0] for col in cursor.description]
+                return Response({"detail": "Таблицы не найдены в датасете. Добавьте главную таблицу для предпросмотра."}, status=400)
+            
+            # Используем новую логику с динамическим SQL, которая читает файлы напрямую через polars и бинарные файлы
+            query = build_dataset_query(
+                dataset, 
+                limit=limit, 
+                offset=offset,
+                search=search if search else None
+            )
+            
+            with connection.cursor() as cursor:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+                columns = [col[0] for col in cursor.description]
                     
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
@@ -542,8 +525,18 @@ class DatasetDraftPreviewView(APIView):
         from psycopg2 import sql
         
         data = request.data
+        
+        # Проверяем наличие главной таблицы
+        main_table = data.get('mainTable')
+        if not main_table:
+            return Response({
+                "error": "Не указана главная таблица",
+                "columns": [],
+                "rows": []
+            }, status=400)
+        
         use_async = data.get('async', False)
-        limit = int(data.get('limit', 20))
+        limit = int(data.get('limit', 1000))  # Увеличен лимит по умолчанию
         
         # Для больших лимитов или множества файлов используем асинхронную обработку
         file_count = sum([
@@ -551,7 +544,7 @@ class DatasetDraftPreviewView(APIView):
             sum([1 if 'file_id' in jt and jt.get('file_id') else 0 for jt in data.get('joinedTables', [])])
         ])
         
-        if use_async or limit > 100 or file_count > 2:
+        if use_async or limit > 5000 or file_count > 2:
             from src.core.bi_analysis.tasks import process_draft_preview
             task = process_draft_preview.delay(data)
             return Response({
@@ -561,9 +554,8 @@ class DatasetDraftPreviewView(APIView):
             }, status=202)
         
         connection_id = data.get('connection_id')
-        main_table = data.get('mainTable')
         joined_tables = data.get('joinedTables', [])
-        limit = int(data.get('limit', 20))
+        offset = int(data.get('offset', 0))
 
         def get_sheet_name(table_dict):
             if not isinstance(table_dict, dict):
@@ -588,14 +580,42 @@ class DatasetDraftPreviewView(APIView):
         
         if is_main_file:
             # Для файловых источников читаем данные напрямую
+            # Вычисляем сколько строк нужно прочитать: limit + offset + запас для корректной работы
+            # Ограничиваем максимальное количество строк в VALUES clause для производительности
+            file_read_limit = None
+            if limit is not None:
+                # Читаем достаточно данных с учетом offset и небольшого запаса
+                file_read_limit = limit + (offset or 0) + 100  # Запас в 100 строк для корректной работы
+                # Ограничиваем максимальное количество строк в VALUES (чтобы не создавать огромные SQL запросы)
+                # Для больших файлов используем разумный лимит
+                MAX_VALUES_ROWS = 10000  # Максимум 10000 строк в VALUES clause
+                if file_read_limit > MAX_VALUES_ROWS:
+                    file_read_limit = MAX_VALUES_ROWS
+            
             try:
                 df_main = read_file_to_dataframe(
                     main_table['file_id'],
-                    sheet_name=get_sheet_name(main_table)
+                    sheet_name=get_sheet_name(main_table),
+                    row_limit=file_read_limit
                 )
-                main_from, _ = dataframe_to_sql_values(df_main, main_alias)
+                
+                # Проверяем, что данные прочитаны
+                if not df_main or not hasattr(df_main, 'columns') or not df_main.columns or len(df_main) == 0:
+                    logger.warning(f"Файл {main_table['file_id']} прочитан, но не содержит данных")
+                    return Response({
+                        "columns": [],
+                        "rows": [],
+                        "error": "Файл не содержит данных или выбран неправильный лист"
+                    }, status=200)
+                
+                # Передаем None для row_limit в dataframe_to_sql_values, чтобы включить все прочитанные данные
+                # Лимит и offset будут применены в SQL запросе через LIMIT/OFFSET clauses
+                main_from, _ = dataframe_to_sql_values(df_main, main_alias, row_limit=None)
                 main_cols = [str(col) for col in df_main.columns]
+                
+                logger.info(f"Прочитано {len(df_main)} строк из файла {main_table['file_id']}, колонок: {len(main_cols)}")
             except Exception as e:
+                logger.error(f"Ошибка чтения главного файла {main_table.get('file_id')}: {str(e)}", exc_info=True)
                 raise ValidationError(f"Ошибка чтения главного файла: {str(e)}")
         else:
             # Для БД источников используем прямое подключение
@@ -640,12 +660,14 @@ class DatasetDraftPreviewView(APIView):
             
             if is_join_file:
                 # Для файловых источников читаем данные напрямую
+                # Для JOIN таблиц читаем все данные, лимит будет применен к итоговому запросу
                 try:
                     df_join = read_file_to_dataframe(
                         jt['file_id'],
-                        sheet_name=get_sheet_name(jt)
+                        sheet_name=get_sheet_name(jt),
+                        row_limit=None  # Читаем все данные для JOIN
                     )
-                    join_from, _ = dataframe_to_sql_values(df_join, tbl_alias)
+                    join_from, _ = dataframe_to_sql_values(df_join, tbl_alias, row_limit=None)
                     join_cols = [str(col) for col in df_join.columns]
                 except Exception as e:
                     raise ValidationError(f"Ошибка чтения файла для JOIN: {str(e)}")
@@ -706,6 +728,15 @@ class DatasetDraftPreviewView(APIView):
             )
             join_clauses.append(join_clause)
         
+        # Проверяем, что есть колонки для SELECT
+        if not select_parts:
+            logger.warning("Нет колонок для SELECT в запросе")
+            return Response({
+                "columns": [],
+                "rows": [],
+                "error": "Нет колонок для отображения"
+            }, status=200)
+        
         # Собираем итоговый запрос
         query_parts = [
             sql.SQL('SELECT {}').format(sql.SQL(', ').join(select_parts)),
@@ -713,20 +744,41 @@ class DatasetDraftPreviewView(APIView):
         ]
         
         query_parts.extend(join_clauses)
-        query_parts.append(sql.SQL('LIMIT {}').format(sql.Literal(limit)))
+        
+        # Добавляем OFFSET если есть
+        if offset is not None and offset > 0:
+            query_parts.append(sql.SQL('OFFSET {}').format(sql.Literal(offset)))
+        
+        # Добавляем LIMIT
+        if limit is not None:
+            query_parts.append(sql.SQL('LIMIT {}').format(sql.Literal(limit)))
         
         final_query = sql.SQL(' ').join(query_parts)
         
         # Выполняем запрос
-        with connection.cursor() as cursor:
-            cursor.execute(final_query)
-            rows = cursor.fetchall()
-            columns = [col[0] for col in cursor.description]
+        try:
+            logger.info(f"Выполняем SQL запрос с limit={limit}, offset={offset}")
+            with connection.cursor() as cursor:
+                cursor.execute(final_query)
+                rows = cursor.fetchall()
+                columns = [col[0] for col in cursor.description]
+            
+            logger.info(f"Получено {len(rows)} строк, {len(columns)} колонок")
 
-        return Response({
-            "columns": columns,
-            "rows": rows
-        })
+            return Response({
+                "columns": columns,
+                "rows": rows,
+                "has_more": len(rows) == limit if limit else False
+            })
+        except Exception as e:
+            logger.error(f"Ошибка выполнения SQL запроса в draftPreview: {str(e)}", exc_info=True)
+            # Возвращаем более информативную ошибку
+            return Response({
+                "error": f"Ошибка выполнения запроса: {str(e)}",
+                "detail": "Проверьте, что файл содержит данные и правильно выбран лист для Excel файлов",
+                "columns": [],
+                "rows": []
+            }, status=500)
 
 # ==============================================================================
 # DataSetTable endpoints
@@ -853,7 +905,27 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance.save(update_fields=['columns_info'])
 
     def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
+        # get_object() уже обрабатывает DoesNotExist и возвращает Http404
+        # Перехватываем только Http404 и DoesNotExist
+        pk = kwargs.get('pk')
+        logger.info(f"[RETRIEVE] Попытка получить FileUpload с ID={pk}, пользователь={request.user.id}")
+        
+        try:
+            instance = self.get_object()
+            logger.info(f"[RETRIEVE] FileUpload найден: ID={instance.id}, UUID={instance.file_uuid}, owner={instance.owner.id}")
+        except FileUpload.DoesNotExist:
+            logger.warning(f"[RETRIEVE] FileUpload с ID={pk} не найден (DoesNotExist), пользователь={request.user.id}")
+            return Response(
+                {"detail": "No FileUpload matches the given query."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Http404:
+            logger.warning(f"[RETRIEVE] FileUpload с ID={pk} не найден (Http404), пользователь={request.user.id}")
+            return Response(
+                {"detail": "No FileUpload matches the given query."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
         serializer = self.get_serializer(instance)
         data = serializer.data
 
@@ -866,12 +938,139 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
         has_header = request.query_params.get('has_header', 'true').lower() == 'true'
 
         try:
+            # Проверяем, является ли файл бинарным
+            from src.core.bi_analysis.bi_datasets.binary_storage import is_binary_file, read_from_binary
+            
+            if is_binary_file(instance.file.path) or instance.file_type == 'bin':
+                # Читаем из бинарного файла
+                columns, rows = read_from_binary(instance.file.path, row_limit=None)
+                if has_header and rows:
+                    parsed = [columns, *rows]
+                else:
+                    parsed = rows
+                data['parsed'] = parsed
+                return Response(data)
+            
             if instance.file_type in ('csv', 'txt'):
-                parsed = self._parse_csv(instance.file.path, encoding, delimiter, has_header)
+                # Пробуем прочитать через бинарный формат, если файл конвертирован
+                if is_binary_file(instance.file.path) or instance.file_type == 'bin':
+                    columns, rows = read_from_binary(instance.file.path, row_limit=None)
+                    if has_header and rows:
+                        parsed = [columns, *rows]
+                    else:
+                        parsed = rows
+                else:
+                    # Читаем через Polars для эффективной обработки больших CSV
+                    try:
+                        import polars as pl
+                        import math
+                        
+                        # Пробуем разные кодировки
+                        df = None
+                        try:
+                            df = pl.read_csv(instance.file.path, encoding='utf8', separator=delimiter, try_parse_dates=True)
+                        except Exception:
+                            try:
+                                df = pl.read_csv(instance.file.path, encoding='cp1251', separator=delimiter, try_parse_dates=True)
+                            except Exception as e:
+                                logger.error(f"Ошибка при чтении CSV через Polars: {e}")
+                                # Fallback на старый метод
+                                parsed = self._parse_csv(instance.file.path, encoding, delimiter, has_header)
+                                df = None
+                        
+                        if df is not None:
+                            # Конвертируем в список строк, заменяя NaN на None
+                            columns = df.columns
+                            rows_list = []
+                            for row in df.iter_rows(named=False):
+                                cleaned_row = []
+                                for value in row:
+                                    if value is None:
+                                        cleaned_row.append(None)
+                                    elif isinstance(value, float):
+                                        if math.isnan(value) or math.isinf(value):
+                                            cleaned_row.append(None)
+                                        else:
+                                            cleaned_row.append(value)
+                                    else:
+                                        cleaned_row.append(value)
+                                rows_list.append(cleaned_row)
+                            
+                            if has_header:
+                                parsed = [list(columns), *rows_list]
+                            else:
+                                parsed = rows_list
+                    except ImportError:
+                        # Polars не установлен, используем старый метод
+                        parsed = self._parse_csv(instance.file.path, encoding, delimiter, has_header)
 
             elif instance.file_type == 'xlsx':
-                parsed, sheets = self._parse_xlsx(instance.file.path, has_header)
-                data['sheets'] = sheets
+                # Читаем через Polars для эффективной обработки больших Excel файлов
+                # Используем ту же логику, что и для подключений
+                try:
+                    import polars as pl
+                    import math
+                    
+                    # Определяем лист для чтения
+                    sheet_name = request.query_params.get('sheet_name') or request.query_params.get('sheet')
+                    
+                    # Читаем Excel файл через polars
+                    if sheet_name:
+                        df = pl.read_excel(instance.file.path, sheet_name=sheet_name)
+                    else:
+                        # Берем первый лист
+                        df = pl.read_excel(instance.file.path, sheet_index=0)
+                    
+                    # Получаем список всех листов для возврата
+                    # Используем openpyxl для получения списка листов (polars не предоставляет простой способ)
+                    try:
+                        wb = load_workbook(filename=instance.file.path, read_only=True)
+                        sheets = wb.sheetnames
+                        wb.close()
+                    except:
+                        sheets = []
+                    
+                    data['sheets'] = sheets
+                    
+                    # Конвертируем в список строк, заменяя NaN на None
+                    # Используем to_numpy().tolist() для быстрой конвертации (векторизация polars)
+                    columns = df.columns
+                    rows_numpy = df.to_numpy().tolist()
+                    
+                    # Очищаем NaN и infinity значения
+                    rows_list = []
+                    for row in rows_numpy:
+                        cleaned_row = []
+                        for value in row:
+                            if value is None:
+                                cleaned_row.append(None)
+                            elif isinstance(value, float):
+                                if math.isnan(value) or math.isinf(value):
+                                    cleaned_row.append(None)
+                                else:
+                                    cleaned_row.append(value)
+                            else:
+                                cleaned_row.append(value)
+                        rows_list.append(cleaned_row)
+                    
+                    if has_header and rows_list:
+                        parsed = [list(columns), *rows_list]
+                    else:
+                        parsed = rows_list
+                        
+                except ImportError:
+                    # Polars не установлен, используем старый метод
+                    parsed, sheets = self._parse_xlsx(instance.file.path, has_header)
+                    data['sheets'] = sheets
+                except Exception as e:
+                    logger.error(f"Ошибка при чтении Excel через Polars: {e}")
+                    # Fallback на старый метод
+                    try:
+                        parsed, sheets = self._parse_xlsx(instance.file.path, has_header)
+                        data['sheets'] = sheets
+                    except Exception as e2:
+                        logger.error(f"Ошибка при чтении Excel через fallback метод: {e2}")
+                        raise ValidationError(f"Ошибка чтения Excel файла: {str(e2)}")
 
             else:
                 raise ValidationError(f"Неподдерживаемый тип файла: {instance.file_type}")
@@ -880,9 +1079,17 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
             return Response(data)
 
         except Exception as exc:
+            logger.error(f"Ошибка при чтении файла {instance.id}: {str(exc)}", exc_info=True)
             return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def perform_update(self, serializer):
+        instance = serializer.instance
+        
+        # Убеждаемся, что UUID есть
+        if not instance.file_uuid:
+            instance.file_uuid = uuid4()
+            instance.save(update_fields=['file_uuid'])
+        
         file = self.request.FILES.get('file')
         # Безопасный доступ к request.data для избежания ошибок типизации
         request_data = getattr(self.request, 'data', {})
@@ -932,9 +1139,10 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
                     except Exception as e:
                         print(f"[DEBUG UPDATE] Ошибка при удалении старого файла: {e}")
                 
-                # Затем обновляем файл отдельно
+                # Затем обновляем файл отдельно с UUID в имени
+                uuid_filename = f"{instance.file_uuid}.bin" if file_type == 'bin' else f"{instance.file_uuid}{os.path.splitext(file.name)[1]}"
                 with open(single_sheet_path, 'rb') as f:
-                    instance.file.save(file.name, File(f), save=True)
+                    instance.file.save(uuid_filename, File(f), save=True)
                 
                 print(f"[DEBUG UPDATE] Файл обновлен в базе: {instance.file.path}")
                 
@@ -952,17 +1160,28 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
                     os.remove(temp_path)
                 except Exception:
                     pass
+                # Сохраняем файл с UUID в имени
+                if file:
+                    file_ext = os.path.splitext(file.name)[1] or ('.bin' if file_type == 'bin' else '.xlsx')
+                    uuid_filename = f"{instance.file_uuid}{file_ext}"
+                    with open(temp_path, 'rb') as f:
+                        instance.file.save(uuid_filename, File(f), save=True)
+                
                 instance = serializer.save(
                     name=name or serializer.instance.name,
                     original_filename=(file.name if file else serializer.instance.original_filename),
-                    file=(file if file else serializer.instance.file),
                     file_type=file_type
                 )
         else:
+            # Сохраняем файл с UUID в имени если есть новый файл
+            if file:
+                file_ext = os.path.splitext(file.name)[1] or ('.bin' if file_type == 'bin' else '.xlsx')
+                uuid_filename = f"{instance.file_uuid}{file_ext}"
+                instance.file.save(uuid_filename, file, save=False)
+            
             instance = serializer.save(
                 name=name or serializer.instance.name,
                 original_filename=(file.name if file else serializer.instance.original_filename),
-                file=(file if file else serializer.instance.file),
                 file_type=file_type
             )
 
@@ -1020,10 +1239,11 @@ class FileUploadByConnectionView(generics.ListAPIView):
     def get_queryset(self):
         conn_id = self.kwargs['connection_id']
         # Оптимизация: используем select_related для уменьшения количества запросов к БД
-        return FileUpload.objects.filter(
+        qs = FileUpload.objects.filter(
             owner=self.request.user, 
             connection_id=conn_id
         ).select_related('connection', 'owner').order_by('-uploaded_at')
+        return qs
     
 class DatasetRowsAggAPIView(APIView):
     """
@@ -1063,19 +1283,40 @@ def extract_columns_info(instance):
     """
     Оптимизированная функция для извлечения информации о колонках.
     Читает только первые 200 строк вместо всего файла для ускорения.
+    Поддерживает бинарные файлы .bin.
     """
     path = instance.file.path
-    MAX_ROWS_TO_READ = 200  # Ограничиваем чтение для ускорения
+    # Проверяем, является ли файл бинарным
+    from src.core.bi_analysis.bi_datasets.binary_storage import is_binary_file, read_from_binary
+    
+    if is_binary_file(path) or instance.file_type == 'bin':
+        try:
+            # Читаем только первые 200 строк для определения типов колонок (для производительности)
+            columns, rows = read_from_binary(path, row_limit=200)
+            if not rows:
+                return {'columns': [], 'types': []}
+            
+            # Определяем типы колонок
+            types = []
+            sample_rows = rows[:50] if len(rows) > 50 else rows
+            for col_idx in range(len(columns)):
+                col_values = [row[col_idx] for row in sample_rows if len(row) > col_idx and row[col_idx] is not None]
+                types.append(detect_column_type(col_values))
+            
+            return {'columns': columns, 'types': types}
+        except Exception as e:
+            logger.error(f"Ошибка чтения бинарного файла для извлечения колонок: {str(e)}")
+            return {'columns': [], 'types': []}
     
     if instance.file_type == 'xlsx':
         try:
             wb = openpyxl.load_workbook(filename=path, read_only=True, data_only=True)
             sheet = wb.active
             
-            # Читаем только первые MAX_ROWS_TO_READ строк вместо всего файла
+            # Читаем только первые 200 строк для определения типов колонок (для производительности)
             rows = []
             for idx, row in enumerate(sheet.iter_rows(values_only=True)):
-                if idx >= MAX_ROWS_TO_READ:
+                if idx >= 200:
                     break
                 rows.append(row)
             
@@ -1099,12 +1340,12 @@ def extract_columns_info(instance):
 
     elif instance.file_type == 'csv':
         try:
-            # Для CSV читаем построчно, останавливаемся после MAX_ROWS_TO_READ строк
+            # Для CSV читаем построчно, останавливаемся после 200 строк для определения типов (для производительности)
             rows = []
             with open(path, encoding='utf-8') as f:
                 reader = csv.reader(f)
                 for idx, row in enumerate(reader):
-                    if idx >= MAX_ROWS_TO_READ:
+                    if idx >= 200:
                         break
                     rows.append(row)
             
@@ -1164,90 +1405,137 @@ class FinalizeUploadView(APIView):
             connection=connection_obj
         )
 
-        # Сначала сохраняем объект без файла
+        # Сначала сохраняем объект без файла, чтобы сгенерировался UUID
         upload.save()
         
-        if file_type == "xlsx" and sheet:
+        # UUID должен быть сгенерирован автоматически при сохранении
+        if not upload.file_uuid:
+            from uuid import uuid4
+            upload.file_uuid = uuid4()
+            upload.save(update_fields=['file_uuid'])
+        
+        logger.info(f"Создан FileUpload с UUID: {upload.file_uuid}, ID: {upload.id}")
+        
+        # Конвертируем файл в бинарный формат .bin перед сохранением
+        binary_converted = False
+        binary_path = None
+        
+        # Всегда пытаемся конвертировать в бинарный формат для всех типов файлов
+        try:
+            from src.core.bi_analysis.bi_datasets.binary_storage import convert_to_binary
+            
+            # Проверяем, установлен ли Polars
+            polars_available = False
             try:
-                # Используем pandas для быстрого чтения и записи Excel (намного быстрее для больших файлов)
-                try:
-                    import pandas as pd
+                import polars as pl
+                polars_available = True
+                logger.info("Polars установлен, конвертация в .bin возможна")
+            except ImportError:
+                logger.error("Polars не установлен! Файлы не будут конвертироваться в .bin формат")
+                binary_converted = False
+                binary_path = None
+            
+            if polars_available:  # Если Polars установлен, продолжаем
+                # Конвертируем напрямую из исходного файла, Polars сам прочитает нужный лист
+                # Не создаем промежуточный файл, чтобы избежать повреждения данных
+                if temp_path and file_type and os.path.exists(temp_path):
+                    temp_binary_path = temp_path + ".bin"
+                    logger.info(f"[CONVERT] Начинаем конвертацию файла {temp_path} в бинарный формат {temp_binary_path}, тип: {file_type}, лист: {sheet}")
                     
-                    # Читаем только нужный лист через pandas (быстро и эффективно)
-                    df = pd.read_excel(temp_path, sheet_name=sheet, engine='openpyxl')
+                    conversion_result = convert_to_binary(temp_path, temp_binary_path, sheet_name=sheet, file_type=file_type)
+                    logger.info(f"[CONVERT] Результат конвертации: {conversion_result}")
                     
-                    # Сохраняем во временный файл только с одним листом
-                    single_sheet_path = temp_path + "_single.xlsx"
-                    df.to_excel(single_sheet_path, sheet_name=sheet, index=False, engine='openpyxl')
-                    
-                    # Сохраняем файл в Django
-                    with open(single_sheet_path, 'rb') as f:
-                        upload.file.save(original_filename, File(f), save=True)
-                    
-                    # Удаляем временный файл
-                    try:
-                        os.remove(single_sheet_path)
-                    except Exception:
-                        pass
-                        
-                except ImportError:
-                    # Fallback на openpyxl если pandas недоступен
-                    # Оптимизированный подход: читаем только нужный лист и создаем новый файл
-                    source_wb = openpyxl.load_workbook(temp_path, read_only=True, data_only=True)
-                    
-                    if sheet not in source_wb.sheetnames:
-                        source_wb.close()
-                        raise ValueError(f"Лист '{sheet}' не найден в файле")
-                    
-                    # Создаем новый workbook только с нужным листом
-                    new_wb = openpyxl.Workbook()
-                    if new_wb.active:
-                        new_wb.remove(new_wb.active)
-                    
-                    # Копируем данные из исходного листа в новый
-                    source_sheet = source_wb[sheet]
-                    new_sheet = new_wb.create_sheet(title=sheet)
-                    
-                    # Копируем данные построчно
-                    for row in source_sheet.iter_rows(values_only=True):
-                        new_sheet.append(row)
-                    
-                    source_wb.close()
-                    
-                    # Сохраняем во временный файл
-                    single_sheet_path = temp_path + "_single.xlsx"
-                    new_wb.save(single_sheet_path)
-                    new_wb.close()
-                    
-                    # Сохраняем файл в Django
-                    with open(single_sheet_path, 'rb') as f:
-                        upload.file.save(original_filename, File(f), save=True)
-                    
-                    # Удаляем временный файл
-                    try:
-                        os.remove(single_sheet_path)
-                    except Exception:
-                        pass
-                    
+                    if conversion_result:
+                        if os.path.exists(temp_binary_path):
+                            binary_path = temp_binary_path
+                            binary_converted = True
+                            file_size = os.path.getsize(binary_path)
+                            logger.info(f"[CONVERT] Файл успешно конвертирован в бинарный формат: {binary_path}, размер: {file_size} байт")
+                        else:
+                            logger.error(f"[CONVERT] Бинарный файл не был создан: {temp_binary_path}")
+                            binary_converted = False
+                    else:
+                        logger.warning(f"[CONVERT] Не удалось конвертировать файл {temp_path} в бинарный формат, используется оригинальный")
+                        binary_converted = False
+                else:
+                    logger.warning(f"[CONVERT] Не удалось найти исходный файл для конвертации: temp_path={temp_path}, file_type={file_type}, exists={os.path.exists(temp_path) if temp_path else False}")
+                    binary_converted = False
+        except Exception as e:
+            logger.error(f"[CONVERT] Ошибка при конвертации в бинарный формат: {str(e)}", exc_info=True)
+            binary_converted = False
+        
+        # Сохраняем файл в Django (бинарный или оригинальный)
+        # UUID уже должен быть сгенерирован при первом сохранении
+        if not upload.file_uuid:
+            upload.file_uuid = uuid4()
+            upload.save(update_fields=['file_uuid'])
+        
+        logger.info(f"[SAVE] Проверка перед сохранением: binary_converted={binary_converted}, binary_path={binary_path}, exists={os.path.exists(binary_path) if binary_path else False}")
+        
+        if binary_converted and binary_path and os.path.exists(binary_path):
+            # Сохраняем бинарный файл с именем по UUID
+            # Имя файла = UUID.bin
+            binary_filename = f"{upload.file_uuid}.bin"
+            
+            logger.info(f"[SAVE] Сохраняем бинарный файл с UUID: {binary_filename}, путь: {binary_path}")
+            try:
+                with open(binary_path, 'rb') as f:
+                    upload.file.save(binary_filename, File(f), save=True)
+                upload.file_type = 'bin'
+                upload.save(update_fields=['file', 'file_type'])
+                logger.info(f"[SAVE] Бинарный файл успешно сохранен в Django, file_type установлен в 'bin'")
             except Exception as e:
-                # Если ошибка, сохраняем оригинальный файл
-                with open(temp_path, 'rb') as f:
-                    upload.file.save(original_filename, File(f), save=True)
+                logger.error(f"[SAVE] Ошибка при сохранении бинарного файла в Django: {str(e)}", exc_info=True)
+                # Fallback на оригинальный файл
+                binary_converted = False
+            
+            # Проверяем, что файл действительно сохранен
+            if upload.file and hasattr(upload.file, 'path'):
+                saved_path = upload.file.path
+                if os.path.exists(saved_path):
+                    logger.info(f"Бинарный файл успешно сохранен: {saved_path}, размер: {os.path.getsize(saved_path)} байт")
+                else:
+                    logger.error(f"Бинарный файл не найден после сохранения: {saved_path}")
+            
+            # Удаляем временный бинарный файл
+            try:
+                if binary_path and os.path.exists(binary_path):
+                    os.remove(binary_path)
+                    logger.info(f"Временный бинарный файл удален: {binary_path}")
+            except Exception as e:
+                logger.warning(f"Не удалось удалить временный бинарный файл: {e}")
         else:
-            # Для не-Excel файлов или Excel без указания листа - просто копируем
-            with open(temp_path, 'rb') as f:
-                upload.file.save(original_filename, File(f), save=True)
+            # Сохраняем оригинальный файл (fallback) - тоже с UUID
+            logger.warning(f"[SAVE] Используется оригинальный файл вместо бинарного. binary_converted={binary_converted}, binary_path={binary_path}, polars_available={polars_available if 'polars_available' in locals() else 'unknown'}")
+            
+            # Определяем расширение оригинального файла
+            if original_filename:
+                file_ext = os.path.splitext(original_filename)[1] or '.bin'
+            else:
+                file_ext = '.bin' if file_type == 'bin' else ('.xlsx' if file_type == 'xlsx' else '.csv')
+            
+            # Имя файла = UUID + расширение
+            uuid_filename = f"{upload.file_uuid}{file_ext}"
+            
+            if temp_path and os.path.exists(temp_path):
+                with open(temp_path, 'rb') as f:
+                    upload.file.save(uuid_filename, File(f), save=True)
 
         upload.columns_info = extract_columns_info(upload)
         upload.save(update_fields=['columns_info'])
 
+        # Удаляем временные файлы
         try:
-            os.remove(temp_path)
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
         except OSError:
             pass
+        
 
         serializer = FileUploadSerializer(upload)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        response_data = serializer.data
+        logger.info(f"[FINALIZE] Файл успешно создан: ID={upload.id}, UUID={upload.file_uuid}, name={upload.name}, owner={upload.owner.id}")
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 # ==============================================================================
 # XLSX helper endpoints

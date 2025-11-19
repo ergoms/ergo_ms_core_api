@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def _read_file_with_polars(file_upload_id: int, sheet_name: Optional[str] = None, 
-                           row_limit: int = PREVIEW_LIMIT, 
+                           row_limit: Optional[int] = None, 
                            progress_callback=None) -> Tuple[List[str], List[List[Any]]]:
     """
     Читает файл используя polars для максимальной производительности с векторизацией.
@@ -47,8 +47,33 @@ def _read_file_with_polars(file_upload_id: int, sheet_name: Optional[str] = None
         table = read_file_to_dataframe(file_upload_id, sheet_name, row_limit)
         return table.columns, table.rows
     
-    upload = FileUpload.objects.get(pk=file_upload_id)
+    try:
+        upload = FileUpload.objects.get(pk=file_upload_id)
+    except FileUpload.DoesNotExist:
+        logger.error(f"FileUpload с id={file_upload_id} не найден")
+        raise ValueError(f"FileUpload с id={file_upload_id} не найден")
+    
+    if not upload.file:
+        logger.error(f"FileUpload {file_upload_id} не имеет файла")
+        raise ValueError(f"FileUpload {file_upload_id} не имеет файла")
+    
     path = upload.file.path
+    
+    # Проверяем, является ли файл бинарным
+    from src.core.bi_analysis.bi_datasets.binary_storage import is_binary_file, read_from_binary
+    
+    if is_binary_file(path) or upload.file_type == 'bin':
+        # Читаем из бинарного файла
+        if progress_callback:
+            progress_callback(0.1)
+        try:
+            columns, rows_list = read_from_binary(path, row_limit=row_limit)
+            if progress_callback:
+                progress_callback(1.0)
+            return columns, rows_list
+        except Exception as e:
+            logger.error(f"Ошибка чтения бинарного файла {file_upload_id}: {str(e)}")
+            raise
     
     if progress_callback:
         progress_callback(0.1)
@@ -66,7 +91,8 @@ def _read_file_with_polars(file_upload_id: int, sheet_name: Optional[str] = None
                 progress_callback(0.5)
             
             # Используем векторизованные операции polars для ограничения
-            if row_limit and row_limit > 0:
+            # Если row_limit не указан (None), читаем все данные
+            if row_limit is not None and row_limit > 0:
                 df = df.head(row_limit)
             
             # Векторизованная конвертация в списки
@@ -91,7 +117,8 @@ def _read_file_with_polars(file_upload_id: int, sheet_name: Optional[str] = None
                 progress_callback(0.5)
             
             # Векторизованная операция ограничения
-            if row_limit and row_limit > 0:
+            # Если row_limit не указан (None), читаем все данные
+            if row_limit is not None and row_limit > 0:
                 df = df.head(row_limit)
             
             columns = df.columns
@@ -125,7 +152,16 @@ def _read_file_chunked(file_upload_id: int, sheet_name: Optional[str] = None,
     except ImportError:
         return _read_file_with_polars(file_upload_id, sheet_name, row_limit, progress_callback)
     
-    upload = FileUpload.objects.get(pk=file_upload_id)
+    try:
+        upload = FileUpload.objects.get(pk=file_upload_id)
+    except FileUpload.DoesNotExist:
+        logger.error(f"FileUpload с id={file_upload_id} не найден")
+        raise ValueError(f"FileUpload с id={file_upload_id} не найден")
+    
+    if not upload.file:
+        logger.error(f"FileUpload {file_upload_id} не имеет файла")
+        raise ValueError(f"FileUpload {file_upload_id} не имеет файла")
+    
     path = upload.file.path
     
     # Определяем размер файла для оценки прогресса
@@ -269,7 +305,16 @@ def _read_files_parallel_with_progress(file_data_list: List[Dict[str, Any]],
         
         # Определяем размер файла для выбора стратегии
         try:
-            upload = FileUpload.objects.get(pk=file_data['file_id'])
+            try:
+                upload = FileUpload.objects.get(pk=file_data['file_id'])
+            except FileUpload.DoesNotExist:
+                logger.error(f"FileUpload с id={file_data['file_id']} не найден")
+                return ([], [])
+            
+            if not upload.file:
+                logger.error(f"FileUpload {file_data['file_id']} не имеет файла")
+                return ([], [])
+            
             file_size = os.path.getsize(upload.file.path)
             # Если файл больше 10MB, используем чанкинг
             use_chunked = file_size > 10 * 1024 * 1024
@@ -328,35 +373,17 @@ def process_dataset_preview(self, dataset_id: int, limit: int = PREVIEW_LIMIT):
         
         # Проверяем, есть ли таблицы в датасете
         if not dataset.tables.exists():
-            # Fallback для старых датасетов
-            if not dataset.table_ref:
-                raise ValueError("Таблица ещё не создана для датасета")
-            
-            base_table = dataset.table_ref
-            if '.' in base_table:
-                schema, table = base_table.split('.', 1)
-            else:
-                schema, table = 'public', base_table
-            
-            self.update_state(state='PROGRESS', meta={'progress': 0.5, 'message': 'Выполнение SQL запроса'})
-            
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f'SELECT * FROM "{schema}"."{table}" LIMIT %s',
-                    [limit],
-                )
-                rows = cursor.fetchall()
-                columns = [col[0] for col in cursor.description]
-        else:
-            # Используем новую логику с динамическим SQL
-            query = build_dataset_query(dataset, limit=limit)
-            
-            self.update_state(state='PROGRESS', meta={'progress': 0.5, 'message': 'Выполнение SQL запроса'})
-            
-            with connection.cursor() as cursor:
-                cursor.execute(query)
-                rows = cursor.fetchall()
-                columns = [col[0] for col in cursor.description]
+            raise ValueError("Таблицы не найдены в датасете. Добавьте главную таблицу для предпросмотра.")
+        
+        # Используем новую логику с динамическим SQL, которая читает файлы напрямую через polars и бинарные файлы
+        query = build_dataset_query(dataset, limit=limit)
+        
+        self.update_state(state='PROGRESS', meta={'progress': 0.5, 'message': 'Выполнение SQL запроса'})
+        
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
         
         self.update_state(state='PROGRESS', meta={'progress': 1.0, 'message': 'Завершено'})
         
@@ -614,7 +641,8 @@ def process_file_preview(self, temp_path: str, sheet_name: Optional[str] = None,
             self.update_state(state='PROGRESS', meta={'progress': 0.6, 'message': 'Обработка данных'})
             
             # Векторизованная операция ограничения
-            if row_limit and row_limit > 0:
+            # Если row_limit не указан (None), читаем все данные
+            if row_limit is not None and row_limit > 0:
                 df = df.head(row_limit)
             
             # Векторизованная конвертация в списки
@@ -646,7 +674,8 @@ def process_file_preview(self, temp_path: str, sheet_name: Optional[str] = None,
             self.update_state(state='PROGRESS', meta={'progress': 0.6, 'message': 'Обработка данных'})
             
             # Векторизованная операция ограничения
-            if row_limit and row_limit > 0:
+            # Если row_limit не указан (None), читаем все данные
+            if row_limit is not None and row_limit > 0:
                 df = df.head(row_limit)
             
             columns = df.columns

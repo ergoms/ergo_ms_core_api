@@ -8,7 +8,7 @@ from src.config.env import env
 OLLAMA_BASE_URL = env.str('OLLAMA_BASE_URL', default='http://localhost:11434')
 
 # Модель Ollama по умолчанию
-OLLAMA_DEFAULT_MODEL = env.str('OLLAMA_DEFAULT_MODEL', default='mistral7b-tuned')
+OLLAMA_DEFAULT_MODEL = env.str('OLLAMA_DEFAULT_MODEL', default='mistral:7b')
 
 # Использовать прямой API Ollama (быстрее в 10+ раз)
 OLLAMA_USE_DIRECT_API = env.bool('OLLAMA_USE_DIRECT_API', default=True)

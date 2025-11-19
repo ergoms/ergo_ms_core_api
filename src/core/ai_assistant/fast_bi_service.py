@@ -31,7 +31,7 @@ from .llm_clients import LLMClientError, build_llm_client
 # -----------------------------
 # Константы (из настроек Django)
 # -----------------------------
-DEFAULT_MODEL = getattr(settings, "OLLAMA_DEFAULT_MODEL", "mistral7b-tuned")
+DEFAULT_MODEL = getattr(settings, "OLLAMA_DEFAULT_MODEL", "mistral:7b")
 OLLAMA_BASE_URL = getattr(settings, "OLLAMA_BASE_URL", "http://localhost:11434")
 STATS_TOP_K = 10
 SQL_TIMEOUT_SEC = 30
@@ -129,7 +129,7 @@ class FastBIService:
         Загружает файл в DuckDB.
 
         Args:
-            file_path: Путь к файлу (CSV, XLSX, XLS)
+            file_path: Путь к файлу (CSV, XLSX, XLS, BIN)
             table_name: Имя таблицы в DuckDB
 
         Returns:
@@ -142,7 +142,26 @@ class FastBIService:
             raise FileNotFoundError(f"Файл не найден: {file_path}")
 
         try:
-            if path.suffix.lower() in [".csv", ".tsv"]:
+            # Проверяем, является ли файл бинарным (.bin)
+            from src.core.bi_analysis.bi_datasets.binary_storage import is_binary_file, read_from_binary
+            
+            if is_binary_file(str(path)) or path.suffix.lower() == ".bin":
+                # Читаем из бинарного файла через Polars IPC
+                columns, rows = read_from_binary(str(path), row_limit=None)
+                
+                # Конвертируем в pandas DataFrame для загрузки в DuckDB
+                if not rows:
+                    raise ValueError("Бинарный файл не содержит данных")
+                
+                # Создаем DataFrame из списка строк
+                df = pd.DataFrame(rows, columns=columns)
+                
+                # Регистрируем DataFrame в DuckDB
+                self.con.register("tmp_df", df)
+                self.con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM tmp_df;")
+                self.con.unregister("tmp_df")
+                
+            elif path.suffix.lower() in [".csv", ".tsv"]:
                 self.con.execute(
                     f"""
                     CREATE OR REPLACE TABLE {table_name} AS
