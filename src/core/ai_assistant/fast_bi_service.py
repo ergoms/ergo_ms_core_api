@@ -40,6 +40,26 @@ SQL_TIMEOUT_SEC = 30
 # -----------------------------
 # Хелперы
 # -----------------------------
+def _normalize_sql_for_duckdb(sql: str) -> str:
+    """
+    Нормализует SQL для DuckDB:
+    - Заменяет обратные кавычки (`) на двойные кавычки (") для идентификаторов
+    - DuckDB использует двойные кавычки для идентификаторов с пробелами или специальными символами
+    """
+    # Заменяем обратные кавычки на двойные для идентификаторов
+    # Используем регулярное выражение для замены `identifier` на "identifier"
+    import re
+    # Паттерн для обратных кавычек вокруг идентификаторов
+    # Заменяем `name` на "name", но не трогаем строки в одинарных кавычках
+    def replace_backticks(match):
+        identifier = match.group(1)
+        return f'"{identifier}"'
+    
+    # Заменяем обратные кавычки на двойные
+    normalized = re.sub(r'`([^`]+)`', replace_backticks, sql)
+    return normalized
+
+
 def _only_select(sql: str) -> str:
     """Оставляем только первый SELECT; режем всё после ; и запрещаем DML/DDL."""
     sql_single = sql.split(";")[0].strip()
@@ -49,7 +69,8 @@ def _only_select(sql: str) -> str:
     parsed = parsed_list[0]
     if parsed.get_type().upper() != "SELECT":
         raise ValueError("Только SELECT-запросы разрешены.")
-    return sql_single
+    # Нормализуем SQL для DuckDB перед возвратом
+    return _normalize_sql_for_duckdb(sql_single)
 
 
 def _extract_sql_from_text(text: str) -> str:
@@ -274,6 +295,8 @@ class FastBIService:
             "8. Сложный вопрос? Сделай SELECT всех данных, анализ будет в комментарии\n"
             "9. НЕ добавляй LIMIT если в вопросе не просят ограничить количество строк\n"
             "10. Если просят показать ВСЕ данные — не используй LIMIT\n"
+            "11. ВАЖНО: Для идентификаторов (имен колонок и таблиц) используй ДВОЙНЫЕ КАВЫЧКИ (\"), а НЕ обратные кавычки (`)\n"
+            "12. Если имя колонки содержит пробелы или специальные символы, обязательно используй двойные кавычки: \"Имя Колонки\"\n"
             "\n"
             f"СХЕМА И СВОДКИ (JSON):\n{json.dumps(meta_min, ensure_ascii=False)}\n\n"
             f"ВОПРОС ПОЛЬЗОВАТЕЛЯ:\n{question}\n\n"
