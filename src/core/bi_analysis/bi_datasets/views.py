@@ -549,13 +549,18 @@ class DatasetDraftPreviewView(APIView):
         
         async_threshold = getattr(settings, 'BI_PREVIEW_ASYNC_THRESHOLD', 5000)
         if use_async or limit > async_threshold or file_count > 2:
-            from src.core.bi_analysis.tasks import process_draft_preview
-            task = process_draft_preview.delay(data)
-            return Response({
-                "task_id": task.id,
-                "status": "processing",
-                "message": "Предпросмотр обрабатывается асинхронно"
-            }, status=202)
+            try:
+                from src.core.bi_analysis.tasks import process_draft_preview
+                task = process_draft_preview.delay(data)
+                return Response({
+                    "task_id": task.id,
+                    "status": "processing",
+                    "message": "Предпросмотр обрабатывается асинхронно"
+                }, status=202)
+            except Exception as e:
+                # Если Celery недоступен, используем синхронную обработку
+                logger.warning(f"Не удалось запустить асинхронную задачу Celery: {e}. Используем синхронную обработку.")
+                # Продолжаем выполнение синхронно
         
         connection_id = data.get('connection_id')
         joined_tables = data.get('joinedTables', [])
