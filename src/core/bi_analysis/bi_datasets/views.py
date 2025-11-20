@@ -528,15 +528,18 @@ class DatasetDraftPreviewView(APIView):
         
         # Проверяем наличие главной таблицы
         main_table = data.get('mainTable')
-        if not main_table:
+        if not main_table or (isinstance(main_table, dict) and not main_table):
             return Response({
                 "error": "Не указана главная таблица",
                 "columns": [],
                 "rows": []
             }, status=400)
         
+        from django.conf import settings
+        
         use_async = data.get('async', False)
-        limit = int(data.get('limit', 1000))  # Увеличен лимит по умолчанию
+        # Лимит берется из настроек Django (из .env переменной VITE_BI_PREVIEW_ROWS_LIMIT)
+        limit = int(data.get('limit', getattr(settings, 'BI_PREVIEW_ROWS_LIMIT', 1000)))
         
         # Для больших лимитов или множества файлов используем асинхронную обработку
         file_count = sum([
@@ -544,7 +547,8 @@ class DatasetDraftPreviewView(APIView):
             sum([1 if 'file_id' in jt and jt.get('file_id') else 0 for jt in data.get('joinedTables', [])])
         ])
         
-        if use_async or limit > 5000 or file_count > 2:
+        async_threshold = getattr(settings, 'BI_PREVIEW_ASYNC_THRESHOLD', 5000)
+        if use_async or limit > async_threshold or file_count > 2:
             from src.core.bi_analysis.tasks import process_draft_preview
             task = process_draft_preview.delay(data)
             return Response({
@@ -588,7 +592,7 @@ class DatasetDraftPreviewView(APIView):
                 file_read_limit = limit + (offset or 0) + 100  # Запас в 100 строк для корректной работы
                 # Ограничиваем максимальное количество строк в VALUES (чтобы не создавать огромные SQL запросы)
                 # Для больших файлов используем разумный лимит
-                MAX_VALUES_ROWS = 10000  # Максимум 10000 строк в VALUES clause
+                MAX_VALUES_ROWS = getattr(settings, 'BI_PREVIEW_MAX_VALUES_ROWS', 10000)
                 if file_read_limit > MAX_VALUES_ROWS:
                     file_read_limit = MAX_VALUES_ROWS
             

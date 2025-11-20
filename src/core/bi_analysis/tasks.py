@@ -412,8 +412,16 @@ def process_draft_preview(self, draft_data: Dict[str, Any]):
         
         connection_id = draft_data.get('connection_id')
         main_table = draft_data.get('mainTable')
+        
+        # Проверяем наличие главной таблицы
+        if not main_table or (isinstance(main_table, dict) and not main_table):
+            raise ValidationError("Не указана главная таблица")
+        
+        from django.conf import settings
+        
         joined_tables = draft_data.get('joinedTables', [])
-        limit = int(draft_data.get('limit', 20))
+        # Лимит берется из настроек Django (из .env переменной VITE_BI_PREVIEW_ROWS_LIMIT)
+        limit = int(draft_data.get('limit', getattr(settings, 'BI_PREVIEW_ROWS_LIMIT', 1000)))
         
         def get_sheet_name(table_dict):
             if not isinstance(table_dict, dict):
