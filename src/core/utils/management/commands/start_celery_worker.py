@@ -89,7 +89,7 @@ class Command(BaseCommand):
             'src',
             'worker',
             f'--loglevel={options["loglevel"]}',
-            '--pool=solo',
+            '--pool=eventlet',
         ]
         
         try:

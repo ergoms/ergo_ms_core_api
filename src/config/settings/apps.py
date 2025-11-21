@@ -35,6 +35,7 @@ INSTALLED_APPS = ALL_MODULES + [
     
     'corsheaders',
     'drf_yasg',
+    'django_celery_beat',
 ]
 
 # Определяем список middleware
