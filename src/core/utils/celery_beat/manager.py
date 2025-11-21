@@ -88,25 +88,26 @@ class CeleryBeatModuleManager:
         return DefaultBeatModuleConfig(module_name)
     
     def _discover_nested_modules(self, modules_dir: Path) -> List[str]:
-        """Обнаруживает вложенные модули с файлами tasks.py"""
+        """Обнаруживает вложенные модули с файлами tasks.py."""
         nested_modules = []
-        
+
         def find_modules_with_tasks(current_dir: Path, base_path: str = ""):
-            """Рекурсивно ищет модули с файлами tasks.py"""
+            """Рекурсивно ищет модули с файлами tasks.py."""
             for item in current_dir.iterdir():
                 if item.is_dir() and not item.name.startswith('_'):
                     # Проверяем наличие tasks.py
                     tasks_file = item / 'tasks.py'
                     if tasks_file.exists():
                         # Формируем полный путь к модулю
-                        module_path = f"{base_path}.{item.name}" if base_path else f"src.modules.{item.name}"
+                        # Для внешних модулей базовый префикс — 'modules', как и в discover_modules_apps
+                        module_path = f"{base_path}.{item.name}" if base_path else f"modules.{item.name}"
                         nested_modules.append(module_path)
                         self.logger.debug(f"Найден вложенный модуль с tasks.py: {module_path}")
-                    
+
                     # Рекурсивно обходим поддиректории
-                    new_base = f"{base_path}.{item.name}" if base_path else f"src.modules.{item.name}"
+                    new_base = f"{base_path}.{item.name}" if base_path else f"modules.{item.name}"
                     find_modules_with_tasks(item, new_base)
-        
+
         find_modules_with_tasks(modules_dir)
         return nested_modules
     

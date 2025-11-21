@@ -18,6 +18,7 @@ from django.conf import settings
 
 from src.core.utils.auto_api.auto_config import get_env_deploy_type
 from src.core.utils.celery.manager import CeleryModuleManager
+from src.core.utils.celery_beat.manager import CeleryBeatModuleManager
 from src.config.settings.base import LOGS_ROOT, VIRTUAL_ENV_DIR
 
 # Определение типа развертывания и настройка переменной окружения Django
@@ -53,6 +54,9 @@ celery_app.autodiscover_tasks(lambda: settings.INSTALLED_APPS)
 
 # Инициализация менеджера модулей
 module_manager = CeleryModuleManager()
+
+# ПРИМЕЧАНИЕ: CeleryBeatModuleManager инициализируется в config/settings/celery_beat.py
+# и автоматически загружается через namespace='CELERY_BEAT' (строка 42)
 
 # Настройка логирования Celery
 def setup_celery_logging():
@@ -161,17 +165,28 @@ setup_celery_logging()
 # Настройка пути к файлу состояния планировщика и периодических задач
 # Broker URL и Result Backend берутся из config/settings/celery.py и celery_beat.py автоматически
 
-# Импортируем настройки Beat для scheduler
-try:
-    from src.config.settings.celery_beat import (
-        CELERY_BEAT_SCHEDULER,
-        CELERY_BEAT_SCHEDULER_DB_ALIAS,
-        CELERY_BEAT_SCHEDULE_FILENAME,
-    )
-except ImportError:
-    CELERY_BEAT_SCHEDULER = None
-    CELERY_BEAT_SCHEDULER_DB_ALIAS = None
-    CELERY_BEAT_SCHEDULE_FILENAME = str(VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db")
+# Импортируем настройки Beat напрямую из модуля (не через Django settings)
+CELERY_BEAT_SCHEDULER = None
+CELERY_BEAT_SCHEDULER_DB_ALIAS = None
+CELERY_BEAT_SCHEDULE_FILENAME = str(VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db")
+CELERY_BEAT_SCHEDULE = {}
+
+if is_beat:
+    try:
+        # Импортируем НАПРЯМУЮ из модуля celery_beat
+        import src.config.settings.celery_beat as beat_settings
+        
+        CELERY_BEAT_SCHEDULER = getattr(beat_settings, 'CELERY_BEAT_SCHEDULER', None)
+        CELERY_BEAT_SCHEDULER_DB_ALIAS = getattr(beat_settings, 'CELERY_BEAT_SCHEDULER_DB_ALIAS', None)
+        CELERY_BEAT_SCHEDULE_FILENAME = getattr(beat_settings, 'CELERY_BEAT_SCHEDULE_FILENAME', 
+                                                  str(VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db"))
+        CELERY_BEAT_SCHEDULE = getattr(beat_settings, 'CELERY_BEAT_SCHEDULE', {})
+        
+        logger.info(f"Beat: Импортировано расписаний: {len(CELERY_BEAT_SCHEDULE)}")
+        if CELERY_BEAT_SCHEDULE:
+            logger.info(f"Beat: Задачи: {', '.join(CELERY_BEAT_SCHEDULE.keys())}")
+    except Exception as e:
+        logger.error(f"Beat: Ошибка загрузки расписаний: {e}")
 
 # Формируем конфигурацию Beat scheduler
 beat_scheduler_config = {}
@@ -183,6 +198,11 @@ if CELERY_BEAT_SCHEDULER:
 else:
     # Используем локальный файл
     beat_scheduler_config['beat_schedule_filename'] = CELERY_BEAT_SCHEDULE_FILENAME
+
+# Применяем расписания задач к конфигурации Beat
+if is_beat and CELERY_BEAT_SCHEDULE:
+    beat_scheduler_config['beat_schedule'] = CELERY_BEAT_SCHEDULE
+    logger.info(f"Beat: Применено {len(CELERY_BEAT_SCHEDULE)} расписаний в конфигурацию Celery")
 
 celery_app.conf.update(
     **beat_scheduler_config,
