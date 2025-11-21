@@ -82,7 +82,7 @@ class CeleryModuleManager:
     def _create_default_config(self, module_name: str, app_path: str = None) -> CeleryModuleConfig:
         """Создает базовую конфигурацию для модуля"""
         class DefaultModuleConfig(CeleryModuleConfig):
-            def get_task_routes(self) -> Dict[str, str]:
+            def get_task_routes(self) -> Dict[str, Dict[str, Any]]:
                 # Используем полный путь к модулю если он предоставлен
                 module_path = app_path if app_path else f'modules.{module_name}'
                 return {f'{module_path}.tasks.*': {'queue': module_name}}

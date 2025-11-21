@@ -13,6 +13,7 @@ import sys
 import psutil
 import logging
 
+from pathlib import Path
 from typing import Optional, List
 
 from django.core.management.base import BaseCommand, CommandParser
@@ -50,9 +51,11 @@ class Command(BaseCommand):
         """
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
-                if (proc.info['cmdline'] and 
-                    'celery' in proc.info['cmdline'] and 
-                    'worker' in proc.info['cmdline']):
+                cmdline = proc.info.get('cmdline') or []
+                cmdline_lower = [part.lower() for part in cmdline]
+                
+                # Должны быть оба слова: 'celery' И 'worker'
+                if 'celery' in cmdline_lower and 'worker' in cmdline_lower:
                     logger.debug(f'Найден процесс Celery worker: PID={proc.pid}')
                     return proc
             except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
@@ -77,19 +80,23 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(msg))
             return
 
+        # Определяем рабочую директорию (core/api/)
+        api_dir = Path(__file__).resolve().parents[5]  # Путь к core/api/
+        
         cmd: List[str] = [
             'celery',
             '-A',
             'src',
             'worker',
             f'--loglevel={options["loglevel"]}',
-            '--pool=threads',
+            '--pool=solo',
         ]
         
         try:
             logger.info(f'Запуск Celery worker с командой: {" ".join(cmd)}')
+            logger.info(f'Рабочая директория: {api_dir}')
             self.stdout.write(self.style.SUCCESS('Запуск Celery worker...'))
-            subprocess.run(cmd)
+            subprocess.run(cmd, cwd=str(api_dir))
         except KeyboardInterrupt:
             logger.info('Получен сигнал прерывания, завершение работы')
             sys.exit(0)
