@@ -93,7 +93,7 @@ class UserRegistrationValidationView(BaseAPIView):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-class SendConfirmationCodeView(BaseAPIViewAuthMixin):
+class SendConfirmationCodeView(BaseAPIView):
     @swagger_auto_schema(
         operation_description="Отправка кода подтверждения.",
     )   
@@ -102,21 +102,39 @@ class SendConfirmationCodeView(BaseAPIViewAuthMixin):
         if not email:
             return Response({"error": "Отсутствует Email"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Проверяем существование пользователя с указанным email
+        try:
+            User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "Пользователь с таким email не найден"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Генерация 6-значного кода
         code = get_random_string(length=6, allowed_chars='0123456789')
         
         # Обновляем или создаём запись для email
-        _ = EmailConfirmationCode.objects.update_or_create(
+        EmailConfirmationCode.objects.update_or_create(
             email=email,
             defaults={"code": code},
         )
         
         # Отправляем email
-        send_confirmation_email(email, code)
+        success, error_message = send_confirmation_email(email, code)
+        
+        if not success:
+            return Response(
+                {
+                    "error": "Не удалось отправить email. Проверьте настройки SMTP.",
+                    "detail": error_message
+                }, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
         return Response({"message": "Код подтверждения отправлен"}, status=status.HTTP_200_OK)
 
-class VerifyConfirmationCodeView(BaseAPIViewAuthMixin):
+class VerifyConfirmationCodeView(BaseAPIView):
     @swagger_auto_schema(
         operation_description="Проверка кода подтверждения.",
     )
@@ -140,6 +158,101 @@ class VerifyConfirmationCodeView(BaseAPIViewAuthMixin):
             return Response({"message": "Код успешно подтвержден"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "Неверный код"}, status=status.HTTP_400_BAD_REQUEST)
+
+class ResetPasswordView(BaseAPIView):
+    @swagger_auto_schema(
+        operation_description="Сброс пароля по коду подтверждения.",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'email': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format=openapi.FORMAT_EMAIL,
+                    description='Email пользователя'
+                ),
+                'code': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='Код подтверждения'
+                ),
+                'new_password': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format=openapi.FORMAT_PASSWORD,
+                    description='Новый пароль'
+                ),
+                'confirm_password': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format=openapi.FORMAT_PASSWORD,
+                    description='Подтверждение нового пароля'
+                ),
+            },
+            required=['email', 'code', 'new_password', 'confirm_password'],
+        ),
+        responses={
+            200: "Пароль успешно изменён.",
+            400: "Ошибка валидации данных."
+        },
+    )
+    def post(self, request):
+        email = request.data.get("email")
+        code = request.data.get("code")
+        new_password = request.data.get("new_password")
+        confirm_password = request.data.get("confirm_password")
+
+        if not email or not code or not new_password or not confirm_password:
+            return Response(
+                {"error": "Все поля обязательны для заполнения"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Проверяем совпадение паролей
+        if new_password != confirm_password:
+            return Response(
+                {"error": "Пароли не совпадают"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Проверяем минимальную длину пароля
+        if len(new_password) < 8:
+            return Response(
+                {"error": "Пароль должен быть не менее 8 символов"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Проверяем код подтверждения
+        try:
+            confirmation_code = EmailConfirmationCode.objects.get(email=email)
+        except EmailConfirmationCode.DoesNotExist:
+            return Response(
+                {"error": "Неверный Email или код"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if confirmation_code.code != code:
+            return Response(
+                {"error": "Неверный код"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Проверяем существование пользователя
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "Пользователь с таким email не найден"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Устанавливаем новый пароль
+        user.set_password(new_password)
+        user.save()
+
+        # Удаляем использованный код
+        confirmation_code.delete()
+
+        return Response(
+            {"message": "Пароль успешно изменён"}, 
+            status=status.HTTP_200_OK
+        )
         
 class UserRegistrationView(BaseAPIView):
     @swagger_auto_schema(

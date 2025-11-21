@@ -54,6 +54,22 @@ celery_app.autodiscover_tasks(lambda: settings.INSTALLED_APPS)
 
 # Инициализация менеджера модулей
 module_manager = CeleryModuleManager()
+logger.info("Celery: Загружены конфигурации модулей: %s", ", ".join(module_manager.get_modules_list()))
+
+# Собираем маршруты и очереди модулей
+module_task_routes = module_manager.get_all_task_routes()
+module_task_queues = module_manager.get_all_task_queues()
+
+# Гарантируем наличие очереди по умолчанию
+if 'default' not in module_task_queues:
+    module_task_queues['default'] = {
+        'exchange': 'default',
+        'routing_key': 'default',
+    }
+
+# Fallback-маршрут для задач без явного роутинга
+if '*' not in module_task_routes and 'default' in module_task_queues:
+    module_task_routes['*'] = {'queue': 'default'}
 
 # ПРИМЕЧАНИЕ: CeleryBeatModuleManager инициализируется в config/settings/celery_beat.py
 # и автоматически загружается через namespace='CELERY_BEAT' (строка 42)
@@ -208,12 +224,12 @@ celery_app.conf.update(
     **beat_scheduler_config,
     
     # Маршруты задач из всех модулей
-    task_routes=module_manager.get_all_task_routes(),
+    task_routes=module_task_routes,
     
     task_default_queue='default',
     
     # Очереди задач из всех модулей
-    task_queues=module_manager.get_all_task_queues(),
+    task_queues=module_task_queues,
     
     # Аннотации задач из всех модулей
     task_annotations=module_manager.get_all_task_annotations(),

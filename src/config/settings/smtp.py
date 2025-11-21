@@ -4,30 +4,41 @@
 """
 
 from django.core.exceptions import ImproperlyConfigured
+import logging
+import os
 
 from src.config.env import env
+from src.config.settings.base import ENV_FILE_PATH
 
-# Backend приложения для отправки электронной почты через SMTP.
+logger = logging.getLogger(__name__)
+
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
 try:
-    # Хост SMTP-сервера.
     EMAIL_HOST = env.str('EMAIL_HOST')
-
-    # Порт SMTP-сервера.
-    EMAIL_PORT = env.str('EMAIL_PORT')
-
-    # Флаг, указывающий, используется ли TLS для соединения с SMTP-сервером.
-    EMAIL_USE_TLS = env.str('EMAIL_USE_TLS')
-
-    # Пользователь для аутентификации на SMTP-сервере.
+    EMAIL_PORT = env.int('EMAIL_PORT')
+    EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS')
+    EMAIL_USE_SSL = env.bool('EMAIL_USE_SSL')
     EMAIL_HOST_USER = env.str('EMAIL_HOST_USER')
-
-    # Пароль для аутентификации на SMTP-сервере, полученный из переменной окружения.
     EMAIL_HOST_PASSWORD = env.str('EMAIL_HOST_PASSWORD')
-
-    # Адрес отправителя по умолчанию, используется тот же, что и для аутентификации на SMTP-сервере.
-    DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-except ImproperlyConfigured:
-    # В случае ошибки конфигурации, пропускаем настройку SMTP-сервера.
-    pass
+    
+    if not EMAIL_HOST or not EMAIL_PORT or not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
+        missing = []
+        if not EMAIL_HOST:
+            missing.append('EMAIL_HOST')
+        if not EMAIL_PORT:
+            missing.append('EMAIL_PORT')
+        if not EMAIL_HOST_USER:
+            missing.append('EMAIL_HOST_USER')
+        if not EMAIL_HOST_PASSWORD:
+            missing.append('EMAIL_HOST_PASSWORD')
+        
+        logger.warning(f"Не все обязательные переменные SMTP установлены. Отсутствуют: {', '.join(missing)}")
+    
+    DEFAULT_FROM_EMAIL = EMAIL_HOST_USER if EMAIL_HOST_USER else None
+except ImproperlyConfigured as e:
+    logger.error(f"Ошибка конфигурации SMTP: {e}")
+    logger.warning("Отправка email будет недоступна без правильной конфигурации SMTP")
+except Exception as e:
+    logger.error(f"Неожиданная ошибка при настройке SMTP: {e}", exc_info=True)
+    logger.warning("Отправка email будет недоступна без правильной конфигурации SMTP")

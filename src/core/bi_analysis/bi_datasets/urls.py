@@ -2,11 +2,11 @@ from django.urls import path, include
 
 from src.core.bi_analysis.bi_datasets.views import DataSetFieldViewSet, DatasetParamViewSet
 from src.core.bi_analysis.bi_datasets.views import (
-DatasetDetailView, DatasetPreviewView,
+DatasetDetailView, DatasetPreviewView, DatasetPreviewTaskStatusView,
     DataSetTableViewSet, DataSetFieldViewSet,
     TempUploadView, FileUploadDetailView,
     FinalizeUploadView, XlsxSheetListView,
-    XlsxTempPreviewView, FileUploadByConnectionView, AddTableToDatasetView, DatasetRemoveRelationView, DatasetColumnsAPIView,
+    XlsxTempPreviewView, FilePreviewTaskStatusView, FileUploadByConnectionView, AddTableToDatasetView, DatasetRemoveRelationView, DatasetColumnsAPIView,
     RenameDatasetColumnsView, DatasetListCreateView, DatasetJoinTableView, DataSetTableColumnsView, DatasetDraftPreviewView, DatasetAddRelationView, DatasetRowsAPIView, DatasetRowsAggAPIView, DatasetFieldValuesView
 )
 
@@ -23,6 +23,7 @@ urlpatterns = [
     path('upload/finalize/', FinalizeUploadView.as_view(), name='finalize-upload'),
     path('xlsx/sheets/', XlsxSheetListView.as_view(), name='xlsx-sheet-list'),
     path('xlsx/preview/', XlsxTempPreviewView.as_view(), name='xlsx-preview'),
+    path('xlsx/preview/task-status/', FilePreviewTaskStatusView.as_view(), name='xlsx-preview-task-status'),
     path('connection/<int:connection_id>/files/', FileUploadByConnectionView.as_view(), name='fileupload-by-connection'),
     path('<int:pk>/auto-join/', DatasetJoinTableView.as_view(), name="bi_datasets-auto-join"),
     path('<int:pk>/add-table/', AddTableToDatasetView.as_view(), name="add_table_to_dataset"),
@@ -37,6 +38,7 @@ urlpatterns = [
     path('', DatasetListCreateView.as_view(), name='bi_datasets-list-create'),
     path('<int:pk>/', DatasetDetailView.as_view(), name='bi_datasets-detail'),
     path('<int:pk>/preview/', DatasetPreviewView.as_view(), name='bi_datasets-preview'),
+    path('preview/task-status/', DatasetPreviewTaskStatusView.as_view(), name='bi_datasets-preview-task-status'),
     path('<int:pk>/rename_columns/', RenameDatasetColumnsView.as_view(), name='bi_datasets-rename-columns'),
     path('<int:pk>/remove-relation/', DatasetRemoveRelationView.as_view(), name='dataset-remove-relation'),
 

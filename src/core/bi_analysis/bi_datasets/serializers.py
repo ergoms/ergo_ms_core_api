@@ -5,7 +5,6 @@ from src.core.bi_analysis.bi_connections.models import Connection
 from src.core.bi_analysis.bi_datasets.models import FileUpload, Dataset, DataSetTable, DataSetField, DatasetParam
 
 import os
-import pandas as pd
 import openpyxl, csv
 
 User = get_user_model()
@@ -38,7 +37,8 @@ class DataSetTableSerializer(serializers.ModelSerializer):
             'id', 'dataset', 'connection', 'table_name', 'alias',
             'joined_on', 'order', 'table_ref', 'display_name',
             'file_upload_id', 'file_upload_name', 'columns_info',
-            'joined_on_type', 'joined_on_left', 'joined_on_right'
+            'joined_on_type', 'joined_on_left', 'joined_on_right',
+            'sheet_name'
         ]
         read_only_fields = ['id']
         
@@ -247,12 +247,17 @@ class FileUploadSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'file', 'file_url', 'file_path', 'uploaded_at',
             'owner', 'original_filename', 'file_type', 'connection', 'columns_info',
-            'exists', 'missing', 'file_not_found', 'error'
+            'file_uuid', 'exists', 'missing', 'file_not_found', 'error'
         ]
-        read_only_fields = ['id', 'uploaded_at']
+        read_only_fields = ['id', 'uploaded_at', 'file_uuid']
         extra_kwargs = {
             'owner': {'read_only': True},
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Кэш для проверки существования файлов в рамках одного запроса
+        self._file_exists_cache = {}
 
     def get_file_url(self, obj):
         try:
@@ -268,13 +273,22 @@ class FileUploadSerializer(serializers.ModelSerializer):
             return None
     
     def get_exists(self, obj):
-        """Проверяет существование файла на диске"""
-        try:
-            if obj.file and obj.file.path:
-                return os.path.exists(obj.file.path)
-            return False
-        except ValueError:
-            return False
+        """Проверяет существование файла на диске с кэшированием"""
+        # Используем id файла как ключ кэша
+        cache_key = obj.id if obj.id else id(obj)
+        
+        if cache_key not in self._file_exists_cache:
+            try:
+                if obj.file and hasattr(obj.file, 'path'):
+                    file_path = obj.file.path
+                    # Кэшируем результат проверки
+                    self._file_exists_cache[cache_key] = os.path.exists(file_path)
+                else:
+                    self._file_exists_cache[cache_key] = False
+            except (ValueError, AttributeError):
+                self._file_exists_cache[cache_key] = False
+        
+        return self._file_exists_cache[cache_key]
     
     def get_missing(self, obj):
         """Возвращает True если файл отсутствует"""

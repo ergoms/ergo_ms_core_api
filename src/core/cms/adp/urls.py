@@ -12,6 +12,7 @@ from src.core.cms.adp.views import (
     UserAuthorizationView,
     SendConfirmationCodeView,
     VerifyConfirmationCodeView,
+    ResetPasswordView,
     ProtectedView,
     ChangePasswordView,
     UserDevicesView,
@@ -27,6 +28,7 @@ urlpatterns = [
 
     path('send-code/', SendConfirmationCodeView.as_view(), name="send_code"),
     path('verify-code/', VerifyConfirmationCodeView.as_view(), name="verify_code"),
+    path('reset-password/', ResetPasswordView.as_view(), name="reset_password"),
 
     path('token-refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('protected/', ProtectedView.as_view(), name='protected'),

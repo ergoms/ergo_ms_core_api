@@ -29,10 +29,24 @@ class BIAnalysisCeleryConfig(CeleryModuleConfig):
     
     def get_task_annotations(self) -> Dict[str, Dict[str, Any]]:
         """Аннотации задач для бизнес-аналитики"""
+        from src.core.bi_analysis.config import CELERY_TASK_TIMEOUT, CELERY_SOFT_TIMEOUT
+        
         return {
             'src.core.bi_analysis.tasks.sync_data_from_sources': {
                 'time_limit': 1800,   # Таймаут 30 минут
                 'soft_time_limit': 1500,  # Мягкий таймаут 25 минут
+            },
+            'src.core.bi_analysis.tasks.process_dataset_preview': {
+                'time_limit': CELERY_TASK_TIMEOUT,
+                'soft_time_limit': CELERY_SOFT_TIMEOUT,
+            },
+            'src.core.bi_analysis.tasks.process_draft_preview': {
+                'time_limit': CELERY_TASK_TIMEOUT,
+                'soft_time_limit': CELERY_SOFT_TIMEOUT,
+            },
+            'src.core.bi_analysis.tasks.process_file_preview': {
+                'time_limit': CELERY_TASK_TIMEOUT,
+                'soft_time_limit': CELERY_SOFT_TIMEOUT,
             },
         }
     
