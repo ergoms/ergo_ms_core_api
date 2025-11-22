@@ -584,8 +584,9 @@ def dataframe_to_sql_values(table, table_alias='t0', row_limit=None):
         return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
 
     # Ограничиваем количество строк в VALUES clause для производительности
-    # Максимум 10000 строк, чтобы не создавать огромные SQL запросы
-    MAX_VALUES_ROWS = 10000
+    # Используем настройку из .env (BI_PREVIEW_MAX_VALUES_ROWS)
+    from django.conf import settings
+    MAX_VALUES_ROWS = getattr(settings, 'BI_PREVIEW_MAX_VALUES_ROWS', 10000)
     
     if row_limit is not None and row_limit > 0:
         # Если указан лимит, используем его, но не больше максимума

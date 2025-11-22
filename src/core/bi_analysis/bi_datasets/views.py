@@ -386,29 +386,83 @@ class DatasetPreviewView(APIView):
         search = request.query_params.get('search', '').strip()
         use_async = request.query_params.get('async', 'false').lower() == 'true'
         
-        # Для больших лимитов используем асинхронную обработку
-        if use_async or limit > 100:
-            try:
-                from src.core.bi_analysis.tasks import process_dataset_preview
-                task = process_dataset_preview.delay(pk, limit)
-                return Response({
-                    "task_id": task.id,
-                    "status": "processing",
-                    "message": "Предпросмотр обрабатывается асинхронно"
-                }, status=202)
-            except Exception as e:
-                # Если Celery недоступен (ошибка подключения к БД и т.д.), используем синхронный режим
-                logger.warning(f"Не удалось запустить асинхронную задачу Celery: {str(e)}. Используется синхронный режим.")
-                # Продолжаем выполнение в синхронном режиме ниже
+        # Проверяем максимальный лимит из настроек (.env)
+        from django.conf import settings
+        max_limit = getattr(settings, 'BI_PREVIEW_MAX_VALUES_ROWS', 10000)
+        if limit > max_limit:
+            limit = max_limit
         
         try:
-            from src.core.bi_analysis.services.services import build_dataset_query
-            
             # Проверяем, есть ли таблицы в датасете
             if not dataset.tables.exists():
                 return Response({"detail": "Таблицы не найдены в датасете. Добавьте главную таблицу для предпросмотра."}, status=400)
             
-            # Используем новую логику с динамическим SQL, которая читает файлы напрямую через polars и бинарные файлы
+            # Получаем главную таблицу
+            main_table = dataset.tables.filter(joined_on_type__isnull=True).first()
+            if not main_table:
+                return Response({"detail": "Не найдена главная таблица для датасета"}, status=400)
+            
+            # Проверяем, есть ли JOIN'ы в датасете
+            has_joins = dataset.tables.filter(joined_on_type__isnull=False).exists()
+            
+            # Для простого случая (одна таблица, файловый источник, без JOIN'ов и поиска) используем прямое чтение файла
+            # Это намного быстрее, чем конвертация в SQL VALUES clause или асинхронная обработка
+            is_file_source = main_table.file_upload_id is not None
+            use_fast_path = is_file_source and not has_joins and not search and offset == 0
+            
+            # Для быстрого пути НЕ используем асинхронную обработку - это намного быстрее напрямую
+            # Асинхронная обработка нужна только для сложных случаев (JOIN'ы, поиск, очень большие файлы)
+            if use_fast_path:
+                # Быстрый путь: прямое чтение файла через polars, как в upload эндпоинте
+                try:
+                    from src.core.bi_analysis.services.services import read_file_to_dataframe
+                    
+                    # Читаем файл с лимитом строк
+                    table_data = read_file_to_dataframe(
+                        main_table.file_upload_id,
+                        sheet_name=getattr(main_table, 'sheet_name', None),
+                        row_limit=limit
+                    )
+                    
+                    # Конвертируем в формат ответа
+                    columns = table_data.columns
+                    rows = table_data.rows
+                    
+                    # Преобразуем строки в список кортежей (как в SQL результате)
+                    rows_tuples = [tuple(row) for row in rows]
+                    
+                    return Response({
+                        "columns": columns,
+                        "rows": rows_tuples,
+                        "has_more": len(rows) == limit  # Указываем, есть ли еще данные
+                    })
+                except Exception as e:
+                    # Если не удалось использовать быстрый путь, используем обычный
+                    logger.warning(f"Не удалось использовать быстрый путь для preview: {str(e)}. Используется SQL путь.")
+            else:
+                # Для сложных случаев (с JOIN'ами, поиском, offset) проверяем нужна ли асинхронная обработка
+                # Асинхронная обработка только для действительно больших лимитов или при явном запросе
+                # Увеличиваем порог, чтобы для обычных случаев (до 5000 строк) использовался синхронный режим
+                async_threshold = 5000
+                should_use_async = use_async or (limit > async_threshold and has_joins)
+                
+                if should_use_async:
+                    try:
+                        from src.core.bi_analysis.tasks import process_dataset_preview
+                        task = process_dataset_preview.delay(pk, limit)
+                        return Response({
+                            "task_id": task.id,
+                            "status": "processing",
+                            "message": "Предпросмотр обрабатывается асинхронно"
+                        }, status=202)
+                    except Exception as e:
+                        # Если Celery недоступен, используем синхронный режим
+                        logger.warning(f"Не удалось запустить асинхронную задачу Celery: {str(e)}. Используется синхронный режим.")
+                        # Продолжаем выполнение в синхронном режиме ниже
+            
+            # Обычный путь: через SQL запрос (для JOIN'ов, поиска, offset и т.д.)
+            from src.core.bi_analysis.services.services import build_dataset_query
+            
             query = build_dataset_query(
                 dataset, 
                 limit=limit, 
@@ -989,9 +1043,13 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
                         
                         if df is not None:
                             # Конвертируем в список строк, заменяя NaN на None
+                            # Используем to_numpy().tolist() для быстрой векторизованной конвертации (как для Excel)
                             columns = df.columns
+                            rows_numpy = df.to_numpy().tolist()
+                            
+                            # Очищаем NaN и infinity значения
                             rows_list = []
-                            for row in df.iter_rows(named=False):
+                            for row in rows_numpy:
                                 cleaned_row = []
                                 for value in row:
                                     if value is None:
