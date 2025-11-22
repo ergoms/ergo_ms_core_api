@@ -12,7 +12,7 @@ class BIAnalysisCeleryConfig(CeleryModuleConfig):
     Конфигурация Celery для модуля бизнес-аналитики.
     """
     
-    def get_task_routes(self) -> Dict[str, str]:
+    def get_task_routes(self) -> Dict[str, Dict[str, Any]]:
         """Маршруты задач для бизнес-аналитики"""
         return {
             'src.core.bi_analysis.tasks.*': {'queue': 'bi_analysis'},

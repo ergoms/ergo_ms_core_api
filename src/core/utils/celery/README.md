@@ -39,7 +39,7 @@ class MyModuleCeleryConfig(CeleryModuleConfig):
     Конфигурация Celery для модуля my_module.
     """
     
-    def get_task_routes(self) -> Dict[str, str]:
+    def get_task_routes(self) -> Dict[str, Dict[str, Any]]:
         """Маршруты задач для модуля"""
         return {
             'src.modules.my_module.tasks.*': {'queue': 'my_module'},
@@ -182,7 +182,7 @@ def get_task_queues(self) -> Dict[str, Dict[str, Any]]:
 ### Маршруты
 
 ```python
-def get_task_routes(self) -> Dict[str, str]:
+def get_task_routes(self) -> Dict[str, Dict[str, Any]]:
     return {
         'src.modules.my_module.tasks.*': {'queue': 'my_module'},
     }

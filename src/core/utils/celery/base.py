@@ -58,7 +58,7 @@ class CeleryModuleConfig(ABC):
             module_logger.addHandler(console_handler)
     
     @abstractmethod
-    def get_task_routes(self) -> Dict[str, str]:
+    def get_task_routes(self) -> Dict[str, Dict[str, Any]]:
         """
         Возвращает маршруты задач для модуля.
         Пример: {'src.modules.my_module.tasks.*': {'queue': 'my_module'}}

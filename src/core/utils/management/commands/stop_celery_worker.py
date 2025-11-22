@@ -39,7 +39,8 @@ class Command(BaseCommand):
                 cmdline_lower = [part.lower() for part in cmdline]
 
                 # Совпадение 1: стандартный процесс Celery worker
-                is_celery_worker = ('worker' in cmdline_lower)
+                # Должны быть оба слова: 'celery' И 'worker'
+                is_celery_worker = ('celery' in cmdline_lower and 'worker' in cmdline_lower)
 
                 # Совпадение 2: процесс запуска через обертку "api start_celery_worker"
                 is_wrapper_worker = ('start_celery_worker' in cmdline_lower)
