@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from django.core.management.base import BaseCommand, CommandParser
+from src.core.utils.celery.manager import CeleryModuleManager
 
 logger = logging.getLogger('core.utils.commands')
 
@@ -83,13 +84,32 @@ class Command(BaseCommand):
         # Определяем рабочую директорию (core/api/)
         api_dir = Path(__file__).resolve().parents[5]  # Путь к core/api/
         
+        # Получаем все очереди из модулей
+        module_manager = CeleryModuleManager()
+        all_queues = module_manager.get_all_task_queues()
+        
+        # Формируем список очередей (всегда включаем default)
+        queue_names = set(['default'])  # Очередь по умолчанию всегда должна быть
+        queue_names.update(all_queues.keys())  # Добавляем все очереди из модулей
+        
+        # Сортируем для консистентности
+        queue_list = sorted(queue_names)
+        queues_str = ','.join(queue_list)
+        
+        logger.info(f'Найдено очередей из модулей: {len(all_queues)}')
+        logger.info(f'Все очереди для worker: {queues_str}')
+        
         cmd: List[str] = [
+            sys.executable,
+            '-m',
             'celery',
             '-A',
             'src',
             'worker',
+            '-Q', queues_str,
             f'--loglevel={options["loglevel"]}',
-            '--pool=eventlet',
+            '--pool=threads',
+            '-E',
         ]
         
         try:

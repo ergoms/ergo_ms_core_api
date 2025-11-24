@@ -529,6 +529,18 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
             'engine': self.active_config.get('engine', 'postgresql'),
         }
     
+    def get_active_section(self) -> Optional[str]:
+        """
+        Возвращает имя активной секции БД.
+        
+        Returns:
+            Имя секции или None, если используется локальный режим
+        """
+        if self.active_section is None:
+            # Если секция еще не определена, загружаем конфигурацию
+            self.load_config()
+        return self.active_section
+    
     def get_django_db_alias(self) -> Optional[str]:
         """
         Возвращает alias Django БД для django-celery-beat.
