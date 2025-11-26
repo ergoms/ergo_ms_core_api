@@ -34,8 +34,8 @@ class RuntimeLLMConfig:
     provider: LLMProvider = LLMProvider.AUTO
     model: str = getattr(settings, "OLLAMA_DEFAULT_MODEL", "mistral:7b")
     base_url: str = getattr(settings, "OLLAMA_BASE_URL", "http://localhost:11434")
-    request_timeout: float = getattr(settings, "AI_ASSISTANT_REQUEST_TIMEOUT", 120.0)
-    stream_timeout: float = getattr(settings, "AI_ASSISTANT_STREAM_TIMEOUT", 45.0)
+    request_timeout: float = getattr(settings, "AI_ASSISTANT_REQUEST_TIMEOUT", 180.0)  # Увеличено до 3 минут
+    stream_timeout: float = getattr(settings, "AI_ASSISTANT_STREAM_TIMEOUT", 300.0)  # Увеличено до 5 минут для streaming
     compute_device: ComputeDevice = ComputeDevice.GPU
     sql_tokens: int = getattr(settings, "AI_ASSISTANT_SQL_TOKENS", 256)
     commentary_tokens: int = getattr(settings, "AI_ASSISTANT_COMMENTARY_TOKENS", 192)

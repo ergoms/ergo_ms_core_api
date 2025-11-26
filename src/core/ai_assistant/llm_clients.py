@@ -84,11 +84,13 @@ class HttpxOllamaClient(BaseLLMClient):
             max_connections=concurrency_limit,
             max_keepalive_connections=concurrency_limit,
         )
+        # Для streaming запросов используем stream_timeout, для обычных - request_timeout
+        # read timeout должен быть достаточно большим для streaming
         timeout = httpx.Timeout(
             timeout=request_timeout,
             connect=min(10.0, request_timeout),
             write=request_timeout,
-            read=max(stream_timeout, request_timeout),
+            read=max(stream_timeout, request_timeout * 2),  # Увеличиваем для streaming
         )
         self._client = httpx.Client(base_url=self._base_url, timeout=timeout, limits=limits)
         self._keep_alive = keep_alive

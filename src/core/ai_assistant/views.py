@@ -224,7 +224,7 @@ class BIQueryView(APIView):
             if not load_result.get('success'):
                 return Response({
                     'success': False,
-                    'error': 'Ошибка загрузки файла в DuckDB'
+                    'error': 'Ошибка загрузки файла'
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
             result = service.ask(question, want_commentary=want_commentary)
