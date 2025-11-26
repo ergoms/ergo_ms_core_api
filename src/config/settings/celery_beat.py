@@ -95,4 +95,7 @@ CELERY_BEAT_ADDITIONAL_CONFIG = beat_module_manager.get_additional_beat_configs(
 CELERY_BEAT_MODULE_LOGGERS = beat_module_manager.get_module_loggers()
 
 # Список загруженных модулей Beat
-CELERY_BEAT_MODULES = beat_module_manager.get_modules_list() 
+CELERY_BEAT_MODULES = beat_module_manager.get_modules_list()
+
+# ==================== Синхронизация задач с БД ====================
+# Синхронизация будет выполнена в celery.py после полной инициализации Django 
