@@ -519,6 +519,15 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
         
         # Получаем конфигурацию секции
         self.active_config = raw_config[self.active_section]
+        if self.active_config is None:
+            broker_url, result_backend = self._get_local_sqlite_urls()
+            return {
+                'broker_url': broker_url,
+                'result_backend': result_backend,
+                'mode': 'local',
+                'section': None,
+            }
+        
         broker_url, result_backend = self._build_celery_urls(self.active_config)
         
         return {
@@ -544,6 +553,8 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
     def get_django_db_alias(self) -> Optional[str]:
         """
         Возвращает alias Django БД для django-celery-beat.
+        Использует БД, указанную в конфиге согласно приоритетам секций.
+        Для celery beat это может быть: celery_beat -> celery -> локальный SQLite
         
         Returns:
             Alias БД или None для локального режима
@@ -553,5 +564,7 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
         if config['mode'] == 'local':
             return None
         
+        # Возвращаем секцию из конфига (celery_beat, celery и т.д.)
+        # Система автоматически выбирает правильную БД по приоритетам
         return config['section']
 
