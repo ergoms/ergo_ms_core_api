@@ -60,3 +60,7 @@ LOGS_ROOT = os.path.join(SYSTEM_DIR, 'logs')
 
 # Хранилище для статических файлов, использующее Whitenoise для сжатия и кэширования.
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Ограничения задач
+TASKS_MAX_ATTACHMENT_SIZE_MB = int(os.getenv('TASKS_MAX_ATTACHMENT_SIZE_MB', '25'))
+TASKS_MAX_ATTACHMENT_SIZE_BYTES = TASKS_MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
