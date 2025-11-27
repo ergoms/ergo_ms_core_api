@@ -3,7 +3,7 @@
 ## Зависимости
 
 Добавлены в `pyproject.toml`:
-- duckdb>=0.9.0
+- polars>=1.35.2
 - sqlparse>=0.4.4
 - llama-index-llms-ollama>=0.1.0
 
