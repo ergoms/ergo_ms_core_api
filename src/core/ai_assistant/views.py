@@ -838,7 +838,7 @@ class ChartAnalysisView(APIView):
 class ChatView(APIView):
     """
     POST /api/ai_assistant/chat/
-    Простой RAG чат для общих вопросов
+    Простой RAG чат для общих вопросов (без streaming)
     
     Body:
     {
@@ -888,6 +888,103 @@ class ChatView(APIView):
                 'success': False,
                 'error': str(e),
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ChatStreamView(APIView):
+    """
+    POST /api/ai_assistant/chat/stream/
+    RAG чат с поддержкой Server-Sent Events (SSE) для streaming ответов
+    
+    Body:
+    {
+        "message": "Как работает система?"
+    }
+    
+    Response: SSE stream с событиями:
+    - {"type": "chunk", "text": "..."} - часть ответа
+    - {"type": "done", "full_response": "..."} - завершение
+    - {"type": "error", "message": "..."} - ошибка
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        message = request.data.get('message')
+        ollama_config = request.data.get('ollama_config')
+        
+        if not message or not message.strip():
+            return Response({
+                'success': False,
+                'error': 'Не указано сообщение'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        def event_stream():
+            import threading
+            
+            try:
+                runtime_config, client = _create_ollama_client(ollama_config)
+                temperature = (ollama_config or {}).get('temperature', 0.3)
+                max_tokens = (ollama_config or {}).get('max_tokens', 512)
+
+                system_prompt = """Ты - полезный AI ассистент системы ERGO MS. 
+Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
+Отвечай кратко, по делу и дружелюбно на русском языке.
+Если не знаешь ответа, честно скажи об этом."""
+                
+                full_prompt = f"{system_prompt}\n\nВопрос пользователя: {message}"
+                
+                # Контейнеры для результата и streaming
+                streaming_chunks = []
+                result_container = {}
+                exception_container = {}
+                
+                def stream_callback(text):
+                    streaming_chunks.append(text)
+                
+                def run_complete():
+                    try:
+                        result = client.complete(
+                            full_prompt,
+                            num_predict=max_tokens,
+                            temperature=temperature,
+                            stream=True,
+                            stream_callback=stream_callback,
+                        )
+                        result_container['response'] = result.strip()
+                    except Exception as e:
+                        exception_container['error'] = e
+                
+                # Запускаем в отдельном потоке
+                complete_thread = threading.Thread(target=run_complete)
+                complete_thread.start()
+                
+                # Отправляем чанки по мере их поступления
+                while complete_thread.is_alive() or streaming_chunks:
+                    while streaming_chunks:
+                        chunk = streaming_chunks.pop(0)
+                        yield f"data: {json.dumps({'type': 'chunk', 'text': chunk}, ensure_ascii=False)}\n\n"
+                    import time
+                    time.sleep(0.01)
+                
+                complete_thread.join()
+                
+                # Проверяем ошибки
+                if 'error' in exception_container:
+                    raise exception_container['error']
+                
+                # Отправляем финальное событие
+                full_response = result_container.get('response', '')
+                yield f"data: {json.dumps({'type': 'done', 'full_response': full_response}, ensure_ascii=False)}\n\n"
+                
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        
+        response = StreamingHttpResponse(
+            event_stream(),
+            content_type='text/event-stream'
+        )
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        return response
 
 
 
