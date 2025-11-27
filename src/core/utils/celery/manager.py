@@ -5,7 +5,7 @@
 import importlib
 import logging
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 from src.config.settings.base import MODULES_DIR
@@ -43,43 +43,63 @@ class CeleryModuleManager:
         
         for app_path in all_modules:
             # Извлекаем имя модуля из полного пути
-            # Например: 'src.modules.porosity_analysis' -> 'porosity_analysis'
-            # Или: 'src.modules.education_materials_parser.fgos' -> 'fgos'
+            # Например: 'modules.porosity_analysis.api' -> 'porosity_analysis'
+            # Или: 'modules.education_materials_parser.fgos' -> 'fgos'
+            # Или: 'modules.impuls_analysis.api' -> 'impuls_analysis'
             module_parts = app_path.split('.')
-            module_name = module_parts[-1]
+            
+            # Если путь заканчивается на '.api', берем предпоследнюю часть
+            # Иначе берем последнюю часть
+            if len(module_parts) >= 3 and module_parts[-1] == 'api':
+                module_name = module_parts[-2]  # Берем имя модуля перед 'api'
+            else:
+                module_name = module_parts[-1]  # Берем последнюю часть
             
             # Проверяем валидность имени модуля
             if not is_valid_module_name(module_name):
-                self.logger.warning(f"Пропускаем модуль с невалидным именем: {module_name}")
+                self.logger.warning(f"Пропускаем модуль с невалидным именем: {module_name} (путь: {app_path})")
                 continue
             
             self._load_module_config(module_name, app_path)
     
-    def _load_module_config(self, module_name: str, app_path: str = None):
+    def _load_module_config(self, module_name: str, app_path: Optional[str] = None):
         """Загружает конфигурацию конкретного модуля"""
+        # Формируем путь к конфигурации
+        config_module_path = f'{app_path}.celery_config' if app_path else f'modules.{module_name}.celery_config'
+        
         try:
-            # Пытаемся импортировать конфигурацию модуля
-            config_module_path = f'{app_path}.celery_config' if app_path else f'modules.{module_name}.celery_config'
+            self.logger.debug(f"Попытка загрузки конфигурации Celery для модуля {module_name} по пути: {config_module_path}")
             config_module = importlib.import_module(config_module_path)
             
             # Ищем класс конфигурации в модуле
+            config_class = None
             for attr_name in dir(config_module):
                 attr = getattr(config_module, attr_name)
                 if (isinstance(attr, type) and 
                     issubclass(attr, CeleryModuleConfig) and 
                     attr != CeleryModuleConfig):
-                    
-                    # Создаем экземпляр конфигурации
-                    config_instance = attr(module_name)
-                    self.modules_configs[module_name] = config_instance
-                    return
+                    config_class = attr
+                    break
+            
+            if config_class:
+                # Создаем экземпляр конфигурации
+                config_instance = config_class(module_name)
+                self.modules_configs[module_name] = config_instance
+                self.logger.info(f"Успешно загружена конфигурация Celery для модуля {module_name}")
+                return
+            else:
+                self.logger.warning(f"В модуле {config_module_path} не найден класс конфигурации Celery, создается дефолтная конфигурация")
+                self.modules_configs[module_name] = self._create_default_config(module_name, app_path)
         except ImportError as e:
             # Если файл конфигурации не найден, создаем базовую конфигурацию
+            self.logger.warning(f"Не удалось импортировать конфигурацию Celery для модуля {module_name} (путь: {config_module_path}): {e}. Создается дефолтная конфигурация.")
             self.modules_configs[module_name] = self._create_default_config(module_name, app_path)
         except Exception as e:
-            self.logger.error(f"Ошибка загрузки конфигурации модуля {module_name}: {e}")
+            self.logger.error(f"Ошибка загрузки конфигурации модуля {module_name}: {e}", exc_info=True)
+            # При любой другой ошибке также создаем дефолтную конфигурацию
+            self.modules_configs[module_name] = self._create_default_config(module_name, app_path)
     
-    def _create_default_config(self, module_name: str, app_path: str = None) -> CeleryModuleConfig:
+    def _create_default_config(self, module_name: str, app_path: Optional[str] = None) -> CeleryModuleConfig:
         """Создает базовую конфигурацию для модуля"""
         class DefaultModuleConfig(CeleryModuleConfig):
             def get_task_routes(self) -> Dict[str, Dict[str, Any]]:
@@ -162,6 +182,6 @@ class CeleryModuleManager:
         """Возвращает список всех загруженных модулей"""
         return list(self.modules_configs.keys())
     
-    def get_module_config(self, module_name: str) -> CeleryModuleConfig:
+    def get_module_config(self, module_name: str) -> Optional[CeleryModuleConfig]:
         """Возвращает конфигурацию конкретного модуля"""
         return self.modules_configs.get(module_name) 
