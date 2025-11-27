@@ -1,0 +1,438 @@
+"""
+Менеджер параллелизма задач по очередям для Celery.
+Позволяет ограничивать количество одновременных задач для каждой очереди отдельно.
+"""
+
+import logging
+import threading
+import functools
+from typing import Dict, Optional, Callable, Any
+
+from django.core.cache import cache
+
+logger = logging.getLogger('celery.concurrency')
+
+
+class QueueConcurrencyManager:
+    """
+    Менеджер для ограничения количества одновременных задач по очередям.
+    
+    Поддерживает два режима:
+    - threading.Semaphore для single-process worker'а
+    - Django cache для distributed worker'ов
+    
+    Использование:
+        manager = QueueConcurrencyManager()
+        manager.set_queue_limit('porosity_analysis', 4)
+        
+        # В задаче:
+        with manager.acquire('porosity_analysis'):
+            # Выполнение задачи
+    """
+    
+    _instance: Optional['QueueConcurrencyManager'] = None
+    _lock = threading.Lock()
+    
+    def __new__(cls) -> 'QueueConcurrencyManager':
+        """Singleton паттерн для глобального доступа к менеджеру"""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        self._queue_limits: Dict[str, int] = {}
+        self._semaphores: Dict[str, threading.Semaphore] = {}
+        self._semaphore_lock = threading.Lock()
+        self._use_distributed = False  # Использовать распределенные блокировки через cache
+        self._cache_ttl = 3600  # TTL для cache-based семафоров (1 час)
+        self._retry_delay = 60  # Задержка перед повторной попыткой (секунды)
+        self._initialized = True
+        
+        logger.info("QueueConcurrencyManager инициализирован")
+    
+    def configure(
+        self,
+        use_distributed: bool = False,
+        cache_ttl: int = 3600,
+        retry_delay: int = 60
+    ):
+        """
+        Настраивает менеджер параллелизма.
+        
+        Args:
+            use_distributed: Использовать распределенные блокировки через Django cache
+            cache_ttl: TTL для cache-based семафоров в секундах
+            retry_delay: Задержка перед повторной попыткой в секундах
+        """
+        self._use_distributed = use_distributed
+        self._cache_ttl = cache_ttl
+        self._retry_delay = retry_delay
+        logger.info(
+            f"QueueConcurrencyManager настроен: distributed={use_distributed}, "
+            f"cache_ttl={cache_ttl}, retry_delay={retry_delay}"
+        )
+    
+    def set_queue_limit(self, queue_name: str, max_concurrent: int):
+        """
+        Устанавливает лимит параллельных задач для очереди.
+        
+        Args:
+            queue_name: Имя очереди
+            max_concurrent: Максимальное количество одновременных задач (0 = без ограничений)
+        """
+        if max_concurrent <= 0:
+            # Без ограничений - удаляем семафор если был
+            self._queue_limits.pop(queue_name, None)
+            self._semaphores.pop(queue_name, None)
+            logger.debug(f"Очередь {queue_name}: без ограничений параллелизма")
+            return
+        
+        self._queue_limits[queue_name] = max_concurrent
+        
+        # Создаем или обновляем семафор
+        with self._semaphore_lock:
+            self._semaphores[queue_name] = threading.Semaphore(max_concurrent)
+        
+        logger.info(f"Очередь {queue_name}: max_concurrent_tasks={max_concurrent}")
+    
+    def get_queue_limit(self, queue_name: str) -> int:
+        """Возвращает лимит для очереди (0 = без ограничений)"""
+        return self._queue_limits.get(queue_name, 0)
+    
+    def get_retry_delay(self) -> int:
+        """Возвращает задержку перед повторной попыткой"""
+        return self._retry_delay
+    
+    def acquire(self, queue_name: str, blocking: bool = False) -> bool:
+        """
+        Пытается захватить слот для выполнения задачи в очереди.
+        
+        Args:
+            queue_name: Имя очереди
+            blocking: Ждать освобождения слота
+            
+        Returns:
+            True если слот захвачен, False если лимит превышен
+        """
+        limit = self._queue_limits.get(queue_name, 0)
+        if limit <= 0:
+            return True  # Без ограничений
+        
+        if self._use_distributed:
+            return self._acquire_distributed(queue_name, blocking)
+        else:
+            return self._acquire_local(queue_name, blocking)
+    
+    def release(self, queue_name: str):
+        """
+        Освобождает слот после выполнения задачи.
+        
+        Args:
+            queue_name: Имя очереди
+        """
+        limit = self._queue_limits.get(queue_name, 0)
+        if limit <= 0:
+            return  # Без ограничений
+        
+        if self._use_distributed:
+            self._release_distributed(queue_name)
+        else:
+            self._release_local(queue_name)
+    
+    def _acquire_local(self, queue_name: str, blocking: bool = False) -> bool:
+        """Локальный захват через threading.Semaphore"""
+        semaphore = self._semaphores.get(queue_name)
+        if semaphore is None:
+            return True
+        
+        acquired = semaphore.acquire(blocking=blocking)
+        if acquired:
+            logger.debug(f"Очередь {queue_name}: слот захвачен (local)")
+        else:
+            logger.debug(f"Очередь {queue_name}: лимит превышен (local)")
+        return acquired
+    
+    def _release_local(self, queue_name: str):
+        """Локальное освобождение через threading.Semaphore"""
+        semaphore = self._semaphores.get(queue_name)
+        if semaphore is not None:
+            semaphore.release()
+            logger.debug(f"Очередь {queue_name}: слот освобожден (local)")
+    
+    def _acquire_distributed(self, queue_name: str, blocking: bool = False) -> bool:
+        """Распределенный захват через Django cache"""
+        cache_key = f'celery:queue_concurrency:{queue_name}'
+        limit = self._queue_limits.get(queue_name, 0)
+        
+        # Атомарно увеличиваем счетчик
+        try:
+            current = cache.get(cache_key, 0)
+            if current >= limit:
+                logger.debug(f"Очередь {queue_name}: лимит превышен ({current}/{limit}) (distributed)")
+                return False
+            
+            # Пытаемся увеличить счетчик
+            new_value = cache.incr(cache_key)
+            if new_value is None:
+                # Ключ не существовал, создаем
+                cache.set(cache_key, 1, self._cache_ttl)
+                new_value = 1
+            
+            if new_value > limit:
+                # Превысили лимит, откатываем
+                cache.decr(cache_key)
+                logger.debug(f"Очередь {queue_name}: лимит превышен после incr ({new_value}/{limit}) (distributed)")
+                return False
+            
+            logger.debug(f"Очередь {queue_name}: слот захвачен ({new_value}/{limit}) (distributed)")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при захвате слота для очереди {queue_name}: {e}")
+            return True  # При ошибке разрешаем выполнение
+    
+    def _release_distributed(self, queue_name: str):
+        """Распределенное освобождение через Django cache"""
+        cache_key = f'celery:queue_concurrency:{queue_name}'
+        try:
+            current = cache.decr(cache_key)
+            if current is None or current < 0:
+                cache.set(cache_key, 0, self._cache_ttl)
+            logger.debug(f"Очередь {queue_name}: слот освобожден (distributed)")
+        except Exception as e:
+            logger.error(f"Ошибка при освобождении слота для очереди {queue_name}: {e}")
+    
+    def get_current_count(self, queue_name: str) -> int:
+        """
+        Возвращает текущее количество выполняемых задач в очереди.
+        
+        Args:
+            queue_name: Имя очереди
+            
+        Returns:
+            Количество выполняемых задач
+        """
+        if self._use_distributed:
+            cache_key = f'celery:queue_concurrency:{queue_name}'
+            return cache.get(cache_key, 0)
+        else:
+            semaphore = self._semaphores.get(queue_name)
+            if semaphore is None:
+                return 0
+            limit = self._queue_limits.get(queue_name, 0)
+            # Semaphore не предоставляет текущее значение напрямую
+            # Возвращаем приблизительное значение
+            return limit - semaphore._value if hasattr(semaphore, '_value') else 0
+    
+    def get_all_limits(self) -> Dict[str, int]:
+        """Возвращает все настроенные лимиты"""
+        return self._queue_limits.copy()
+    
+    def has_limit(self, queue_name: str) -> bool:
+        """Проверяет, есть ли лимит для очереди"""
+        return queue_name in self._queue_limits and self._queue_limits[queue_name] > 0
+
+
+# Глобальный экземпляр менеджера
+queue_concurrency_manager = QueueConcurrencyManager()
+
+# Словарь для отслеживания захваченных слотов по task_id
+# {task_id: queue_name}
+_task_acquired_slots: Dict[str, str] = {}
+_task_slots_lock = threading.Lock()
+
+
+def _get_task_queue_from_request(request) -> Optional[str]:
+    """
+    Определяет имя очереди для задачи из request.
+    
+    Args:
+        request: Request объект задачи Celery
+        
+    Returns:
+        Имя очереди или None
+    """
+    try:
+        # Пытаемся получить из delivery_info
+        delivery_info = getattr(request, 'delivery_info', None)
+        if delivery_info:
+            routing_key = delivery_info.get('routing_key')
+            if routing_key:
+                return routing_key
+        
+        # Пытаемся получить из имени задачи
+        task_name = getattr(request, 'task', None)
+        if task_name and 'modules.' in task_name:
+            parts = task_name.split('.')
+            # modules.porosity_analysis.api.tasks.run_porosity_analysis
+            for i, part in enumerate(parts):
+                if part == 'modules' and i + 1 < len(parts):
+                    return parts[i + 1]
+        
+        return None
+    except Exception as e:
+        logger.debug(f"Не удалось определить очередь для задачи: {e}")
+        return None
+
+
+def create_concurrency_limited_task_class(base_task_class):
+    """
+    Создает класс задачи с ограничением параллелизма.
+    
+    Этот класс переопределяет __call__ чтобы проверять лимит ПЕРЕД выполнением задачи.
+    Если лимит превышен, задача откладывается через retry() и НЕ выполняется.
+    
+    Args:
+        base_task_class: Базовый класс Task из Celery
+        
+    Returns:
+        Новый класс задачи с ограничением параллелизма
+    """
+    
+    class ConcurrencyLimitedTask(base_task_class):
+        """
+        Task class с автоматическим ограничением параллелизма по очередям.
+        """
+        
+        def __call__(self, *args, **kwargs):
+            """
+            Переопределяем __call__ для проверки лимита ДО выполнения задачи.
+            """
+            # Определяем очередь
+            queue_name = _get_task_queue_from_request(self.request)
+            
+            # Проверяем, есть ли лимит для этой очереди
+            if queue_name and queue_concurrency_manager.has_limit(queue_name):
+                # Пытаемся захватить слот
+                if not queue_concurrency_manager.acquire(queue_name, blocking=False):
+                    # Лимит превышен - задача будет повторена
+                    limit = queue_concurrency_manager.get_queue_limit(queue_name)
+                    retry_delay = queue_concurrency_manager.get_retry_delay()
+                    logger.info(
+                        f"Очередь {queue_name}: лимит ({limit}) превышен. "
+                        f"Задача {self.request.id} отложена на {retry_delay}с."
+                    )
+                    # Вызываем retry с max_retries=None чтобы НЕ учитывать в общем лимите retry задачи
+                    # Это специальный retry для ограничения параллелизма, не для ошибок
+                    raise self.retry(countdown=retry_delay, max_retries=None)
+                
+                # Слот захвачен - запоминаем для освобождения
+                task_id = self.request.id
+                with _task_slots_lock:
+                    _task_acquired_slots[task_id] = queue_name
+                logger.debug(f"Задача {task_id}: захвачен слот для очереди {queue_name}")
+                
+                try:
+                    # Выполняем задачу
+                    return super().__call__(*args, **kwargs)
+                finally:
+                    # Освобождаем слот
+                    with _task_slots_lock:
+                        _task_acquired_slots.pop(task_id, None)
+                    queue_concurrency_manager.release(queue_name)
+                    logger.debug(f"Задача {task_id}: освобожден слот для очереди {queue_name}")
+            else:
+                # Нет ограничений - выполняем как обычно
+                return super().__call__(*args, **kwargs)
+    
+    return ConcurrencyLimitedTask
+
+
+def setup_concurrency_limited_tasks(celery_app):
+    """
+    Настраивает автоматическое ограничение параллелизма для всех задач Celery.
+    
+    Заменяет базовый класс Task на ConcurrencyLimitedTask, который автоматически
+    проверяет лимиты параллелизма перед выполнением каждой задачи.
+    
+    Args:
+        celery_app: Экземпляр Celery приложения
+        
+    Использование:
+        from src.core.utils.celery.concurrency import setup_concurrency_limited_tasks
+        setup_concurrency_limited_tasks(celery_app)
+    """
+    # Создаем новый класс задачи на основе текущего
+    ConcurrencyLimitedTask = create_concurrency_limited_task_class(celery_app.Task)
+    
+    # Заменяем базовый класс задачи
+    celery_app.Task = ConcurrencyLimitedTask
+    
+    logger.info("Автоматическое ограничение параллелизма задач активировано")
+
+
+def with_queue_limit(queue_name: Optional[str] = None):
+    """
+    Декоратор для ограничения параллелизма задач в очереди.
+    
+    Использование:
+        @shared_task(bind=True)
+        @with_queue_limit('porosity_analysis')
+        def my_task(self, ...):
+            # Задача автоматически ограничена по параллелизму
+    
+    Args:
+        queue_name: Имя очереди. Если не указано, берется из routing_key задачи.
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            # Определяем имя очереди
+            effective_queue = queue_name
+            if effective_queue is None:
+                # Пытаемся получить из delivery_info
+                try:
+                    effective_queue = self.request.delivery_info.get('routing_key', 'default')
+                except AttributeError:
+                    effective_queue = 'default'
+            
+            # Проверяем лимит
+            if not queue_concurrency_manager.acquire(effective_queue, blocking=False):
+                retry_delay = queue_concurrency_manager.get_retry_delay()
+                limit = queue_concurrency_manager.get_queue_limit(effective_queue)
+                logger.warning(
+                    f"Очередь {effective_queue}: лимит ({limit}) превышен. "
+                    f"Задача {self.request.id} будет повторена через {retry_delay}с."
+                )
+                raise self.retry(countdown=retry_delay)
+            
+            try:
+                return func(self, *args, **kwargs)
+            finally:
+                queue_concurrency_manager.release(effective_queue)
+        
+        return wrapper
+    return decorator
+
+
+class QueueLimitContext:
+    """
+    Контекстный менеджер для ограничения параллелизма задач.
+    
+    Использование:
+        with QueueLimitContext('porosity_analysis', task=self) as acquired:
+            if not acquired:
+                raise self.retry(countdown=60)
+            # Выполнение задачи
+    """
+    
+    def __init__(self, queue_name: str, task=None, blocking: bool = False):
+        self.queue_name = queue_name
+        self.task = task
+        self.blocking = blocking
+        self.acquired = False
+    
+    def __enter__(self) -> bool:
+        self.acquired = queue_concurrency_manager.acquire(self.queue_name, self.blocking)
+        return self.acquired
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.acquired:
+            queue_concurrency_manager.release(self.queue_name)
+        return False
+

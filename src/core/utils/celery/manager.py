@@ -184,4 +184,39 @@ class CeleryModuleManager:
     
     def get_module_config(self, module_name: str) -> Optional[CeleryModuleConfig]:
         """Возвращает конфигурацию конкретного модуля"""
-        return self.modules_configs.get(module_name) 
+        return self.modules_configs.get(module_name)
+    
+    def get_all_queue_limits(self) -> Dict[str, int]:
+        """
+        Собирает лимиты параллелизма для всех очередей из всех модулей.
+        
+        Returns:
+            Dict[str, int]: Словарь {имя_очереди: max_concurrent_tasks}
+        """
+        limits = {}
+        for module_name, config in self.modules_configs.items():
+            max_concurrent = config.get_max_concurrent_tasks()
+            if max_concurrent > 0:
+                queue_name = config.get_queue_name()
+                limits[queue_name] = max_concurrent
+                self.logger.debug(
+                    f"Модуль {module_name}: очередь {queue_name}, "
+                    f"max_concurrent_tasks={max_concurrent}"
+                )
+        return limits
+    
+    def setup_queue_concurrency(self):
+        """
+        Настраивает менеджер параллелизма очередей на основе конфигураций модулей.
+        Должен вызываться после инициализации Celery.
+        """
+        from src.core.utils.celery.concurrency import queue_concurrency_manager
+        
+        limits = self.get_all_queue_limits()
+        for queue_name, max_concurrent in limits.items():
+            queue_concurrency_manager.set_queue_limit(queue_name, max_concurrent)
+        
+        self.logger.info(
+            f"Настроено ограничение параллелизма для {len(limits)} очередей: "
+            f"{', '.join(f'{q}={l}' for q, l in limits.items())}"
+        ) 

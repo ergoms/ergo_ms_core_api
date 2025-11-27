@@ -190,12 +190,102 @@ def get_task_routes(self) -> Dict[str, Dict[str, Any]]:
 
 
 
+## Ограничение параллелизма задач по очередям
+
+Система позволяет ограничивать количество одновременных задач для каждой очереди отдельно.
+Это работает даже если один worker обрабатывает несколько очередей.
+
+### Настройка лимита в конфигурации модуля
+
+```python
+class MyModuleCeleryConfig(CeleryModuleConfig):
+    
+    def get_max_concurrent_tasks(self) -> int:
+        """
+        Возвращает максимальное количество одновременных задач для очереди.
+        0 означает без ограничений.
+        """
+        return 4  # Максимум 4 одновременных задачи
+```
+
+### Использование в задачах
+
+**Вариант 1: Ручное управление (рекомендуется для сложных задач)**
+
+```python
+from core.api.src.core.utils.celery.concurrency import queue_concurrency_manager
+
+@shared_task(bind=True)
+def my_task(self, ...):
+    queue_name = 'my_module'
+    
+    # Пытаемся захватить слот
+    if not queue_concurrency_manager.acquire(queue_name, blocking=False):
+        retry_delay = queue_concurrency_manager.get_retry_delay()
+        raise self.retry(countdown=retry_delay)
+    
+    try:
+        # Выполнение задачи
+        pass
+    finally:
+        queue_concurrency_manager.release(queue_name)
+```
+
+**Вариант 2: Декоратор (для простых задач)**
+
+```python
+from core.api.src.core.utils.celery.concurrency import with_queue_limit
+
+@shared_task(bind=True)
+@with_queue_limit('my_module')
+def my_task(self, ...):
+    # Задача автоматически ограничена по параллелизму
+    pass
+```
+
+**Вариант 3: Контекстный менеджер**
+
+```python
+from core.api.src.core.utils.celery.concurrency import QueueLimitContext
+
+@shared_task(bind=True)
+def my_task(self, ...):
+    with QueueLimitContext('my_module') as acquired:
+        if not acquired:
+            raise self.retry(countdown=60)
+        # Выполнение задачи
+        pass
+```
+
+### Как это работает
+
+1. При старте worker'а `CeleryModuleManager` собирает лимиты из всех модулей
+2. `QueueConcurrencyManager` инициализирует семафоры для каждой очереди
+3. При выполнении задачи происходит захват/освобождение слота
+4. Если лимит превышен, задача откладывается через `retry`
+
+### Пример конфигурации нескольких модулей
+
+```
+Worker слушает очереди: video_analysis, porosity_analysis, impuls_analysis
+Worker concurrency: 8 (общий лимит потоков)
+
+├── video_analysis: max_concurrent_tasks = 2
+├── porosity_analysis: max_concurrent_tasks = 6  
+└── impuls_analysis: max_concurrent_tasks = 4
+
+Возможная ситуация:
+- 2 задачи video_analysis (лимит очереди)
+- 4 задачи porosity_analysis
+- 2 задачи impuls_analysis
+= 8 задач (лимит worker'а)
+```
+
 ## Дополнительные настройки
 
 ```python
 def get_additional_config(self) -> Dict[str, Any]:
     return {
-        'my_module_max_concurrent_tasks': 3,
         'my_module_batch_size': 100,
         'my_module_rate_limit': '10/m',
     }

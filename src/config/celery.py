@@ -60,6 +60,25 @@ logger.info("Celery: Загружены конфигурации модулей:
 module_task_routes = module_manager.get_all_task_routes()
 module_task_queues = module_manager.get_all_task_queues()
 
+# ==================== Настройка параллелизма очередей ====================
+# Инициализируем менеджер параллелизма для ограничения одновременных задач по очередям
+if not is_beat:
+    # Настраиваем только для worker'а, не для beat
+    module_manager.setup_queue_concurrency()
+    
+    # Собираем лимиты для логирования
+    queue_limits = module_manager.get_all_queue_limits()
+    if queue_limits:
+        logger.info(
+            "Celery: Настроены лимиты параллелизма: %s",
+            ", ".join(f"{q}={l}" for q, l in queue_limits.items())
+        )
+        
+        # Активируем автоматическое ограничение через Custom Task class
+        # Это переопределяет __call__ и проверяет лимит ДО выполнения задачи
+        from src.core.utils.celery.concurrency import setup_concurrency_limited_tasks
+        setup_concurrency_limited_tasks(celery_app)
+
 # Гарантируем наличие очереди по умолчанию
 if 'default' not in module_task_queues:
     module_task_queues['default'] = {
