@@ -499,9 +499,11 @@ class FastBIService:
             f"Правила:\n"
             f"- SELECT только, таблица df\n"
             f"- Для вывода всех данных используй SELECT * (НЕ перечисляй колонки!)\n"
-            f"- Колонки с пробелами в двойных кавычках: \"Имя колонки\"\n"
+            f"- Колонки с пробелами ОБЯЗАТЕЛЬНО в двойных кавычках: \"Имя колонки\"\n"
+            f"- ВАЖНО: НЕ заменяй пробелы на подчёркивания в названиях колонок!\n"
+            f"- Пример: \"Факультет группы\" (правильно), НЕ Факультет_группы (неправильно)\n"
             f"- НЕ используй placeholder'ы (column_name, table_name и т.п.)\n"
-            f"- Используй ТОЛЬКО колонки из схемы выше\n"
+            f"- Используй ТОЛЬКО колонки из схемы выше, копируй их ТОЧНО\n"
             f"- Если вопрос неясен - верни SELECT * FROM df LIMIT 10\n"
             f"Вопрос: {question}\nSQL:"
         )
@@ -557,12 +559,23 @@ class FastBIService:
     def _validate_sql_columns(self, sql: str) -> str:
         """
         Проверяет SQL на наличие несуществующих колонок и placeholder'ов.
+        Пытается исправить названия колонок (подчёркивания → пробелы).
         Возвращает исправленный SQL или безопасный fallback.
         """
         assert self.meta is not None, "Метаданные не подготовлены"
         
         # Получаем список допустимых колонок
-        valid_columns = {col["name"].lower() for col in self.meta["schema"]}
+        valid_columns = {col["name"] for col in self.meta["schema"]}
+        valid_columns_lower = {col.lower() for col in valid_columns}
+        
+        # Создаём маппинг колонок с подчёркиваниями на колонки с пробелами
+        # Например: "факультет_группы" -> "Факультет группы"
+        underscore_to_space_map = {}
+        for col in valid_columns:
+            # Вариант с подчёркиваниями вместо пробелов
+            col_with_underscores = col.replace(" ", "_")
+            if col_with_underscores != col:
+                underscore_to_space_map[col_with_underscores.lower()] = col
         
         # Паттерны placeholder'ов которые LLM может генерировать
         placeholders = [
@@ -579,11 +592,8 @@ class FastBIService:
                 logger.warning(f"SQL содержит placeholder '{placeholder}', заменяем на безопасный запрос")
                 return "SELECT * FROM df LIMIT 10"
         
-        # Извлекаем идентификаторы из SQL (в двойных кавычках или без)
-        # Паттерн для идентификаторов в кавычках: "column name"
+        # Извлекаем идентификаторы из SQL (в двойных кавычках)
         quoted_pattern = re.compile(r'"([^"]+)"')
-        # Паттерн для обычных идентификаторов после WHERE, SELECT, и т.д.
-        unquoted_pattern = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b')
         
         # SQL ключевые слова которые нужно игнорировать
         sql_keywords = {
@@ -594,14 +604,84 @@ class FastBIService:
             "df", "true", "false", "cast", "coalesce", "nullif", "union", "all",
         }
         
-        # Проверяем колонки в кавычках
+        # Исправляем колонки в кавычках
+        corrected_sql = sql
         for match in quoted_pattern.finditer(sql):
             col_name = match.group(1)
-            if col_name.lower() not in valid_columns:
-                logger.warning(f"SQL содержит несуществующую колонку '{col_name}', заменяем на безопасный запрос")
-                return "SELECT * FROM df LIMIT 10"
+            col_name_lower = col_name.lower()
+            
+            # Если колонка валидна - пропускаем
+            if col_name_lower in valid_columns_lower:
+                continue
+            
+            # Пытаемся найти соответствие через маппинг подчёркиваний
+            if col_name_lower in underscore_to_space_map:
+                correct_col = underscore_to_space_map[col_name_lower]
+                logger.info(f"Исправляем колонку в SQL: '{col_name}' -> '{correct_col}'")
+                corrected_sql = corrected_sql.replace(f'"{col_name}"', f'"{correct_col}"')
+                continue
+            
+            # Пробуем заменить подчёркивания на пробелы напрямую
+            col_with_spaces = col_name.replace("_", " ")
+            if col_with_spaces.lower() in valid_columns_lower:
+                # Находим оригинальное название колонки с правильным регистром
+                for valid_col in valid_columns:
+                    if valid_col.lower() == col_with_spaces.lower():
+                        logger.info(f"Исправляем колонку в SQL: '{col_name}' -> '{valid_col}'")
+                        corrected_sql = corrected_sql.replace(f'"{col_name}"', f'"{valid_col}"')
+                        break
+                continue
+            
+            # Если не удалось исправить - логируем и возвращаем fallback
+            logger.warning(f"SQL содержит несуществующую колонку '{col_name}', заменяем на безопасный запрос")
+            logger.warning(f"Допустимые колонки: {list(valid_columns)[:10]}...")
+            return "SELECT * FROM df LIMIT 10"
         
-        return sql
+        # Также проверяем идентификаторы без кавычек (если LLM сгенерировал без кавычек)
+        # Паттерн для идентификаторов с подчёркиваниями (потенциально неправильные колонки)
+        unquoted_underscore_pattern = re.compile(r'\b([А-Яа-яA-Za-z][А-Яа-яA-Za-z0-9]*(?:_[А-Яа-яA-Za-z0-9]+)+)\b')
+        
+        for match in unquoted_underscore_pattern.finditer(corrected_sql):
+            identifier = match.group(1)
+            identifier_lower = identifier.lower()
+            
+            # Пропускаем ключевые слова
+            if identifier_lower in sql_keywords:
+                continue
+            
+            # Если это валидная колонка - пропускаем
+            if identifier_lower in valid_columns_lower:
+                continue
+            
+            # Пытаемся найти соответствие через маппинг
+            if identifier_lower in underscore_to_space_map:
+                correct_col = underscore_to_space_map[identifier_lower]
+                logger.info(f"Исправляем колонку без кавычек в SQL: '{identifier}' -> '\"{correct_col}\"'")
+                # Заменяем на версию с кавычками и пробелами
+                corrected_sql = re.sub(
+                    rf'\b{re.escape(identifier)}\b',
+                    f'"{correct_col}"',
+                    corrected_sql
+                )
+                continue
+            
+            # Пробуем заменить подчёркивания на пробелы
+            identifier_with_spaces = identifier.replace("_", " ")
+            if identifier_with_spaces.lower() in valid_columns_lower:
+                for valid_col in valid_columns:
+                    if valid_col.lower() == identifier_with_spaces.lower():
+                        logger.info(f"Исправляем колонку без кавычек в SQL: '{identifier}' -> '\"{valid_col}\"'")
+                        corrected_sql = re.sub(
+                            rf'\b{re.escape(identifier)}\b',
+                            f'"{valid_col}"',
+                            corrected_sql
+                        )
+                        break
+        
+        if corrected_sql != sql:
+            logger.info(f"SQL исправлен:\nБыло: {sql}\nСтало: {corrected_sql}")
+        
+        return corrected_sql
 
     def _run_sql(self, sql: str) -> pd.DataFrame:
         """Выполняет SQL запрос через Polars SQL."""
