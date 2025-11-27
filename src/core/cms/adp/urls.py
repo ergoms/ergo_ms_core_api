@@ -1,10 +1,6 @@
-from django.urls import (
-    path
-)
+from django.urls import path
 
-from rest_framework_simplejwt.views import (
-    TokenRefreshView
-)
+from rest_framework_simplejwt.views import TokenRefreshView
 
 from src.core.cms.adp.views import (
     UserRegistrationValidationView,
@@ -21,7 +17,23 @@ from src.core.cms.adp.views import (
     UserSecuritySettingsView,
 )
 
+from src.core.cms.adp.views_roles import (
+    RoleListView,
+    RoleDetailView,
+    RoleGroupListView,
+    RoleGroupDetailView,
+    PolicyListView,
+    PolicyDetailView,
+    UserRoleAssignView,
+    UserPermissionsView,
+    CheckURLAccessView,
+    ModulePermissionListView,
+    ModulePermissionDetailView,
+    AdminUserRoleListView,
+)
+
 urlpatterns = [
+    # Authentication endpoints
     path('validate-registration/', UserRegistrationValidationView.as_view(), name='validate_registration'),
     path('registration/', UserRegistrationView.as_view(), name='registration'),
     path('authorization/', UserAuthorizationView.as_view(), name='authorization'),
@@ -41,4 +53,18 @@ urlpatterns = [
     # Profile endpoints
     path('profile/', UserProfileView.as_view(), name='user_profile'),
     path('security-settings/', UserSecuritySettingsView.as_view(), name='user_security_settings'),
+    
+    # Role and Policy Management endpoints
+    path('roles/', RoleListView.as_view(), name='role_list'),
+    path('roles/<int:role_id>/', RoleDetailView.as_view(), name='role_detail'),
+    path('role-groups/', RoleGroupListView.as_view(), name='role_group_list'),
+    path('role-groups/<int:group_id>/', RoleGroupDetailView.as_view(), name='role_group_detail'),
+    path('policies/', PolicyListView.as_view(), name='policy_list'),
+    path('policies/<int:policy_id>/', PolicyDetailView.as_view(), name='policy_detail'),
+    path('assign-role/', UserRoleAssignView.as_view(), name='assign_role'),
+    path('my-permissions/', UserPermissionsView.as_view(), name='user_permissions'),
+    path('check-url-access/', CheckURLAccessView.as_view(), name='check_url_access'),
+    path('module-permissions/', ModulePermissionListView.as_view(), name='module_permissions'),
+    path('module-permissions/<int:permission_id>/', ModulePermissionDetailView.as_view(), name='module_permission_detail'),
+    path('admin-users/', AdminUserRoleListView.as_view(), name='admin_users'),
 ]

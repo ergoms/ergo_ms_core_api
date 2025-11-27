@@ -301,11 +301,15 @@ class UserRegistrationView(BaseAPIView):
         serializer = UserRegistrationSerializer(data=request.data)
 
         if serializer.is_valid():
-            User.objects.create_superuser(username=serializer.validated_data['username'], email= serializer.validated_data['email'], password= serializer.validated_data['password']).save()
+            user = serializer.save()
 
             successful_response = Response(
-                {"message": "Регистрация успешна."}, 
-                status=status.HTTP_200_OK
+                {
+                    "message": "Регистрация успешна.",
+                    "user_id": user.id,
+                    "username": user.username
+                }, 
+                status=status.HTTP_201_CREATED
             )
             return successful_response
 
