@@ -1,5 +1,8 @@
 from django.db import models
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
+from django.core.exceptions import ValidationError
+import json
+
 
 class EmailConfirmationCode(models.Model):
     email = models.EmailField(unique=True)
@@ -9,10 +12,10 @@ class EmailConfirmationCode(models.Model):
     def __str__(self):
         return f"{self.email} - {self.code}"
 
+
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='adp_profile')
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
-    middle_name = models.CharField(max_length=150, blank=True, null=True, verbose_name='Отчество')
     phone = models.CharField(max_length=20, blank=True, null=True)
     website = models.URLField(blank=True, null=True)
     bio = models.TextField(max_length=500, blank=True, null=True)
@@ -48,9 +51,10 @@ class UserProfile(models.Model):
     
     @property
     def full_name(self):
-        name_parts = [self.user.first_name, self.middle_name, self.user.last_name]
+        name_parts = [self.user.first_name, self.user.middle_name, self.user.last_name]
         full_name = " ".join(part for part in name_parts if part and part.strip())
         return full_name or self.user.username
+
 
 class UserDevice(models.Model):
     DEVICE_TYPES = [
@@ -76,3 +80,227 @@ class UserDevice(models.Model):
     
     def __str__(self):
         return f"{self.user.username} - {self.device_name}"
+
+class Role(Group):
+    """
+    Роли в системе.
+    """
+
+    ROLE_TYPE_LABELS = {
+        True: 'Администратор',
+        False: 'Пользователь',
+    }
+    
+    description = models.TextField(blank=True, null=True, verbose_name='Описание')
+    is_system = models.BooleanField(default=False, verbose_name='Системная роль')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        app_label = 'cms_adp'
+        verbose_name = 'Роль'
+        verbose_name_plural = 'Роли'
+        ordering = ['name']
+    
+    def __str__(self):
+        return f"{self.name} ({self.get_role_type_display()})"
+    
+    def clean(self):
+        # Системные роли нельзя переводить в пользовательские
+        if self.pk:
+            original = Role.objects.get(pk=self.pk)
+            if original.is_system and not self.is_system:
+                raise ValidationError('Нельзя отключить системный статус роли')
+
+    @property
+    def role_type(self) -> str:
+        """Определяет тип роли: admin или user"""
+        # Для системных ролей определяем тип по имени
+        if self.is_system:
+            if self.name == 'Администратор':
+                return 'admin'
+            elif self.name == 'Пользователь':
+                return 'user'
+            # Для других системных ролей определяем по is_system (по умолчанию admin)
+            return 'admin'
+        # Для несистемных ролей тип user
+        return 'user'
+
+    def get_role_type_display(self) -> str:
+        """Возвращает отображаемое название типа роли"""
+        role_type = self.role_type
+        if role_type == 'admin':
+            return 'Администратор'
+        elif role_type == 'user':
+            return 'Пользователь'
+        return 'Неизвестная роль'
+
+
+class RoleGroup(models.Model):
+    """
+    Дочерние ролевые группы для пользователей.
+    Права настраиваются отдельно в каждом модуле системы.
+    """
+    name = models.CharField(max_length=100, verbose_name='Название группы')
+    parent_role = models.ForeignKey(
+        Role, 
+        on_delete=models.CASCADE, 
+        related_name='role_groups',
+        limit_choices_to={'is_system': False},
+        verbose_name='Родительская роль'
+    )
+    description = models.TextField(blank=True, null=True, verbose_name='Описание')
+    is_active = models.BooleanField(default=True, verbose_name='Активна')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Ролевая группа'
+        verbose_name_plural = 'Ролевые группы'
+        ordering = ['name']
+        unique_together = ['name', 'parent_role']
+    
+    def __str__(self):
+        return f"{self.name} (группа роли {self.parent_role.name})"
+
+
+class Policy(models.Model):
+    """
+    Политики доступа к URL-адресам системы.
+    Администраторы имеют доступ ко всем URL.
+    Для пользователей доступ настраивается индивидуально.
+    """
+    POLICY_TYPES = [
+        ('url', 'Доступ к URL'),
+        ('component', 'Доступ к компоненту'),  # Для будущего использования
+    ]
+    
+    ACTION_TYPES = [
+        ('allow', 'Разрешить'),
+        ('deny', 'Запретить'),
+    ]
+    
+    name = models.CharField(max_length=200, verbose_name='Название политики')
+    policy_type = models.CharField(max_length=20, choices=POLICY_TYPES, default='url', verbose_name='Тип политики')
+    action = models.CharField(max_length=10, choices=ACTION_TYPES, default='allow', verbose_name='Действие')
+    
+    # URL или путь к компоненту
+    resource_path = models.CharField(max_length=500, verbose_name='Путь к ресурсу')
+    
+    # Поддержка wildcards для URL (например, /api/users/*)
+    is_pattern = models.BooleanField(default=False, verbose_name='Использовать шаблон')
+    
+    # Связь с ролями и группами
+    role = models.ForeignKey(
+        Role, 
+        on_delete=models.CASCADE, 
+        related_name='policies',
+        blank=True,
+        null=True,
+        verbose_name='Роль'
+    )
+    role_group = models.ForeignKey(
+        RoleGroup, 
+        on_delete=models.CASCADE, 
+        related_name='policies',
+        blank=True,
+        null=True,
+        verbose_name='Ролевая группа'
+    )
+    
+    description = models.TextField(blank=True, null=True, verbose_name='Описание')
+    is_active = models.BooleanField(default=True, verbose_name='Активна')
+    priority = models.IntegerField(default=0, verbose_name='Приоритет')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Политика'
+        verbose_name_plural = 'Политики'
+        ordering = ['-priority', 'name']
+    
+    def __str__(self):
+        target = self.role.name if self.role else self.role_group.name
+        return f"{self.name} ({target}): {self.action} {self.resource_path}"
+    
+    def clean(self):
+        # Политика должна быть привязана либо к роли, либо к группе
+        if not self.role and not self.role_group:
+            raise ValidationError('Политика должна быть привязана к роли или ролевой группе')
+        if self.role and self.role_group:
+            raise ValidationError('Политика не может быть одновременно привязана к роли и ролевой группе')
+
+
+class UserRole(models.Model):
+    """
+    Связь пользователей с ролями и группами.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_roles', verbose_name='Пользователь')
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='user_assignments', verbose_name='Роль')
+    role_groups = models.ManyToManyField(
+        RoleGroup, 
+        blank=True, 
+        related_name='user_assignments',
+        verbose_name='Ролевые группы'
+    )
+    
+    is_active = models.BooleanField(default=True, verbose_name='Активна')
+    assigned_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата назначения')
+    assigned_by = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='role_assignments_made',
+        verbose_name='Назначил'
+    )
+    
+    class Meta:
+        verbose_name = 'Роль пользователя'
+        verbose_name_plural = 'Роли пользователей'
+        unique_together = ['user', 'role']
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.role.name}"
+    
+    def clean(self):
+        # Пользователь может иметь только одну активную роль
+        if self.is_active:
+            existing = UserRole.objects.filter(
+                user=self.user, 
+                is_active=True
+            ).exclude(pk=self.pk)
+            if existing.exists():
+                raise ValidationError('У пользователя уже есть активная роль')
+
+
+class ModulePermission(models.Model):
+    """
+    Права доступа к функционалу модулей системы.
+    Настраиваются для ролевых групп.
+    """
+    module_name = models.CharField(max_length=100, verbose_name='Название модуля')
+    permission_key = models.CharField(max_length=100, verbose_name='Ключ разрешения')
+    permission_name = models.CharField(max_length=200, verbose_name='Название разрешения')
+    description = models.TextField(blank=True, null=True, verbose_name='Описание')
+    
+    role_group = models.ForeignKey(
+        RoleGroup, 
+        on_delete=models.CASCADE, 
+        related_name='module_permissions',
+        verbose_name='Ролевая группа'
+    )
+    
+    is_granted = models.BooleanField(default=False, verbose_name='Предоставлено')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Разрешение модуля'
+        verbose_name_plural = 'Разрешения модулей'
+        unique_together = ['module_name', 'permission_key', 'role_group']
+        ordering = ['module_name', 'permission_key']
+    
+    def __str__(self):
+        return f"{self.module_name}.{self.permission_key} - {self.role_group.name}"
