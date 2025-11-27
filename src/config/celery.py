@@ -247,3 +247,37 @@ celery_app.conf.update(
     # Дополнительные настройки из модулей
     **module_manager.get_additional_configs()
 )
+
+# ==================== Синхронизация задач с БД ====================
+# Синхронизируем задачи из конфига с БД при использовании DatabaseScheduler
+# Выполняется только при запуске beat, после полной инициализации Django
+if is_beat and CELERY_BEAT_SCHEDULER and CELERY_BEAT_SCHEDULER_DB_ALIAS and CELERY_BEAT_SCHEDULE:
+    try:
+        # Убеждаемся, что Django полностью инициализирован
+        import django
+        from django.apps import apps
+        
+        # Проверяем, инициализирован ли Django
+        if not apps.ready:
+            django.setup()
+        
+        from src.core.utils.celery_beat.sync import CeleryBeatSyncManager
+        
+        logger.info("Beat: Начало синхронизации задач с БД...")
+        logger.info(f"Beat: db_alias={CELERY_BEAT_SCHEDULER_DB_ALIAS}, задач в конфиге={len(CELERY_BEAT_SCHEDULE)}")
+        
+        sync_manager = CeleryBeatSyncManager(
+            config_schedule=CELERY_BEAT_SCHEDULE,
+            db_alias=CELERY_BEAT_SCHEDULER_DB_ALIAS
+        )
+        sync_results = sync_manager.sync_all()
+        
+        logger.info(
+            f"Beat: Синхронизация задач с БД завершена - "
+            f"создано: {sync_results['created']}, "
+            f"обновлено: {sync_results['updated']}, "
+            f"удалено: {sync_results['deleted']}"
+        )
+    except Exception as e:
+        logger.error(f"Beat: Ошибка синхронизации задач с БД: {e}", exc_info=True)
+        # Не прерываем запуск, но логируем ошибку

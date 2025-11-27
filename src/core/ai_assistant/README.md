@@ -39,7 +39,7 @@ POST /api/ai_assistant/bi_query/
 ## Архитектура
 
 ```
-User Query → FastBIService → DuckDB → Ollama (HTTP) → SQL + Insights
+User Query → FastBIService → Polars → Ollama (HTTP) → SQL + Insights
 ```
 
 - Используется только локальный Ollama API (HTTP клиент)
@@ -80,12 +80,12 @@ base_url="http://localhost:11434"  # адрес Ollama
 
 ## Требования
 
-- **DuckDB**, **pandas**, **sqlparse**
+- **Polars**, **pandas**, **sqlparse**
 - **Ollama** с загруженной моделью (`ollama pull mistral`)
 
 ## Troubleshooting
 
-**ModuleNotFoundError: No module named 'duckdb':**
+**ModuleNotFoundError: No module named 'polars':**
 ```bash
 ergoms python-install
 ```

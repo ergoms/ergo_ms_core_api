@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Сервис анализа табличных данных через DuckDB и ускоренные LLM.
+Сервис анализа табличных данных через Polars и ускоренные LLM.
 
 🔥 Возможности:
 - Быстрый HTTP клиент Ollama с пулами соединений и поддержкой GPU/CPU
@@ -9,24 +9,26 @@
 🛡️ Безопасность:
 1. Промпт явно запрещает DDL/DML
 2. `_only_select` проверяет тип запроса через sqlparse
-3. DuckDB работает в памяти и не имеет доступа к файловой системе
 4. Ограничение времени выполнения SQL
 """
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import duckdb
+import polars as pl
 import pandas as pd
 import sqlparse
 from django.conf import settings
 
 from .config import RuntimeLLMConfig, build_runtime_config
 from .llm_clients import LLMClientError, build_llm_client
+
+logger = logging.getLogger(__name__)
 
 # -----------------------------
 # Константы (из настроек Django)
@@ -40,17 +42,14 @@ SQL_TIMEOUT_SEC = 30
 # -----------------------------
 # Хелперы
 # -----------------------------
-def _normalize_sql_for_duckdb(sql: str) -> str:
+def _normalize_sql_for_polars(sql: str) -> str:
     """
-    Нормализует SQL для DuckDB:
+    Нормализует SQL для Polars SQL:
     - Заменяет обратные кавычки (`) на двойные кавычки (") для идентификаторов
-    - DuckDB использует двойные кавычки для идентификаторов с пробелами или специальными символами
+    - Polars SQL использует двойные кавычки для идентификаторов с пробелами или специальными символами
     """
     # Заменяем обратные кавычки на двойные для идентификаторов
     # Используем регулярное выражение для замены `identifier` на "identifier"
-    import re
-    # Паттерн для обратных кавычек вокруг идентификаторов
-    # Заменяем `name` на "name", но не трогаем строки в одинарных кавычках
     def replace_backticks(match):
         identifier = match.group(1)
         return f'"{identifier}"'
@@ -69,8 +68,8 @@ def _only_select(sql: str) -> str:
     parsed = parsed_list[0]
     if parsed.get_type().upper() != "SELECT":
         raise ValueError("Только SELECT-запросы разрешены.")
-    # Нормализуем SQL для DuckDB перед возвратом
-    return _normalize_sql_for_duckdb(sql_single)
+    # Нормализуем SQL для Polars перед возвратом
+    return _normalize_sql_for_polars(sql_single)
 
 
 def _extract_sql_from_text(text: str) -> str:
@@ -94,15 +93,15 @@ def _shorten(df: pd.DataFrame, max_rows: int = 50) -> pd.DataFrame:
 # -----------------------------
 class FastBIService:
     """
-    Сервис для анализа табличных данных через DuckDB и LLM.
+    Сервис для анализа табличных данных через Polars и LLM.
     Адаптирован для использования в Django и поддерживает streaming выдачу.
     """
 
     def __init__(
         self,
-        model: str = None,
+        model: Optional[str] = None,
         keep_alive: str = "5m",
-        ollama_config: Dict[str, Any] = None,
+        ollama_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Args:
@@ -140,18 +139,18 @@ class FastBIService:
             device_config=self._config.device_config,
         )
 
-        # Создаем новое DuckDB соединение (изолированное для каждого запроса)
-        self.con = duckdb.connect()
+        # Используем Polars DataFrame напрямую (без соединений)
+        self.df: Optional[pl.DataFrame] = None
         self.table_name: Optional[str] = None
         self.meta: Optional[Dict[str, Any]] = None
 
     def load_file(self, file_path: str, table_name: str = "t") -> Dict[str, Any]:
         """
-        Загружает файл в DuckDB.
+        Загружает файл напрямую в Polars DataFrame.
 
         Args:
             file_path: Путь к файлу (CSV, XLSX, XLS, BIN)
-            table_name: Имя таблицы в DuckDB
+            table_name: Имя таблицы (используется в SQL запросах)
 
         Returns:
             Метаданные о загруженном файле
@@ -170,35 +169,27 @@ class FastBIService:
                 # Читаем из бинарного файла через Polars IPC
                 columns, rows = read_from_binary(str(path), row_limit=None)
                 
-                # Конвертируем в pandas DataFrame для загрузки в DuckDB
                 if not rows:
                     raise ValueError("Бинарный файл не содержит данных")
                 
-                # Создаем DataFrame из списка строк
-                df = pd.DataFrame(rows, columns=columns)
-                
-                # Регистрируем DataFrame в DuckDB
-                self.con.register("tmp_df", df)
-                self.con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM tmp_df;")
-                self.con.unregister("tmp_df")
+                # Создаем Polars DataFrame напрямую из списка строк
+                self.df = pl.DataFrame(rows, schema=columns, orient="row")
                 
             elif path.suffix.lower() in [".csv", ".tsv"]:
-                self.con.execute(
-                    f"""
-                    CREATE OR REPLACE TABLE {table_name} AS
-                    SELECT * FROM read_csv_auto('{path.as_posix()}', IGNORE_ERRORS=true);
-                    """
-                )
+                # Читаем CSV напрямую в Polars
+                self.df = pl.read_csv(path, try_parse_dates=True)
+                
             elif path.suffix.lower() in [".xlsx", ".xls"]:
-                df = pd.read_excel(path)
-                self.con.register("tmp_df", df)
-                self.con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM tmp_df;")
-                self.con.unregister("tmp_df")
+                # Читаем Excel через pandas (Polars не поддерживает Excel напрямую)
+                # Затем конвертируем в Polars
+                pandas_df = pd.read_excel(path)
+                self.df = pl.from_pandas(pandas_df)
             else:
                 raise ValueError(f"Неподдерживаемый формат файла: {path.suffix}")
 
             self._prepare_metadata()
 
+            assert self.meta is not None, "Метаданные не подготовлены"
             return {
                 "success": True,
                 "table_name": self.table_name,
@@ -211,98 +202,232 @@ class FastBIService:
 
     def _prepare_metadata(self) -> None:
         """Подготавливает метаданные о загруженной таблице."""
+        assert self.df is not None, "DataFrame не загружен"
         assert self.table_name
 
-        schema_df = self.con.execute(f"PRAGMA table_info({self.table_name})").fetchdf()
+        # Получаем схему из Polars DataFrame
+        schema = self.df.schema
+        n_rows = len(self.df)
 
-        n_rows = self.con.execute(f"SELECT COUNT(*) AS n FROM {self.table_name}").fetchone()[0]
-
-        numeric_cols, categorical_cols = [], []
-        for _, row in schema_df.iterrows():
-            col = row["name"]
-            dtype = row["type"].lower()
-            if any(x in dtype for x in ["int", "decimal", "double", "float"]):
-                numeric_cols.append(col)
+        # Разделяем колонки на числовые и категориальные
+        numeric_cols = []
+        categorical_cols = []
+        schema_list = []
+        
+        for col_name, dtype in schema.items():
+            # Определяем тип для метаданных
+            if dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64):
+                type_str = "INTEGER"
+                numeric_cols.append(col_name)
+            elif dtype in (pl.Float32, pl.Float64):
+                type_str = "DOUBLE"
+                numeric_cols.append(col_name)
+            elif dtype == pl.Boolean:
+                type_str = "BOOLEAN"
+                categorical_cols.append(col_name)
+            elif dtype in (pl.Date, pl.Datetime, pl.Duration, pl.Time):
+                type_str = "DATE"
+                categorical_cols.append(col_name)
             else:
-                categorical_cols.append(col)
+                type_str = "VARCHAR"
+                categorical_cols.append(col_name)
+            
+            schema_list.append({"name": col_name, "type": type_str})
 
+        # Вычисляем статистику для числовых колонок (батчинг - все в одном запросе)
         num_summary: Dict[str, Dict[str, Any]] = {}
-        for column in numeric_cols:
-            try:
-                res = self.con.execute(
-                    f"SELECT MIN({column}) AS min, MAX({column}) AS max, AVG({column}) AS avg FROM {self.table_name}"
-                ).fetchone()
-                num_summary[column] = {"min": res[0], "max": res[1], "avg": res[2]}
-            except Exception:  # noqa: BLE001
-                num_summary[column] = {"min": None, "max": None, "avg": None}
+        if numeric_cols:
+            # Используем Polars для быстрого вычисления всех статистик сразу
+            stats = self.df.select([
+                pl.col(col).min().alias(f"{col}_min")
+                for col in numeric_cols
+            ] + [
+                pl.col(col).max().alias(f"{col}_max")
+                for col in numeric_cols
+            ] + [
+                pl.col(col).mean().alias(f"{col}_avg")
+                for col in numeric_cols
+            ])
+            
+            # Извлекаем значения
+            stats_dict = stats.to_dict(as_series=False)
+            for col in numeric_cols:
+                min_val = stats_dict.get(f"{col}_min", [None])[0]
+                max_val = stats_dict.get(f"{col}_max", [None])[0]
+                avg_val = stats_dict.get(f"{col}_avg", [None])[0]
+                num_summary[col] = {
+                    "min": float(min_val) if min_val is not None else None,
+                    "max": float(max_val) if max_val is not None else None,
+                    "avg": float(avg_val) if avg_val is not None else None,
+                }
 
+        # Вычисляем топ значения для категориальных колонок
         cat_summary: Dict[str, Any] = {}
         for column in categorical_cols:
             try:
-                res = self.con.execute(
-                    f"""
-                    SELECT {column} AS value, COUNT(*) AS cnt
-                    FROM {self.table_name}
-                    GROUP BY 1
-                    ORDER BY cnt DESC
-                    LIMIT {STATS_TOP_K}
-                    """
-                ).fetchdf()
-                for col in res.columns:
-                    if pd.api.types.is_datetime64_any_dtype(res[col]):
-                        res[col] = res[col].astype(str)
-                cat_summary[column] = res.to_dict(orient="records")
+                # Используем Polars для быстрого подсчета
+                top_values = (
+                    self.df.group_by(column)
+                    .agg(pl.count().alias("cnt"))
+                    .sort("cnt", descending=True)
+                    .head(STATS_TOP_K)
+                )
+                
+                # Конвертируем в список словарей
+                result_list = []
+                for row in top_values.iter_rows(named=True):
+                    # Конвертируем значения в Python типы
+                    value = row[column]
+                    if isinstance(value, (pl.Date, pl.Datetime)):
+                        value = str(value)
+                    result_list.append({
+                        "value": value,
+                        "cnt": row["cnt"]
+                    })
+                
+                cat_summary[column] = result_list
             except Exception:  # noqa: BLE001
                 cat_summary[column] = []
 
         self.meta = {
             "table": self.table_name,
             "rows": int(n_rows),
-            "schema": schema_df.to_dict(orient="records"),
+            "schema": schema_list,
             "numeric_summary": num_summary,
             "categorical_top": cat_summary,
         }
 
+    def _should_use_sql(self, question: str) -> bool:
+        """Определяет, нужен ли SQL запрос для ответа на вопрос."""
+        question_lower = question.lower().strip()
+        
+        # Вопросы, которые НЕ требуют SQL (можно ответить напрямую)
+        no_sql_patterns = [
+            "что в этом файле",
+            "что содержит",
+            "описание файла",
+            "расскажи о файле",
+            "что за файл",
+            "какие данные",
+            "какая информация",
+            "опиши файл",
+            "что это за данные",
+        ]
+        
+        # Если вопрос слишком общий или про описание - не нужен SQL
+        for pattern in no_sql_patterns:
+            if pattern in question_lower:
+                return False
+        
+        # Если вопрос содержит SQL-подобные слова - нужен SQL
+        sql_keywords = [
+            "покажи", "выведи", "найди", "посчитай", "среднее", "максимум", "минимум",
+            "сумма", "количество", "сколько", "где", "фильтр", "отсортируй", "группируй",
+            "топ", "первые", "последние", "выбери", "отбери"
+        ]
+        
+        for keyword in sql_keywords:
+            if keyword in question_lower:
+                return True
+        
+        # По умолчанию - используем SQL для конкретных вопросов
+        return len(question.split()) > 2  # Если вопрос достаточно конкретный
+    
+    def _build_direct_answer_prompt(self, question: str) -> str:
+        """Строит промпт для прямого ответа без SQL."""
+        assert self.meta is not None, "Метаданные не подготовлены"
+        assert self.df is not None, "DataFrame не загружен"
+        
+        columns_info = [
+            {"name": column["name"], "type": column["type"]}
+            for column in self.meta["schema"][:30]
+        ]
+        
+        # Добавляем примеры данных, чтобы LLM не выдумывал контекст
+        sample_rows = self.df.head(3)
+        sample_data = []
+        for row in sample_rows.iter_rows(named=True):
+            row_dict = {}
+            for key, value in row.items():
+                if value is None:
+                    row_dict[key] = None
+                elif isinstance(value, (pl.Date, pl.Datetime)):
+                    row_dict[key] = str(value)
+                else:
+                    row_dict[key] = value
+            sample_data.append(row_dict)
+        sample_json = json.dumps(sample_data, ensure_ascii=False, default=str, separators=(',', ':'))
+        
+        prompt = (
+            f"Ты аналитик данных. Ответь на вопрос о файле с табличными данными.\n\n"
+            f"ВАЖНО: Используй ТОЛЬКО информацию из данных ниже. НЕ выдумывай и НЕ предполагай информацию, которой нет в данных!\n\n"
+            f"Информация о файле:\n"
+            f"- Количество строк: {self.meta['rows']}\n"
+            f"- Количество колонок: {len(self.meta['schema'])}\n"
+            f"- Колонки: {', '.join([col['name'] for col in columns_info[:20]])}\n\n"
+            f"Примеры данных (первые 3 строки):\n{sample_json}\n\n"
+            f"Вопрос: {question}\n\n"
+            f"Ответь кратко и по делу на русском языке. Опиши ТОЛЬКО то, что видишь в данных. Не выдумывай названия организаций или другую информацию!"
+        )
+        return prompt
+    
     def _build_sql_prompt(self, question: str) -> str:
-        """Строит промпт для генерации SQL."""
-        meta_min = {
-            "table": self.meta["table"],
-            "rows": self.meta["rows"],
-            "columns": [
-                {"name": column["name"], "type": column["type"]}
-                for column in self.meta["schema"]
-            ],
-            "numeric_cols": list(self.meta["numeric_summary"].keys()),
-            "categorical_cols": list(self.meta["categorical_top"].keys()),
-        }
+        """Строит оптимизированный промпт для генерации SQL."""
+        assert self.meta is not None, "Метаданные не подготовлены"
+        assert self.df is not None, "DataFrame не загружен"
+        
+        # Используем все колонки (не ограничиваем)
+        columns_info = [
+            {"name": column["name"], "type": column["type"]}
+            for column in self.meta["schema"]
+        ]
+        
+        # Ограничиваем только списки числовых/категориальных колонок для краткости
+        numeric_cols = list(self.meta["numeric_summary"].keys())[:20]
+        categorical_cols = list(self.meta["categorical_top"].keys())[:20]
 
-        df_schema = self.con.execute(f"SELECT * FROM {self.table_name} LIMIT 0").fetchdf()
-        schema = ", ".join([f"{col}:{dtype}" for col, dtype in zip(df_schema.columns, df_schema.dtypes)])
-        extra = f"-- schema: {schema}\n-- table: {self.table_name}\n"
+        # Компактная схема (только имена и типы, все колонки)
+        schema_compact = ", ".join([f"{col['name']}:{col['type']}" for col in columns_info])
 
-        prompt = extra + (
-            f"Ты data-engineer. Напиши ОДИН ПРОСТОЙ DuckDB SQL-запрос (только SELECT) по таблице '{self.table_name}'. "
-            "Учитывай типы столбцов. НЕЛЬЗЯ делать DDL/DML. НЕЛЬЗЯ читать внешние файлы. "
-            "\n"
-            "ВАЖНЫЕ ПРАВИЛА ДЛЯ SQL:\n"
-            "1. НЕ используй оконные функции (RANK, DENSE_RANK, ROW_NUMBER, PERCENTILE_CONT, etc.)\n"
-            "2. НЕ используй FILTER в COUNT или других агрегатных функциях\n"
-            "3. НЕ используй агрегатные функции в GROUP BY\n"
-            "4. НЕ используй сложные подзапросы с агрегациями\n"
-            "5. Используй только базовые агрегатные функции: AVG(), MIN(), MAX(), COUNT(), SUM()\n"
-            "6. Если нужна статистика — сделай простой SELECT с агрегациями БЕЗ GROUP BY или с GROUP BY по одной колонке\n"
-            "7. Для просмотра данных используй SELECT * или перечисление колонок\n"
-            "8. Сложный вопрос? Сделай SELECT всех данных, анализ будет в комментарии\n"
-            "9. НЕ добавляй LIMIT если в вопросе не просят ограничить количество строк\n"
-            "10. Если просят показать ВСЕ данные — не используй LIMIT\n"
-            "11. ВАЖНО: Для идентификаторов (имен колонок и таблиц) используй ДВОЙНЫЕ КАВЫЧКИ (\"), а НЕ обратные кавычки (`)\n"
-            "12. Если имя колонки содержит пробелы или специальные символы, обязательно используй двойные кавычки: \"Имя Колонки\"\n"
-            "\n"
-            f"СХЕМА И СВОДКИ (JSON):\n{json.dumps(meta_min, ensure_ascii=False)}\n\n"
-            f"ВОПРОС ПОЛЬЗОВАТЕЛЯ:\n{question}\n\n"
-            f"Верни ТОЛЬКО SQL, без пояснений. Используй только таблицу {self.table_name}. "
-            "Помни: ПРОСТОЙ SQL запрос, без сложных конструкций! "
-            "Если нужно показать все данные — НЕ используй LIMIT!"
+        # Оптимизация: показываем ВСЕ колонки, но только 3 строки и в компактном JSON формате
+        # Это дает полный контекст, но уменьшает размер промпта в 3 раза
+        max_sample_rows = 3  # Уменьшено с 10 до 3, но показываем ВСЕ колонки
+        
+        # Получаем примеры данных (ВСЕ колонки, но только 3 строки)
+        sample_rows = self.df.head(max_sample_rows)
+        # Конвертируем в список словарей для JSON-сериализации
+        sample_data = []
+        for row in sample_rows.iter_rows(named=True):
+            # Конвертируем значения в строки для безопасной сериализации
+            row_dict = {}
+            for key, value in row.items():
+                if value is None:
+                    row_dict[key] = None
+                elif isinstance(value, (pl.Date, pl.Datetime)):
+                    row_dict[key] = str(value)
+                else:
+                    row_dict[key] = value
+            sample_data.append(row_dict)
+        
+        # Используем компактный JSON (без пробелов и переносов строк) для экономии места
+        sample_json = json.dumps(sample_data, ensure_ascii=False, default=str, separators=(',', ':'))
+        
+        # Оптимизированный промпт с примерами данных (все колонки, но только 3 строки)
+        # Убрана избыточная информация про числовые/категориальные колонки - типы уже указаны в схеме
+        prompt = (
+            f"Напиши простой Polars SQL SELECT запрос для таблицы 'df'.\n\n"
+            f"Схема ({len(columns_info)} колонок): {schema_compact}\n"
+            f"Всего строк: {self.meta['rows']}\n\n"
+            f"Примеры данных (первые {len(sample_data)} строк из {self.meta['rows']}, показаны ВСЕ {len(columns_info)} колонок):\n"
+            f"{sample_json}\n\n"
+            f"Правила:\n"
+            f"- Только SELECT, без DDL/DML\n"
+            f"- Базовые функции: AVG, MIN, MAX, COUNT, SUM\n"
+            f"- Без оконных функций и сложных подзапросов\n"
+            f"- Используй двойные кавычки для идентификаторов: \"Имя Колонки\"\n"
+            f"- Таблица называется 'df'\n\n"
+            f"Вопрос: {question}\n\n"
+            f"SQL:"
         )
         return prompt
 
@@ -310,6 +435,20 @@ class FastBIService:
         """Генерирует SQL через LLM с поддержкой streaming."""
         prompt = self._build_sql_prompt(question)
         stream = bool(stream_callback)
+
+        # Логируем промпт перед отправкой в LLM
+        logger.info("=== ПРОМПТ ДЛЯ ГЕНЕРАЦИИ SQL ===")
+        logger.info(f"Длина промпта: {len(prompt)} символов ({len(prompt.split())} слов)")
+        logger.info(f"Вопрос: {question}")
+        logger.info(f"Параметры запроса:")
+        logger.info(f"  - num_predict: {self.sql_generation_tokens}")
+        logger.info(f"  - temperature: {self.temperature_sql}")
+        logger.info(f"  - stream: {stream}")
+        logger.info(f"  - request_timeout: {self._config.request_timeout}s")
+        logger.info(f"  - stream_timeout: {self._config.stream_timeout}s")
+        logger.info(f"  - model: {self.model}")
+        logger.info(f"Промпт:\n{prompt}")
+        logger.info("=" * 50)
 
         def on_chunk(text: str) -> None:
             if stream_callback:
@@ -324,25 +463,53 @@ class FastBIService:
                 stream_callback=on_chunk if stream else None,
             )
         except LLMClientError as exc:
+            logger.error(f"Ошибка генерации SQL: {exc}")
+            logger.error(f"Промпт был длиной {len(prompt)} символов")
             raise RuntimeError(f"Ошибка генерации SQL: {exc}") from exc
 
         sql_raw = _extract_sql_from_text(resp_text)
         sql = _only_select(sql_raw)
+        
+        # Заменяем имя таблицы на 'df' для Polars SQL
+        # Заменяем как с кавычками, так и без
+        if self.table_name:
+            sql = sql.replace(f'"{self.table_name}"', 'df').replace(f"'{self.table_name}'", 'df')
+            sql = re.sub(rf'\b{re.escape(self.table_name)}\b', 'df', sql)
+        
         return sql
 
     def _run_sql(self, sql: str) -> pd.DataFrame:
-        """Выполняет SQL запрос."""
+        """Выполняет SQL запрос через Polars SQL."""
+        assert self.df is not None, "DataFrame не загружен"
+        
         t0 = time.time()
         try:
-            df = self.con.execute(sql).fetchdf()
+            # Используем правильный синтаксис Polars SQL
+            # В Polars 1.34+ используется SQLContext с регистрацией через register или напрямую
+            ctx = pl.SQLContext()
+            ctx.register("df", self.df)
+            result = ctx.execute(sql, eager=True)
+            # Конвертируем результат в pandas для совместимости
+            # Используем fallback без pyarrow, если библиотека недоступна
+            try:
+                # Пробуем конвертировать с отключением pyarrow extension arrays
+                pandas_result = result.to_pandas(use_pyarrow_extension_array=False)
+            except (ImportError, ModuleNotFoundError, AttributeError) as e:
+                # Если pyarrow недоступен или метод не поддерживает параметр,
+                # конвертируем через словари (iter_rows с named=True)
+                logger.warning(f"PyArrow недоступен, используем альтернативную конвертацию: {e}")
+                rows = []
+                for row in result.iter_rows(named=True):
+                    rows.append(row)
+                pandas_result = pd.DataFrame(rows)
+            
+            elapsed = time.time() - t0
+            if elapsed > SQL_TIMEOUT_SEC:
+                raise TimeoutError(f"SQL выполнялся слишком долго: {elapsed:.1f}s")
+            
+            return pandas_result
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"Ошибка выполнения SQL: {exc}\nSQL:\n{sql}") from exc
-
-        elapsed = time.time() - t0
-        if elapsed > SQL_TIMEOUT_SEC:
-            raise TimeoutError(f"SQL выполнялся слишком долго: {elapsed:.1f}s")
-
-        return df
 
     def _commentary(self, question: str, df: pd.DataFrame, stream_callback=None) -> str:
         """Генерирует короткий комментарий по результатам с поддержкой streaming."""
@@ -361,6 +528,7 @@ class FastBIService:
 
         prompt = (
             "Дай КРАТКИЙ вывод (максимум 2-3 предложения) по данным. Только ключевые находки.\n"
+            "ВАЖНО: Описывай ТОЛЬКО то, что видишь в данных. НЕ выдумывай информацию, названия организаций или контекст!\n"
             f"Данные:\n{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
 
@@ -386,18 +554,70 @@ class FastBIService:
     def ask(self, question: str, want_commentary: bool = True, stream_callback=None) -> Dict[str, Any]:
         """
         Основной метод: задать вопрос к данным.
+        Автоматически определяет, нужен ли SQL или можно ответить напрямую.
 
         Args:
             question: Вопрос на естественном языке
             want_commentary: Нужен ли комментарий от LLM
             stream_callback: Функция обработки streaming-данных
         """
-        if not self.table_name or not self.meta:
+        if self.df is None or not self.meta:
             raise RuntimeError("Сначала загрузите файл через load_file()")
 
         total_start = time.time()
 
         try:
+            # Определяем, нужен ли SQL запрос
+            use_sql = self._should_use_sql(question)
+            
+            if not use_sql:
+                # Прямой ответ без SQL
+                if stream_callback:
+                    stream_callback({"type": "stage", "text": "💭 Анализирую файл..."})
+                
+                prompt = self._build_direct_answer_prompt(question)
+                stream = bool(stream_callback)
+                
+                # Логируем промпт перед отправкой в LLM
+                logger.info("=== ПРОМПТ ДЛЯ ПРЯМОГО ОТВЕТА (БЕЗ SQL) ===")
+                logger.info(f"Длина промпта: {len(prompt)} символов ({len(prompt.split())} слов)")
+                logger.info(f"Вопрос: {question}")
+                logger.info(f"Параметры запроса:")
+                logger.info(f"  - num_predict: {self.commentary_tokens * 2}")
+                logger.info(f"  - temperature: {self.temperature_commentary}")
+                logger.info(f"  - stream: {stream}")
+                logger.info(f"  - request_timeout: {self._config.request_timeout}s")
+                logger.info(f"  - stream_timeout: {self._config.stream_timeout}s")
+                logger.info(f"  - model: {self.model}")
+                logger.info(f"Промпт:\n{prompt}")
+                logger.info("=" * 50)
+                
+                def on_chunk(text: str) -> None:
+                    if stream_callback:
+                        stream_callback({"type": "commentary", "text": text})
+                
+                answer = self.llm_client.complete(
+                    prompt,
+                    num_predict=self.commentary_tokens * 2,  # Больше токенов для описания
+                    temperature=self.temperature_commentary,
+                    stream=stream,
+                    stream_callback=on_chunk if stream else None,
+                ).strip()
+                
+                if stream_callback:
+                    stream_callback({"type": "stage", "text": "✅ Анализ завершен"})
+                
+                return {
+                    "success": True,
+                    "sql": None,
+                    "data": [],
+                    "comment": answer,
+                    "rows": self.meta["rows"],
+                    "columns": [col["name"] for col in self.meta["schema"]],
+                    "duration": round(time.time() - total_start, 3),
+                }
+            
+            # Используем SQL для конкретных запросов
             if stream_callback:
                 stream_callback({"type": "stage", "text": "🔄 Генерирую SQL запрос..."})
 
@@ -448,10 +668,10 @@ class FastBIService:
             }
 
     def close(self) -> None:
-        """Закрывает соединение с DuckDB."""
-        if self.con:
-            self.con.close()
-            self.con = None
+        """Очищает DataFrame из памяти."""
+        self.df = None
+        self.table_name = None
+        self.meta = None
 
 
 # -----------------------------
@@ -485,5 +705,4 @@ def preload_ollama_model(model: str = DEFAULT_MODEL, keep_alive: str = "5m"):
         return True
     except Exception:  # noqa: BLE001
         return False
-
 

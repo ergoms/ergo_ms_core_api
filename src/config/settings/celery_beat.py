@@ -16,25 +16,46 @@ logger = logging.getLogger('config.celery_beat')
 
 # ==================== Конфигурация БД для Celery Beat ====================
 
-# Создаем загрузчик для Celery Beat (приоритет: celery_beat -> celery -> локальный)
-beat_db_loader = CeleryDatabaseConfigLoader(
+# ЛОГИКА ВЫБОРА БРОКЕРА ДЛЯ BEAT:
+# 1. Сначала пытаемся использовать общую секцию 'celery' (если есть)
+# 2. Если нет общей, используем 'celery_worker' (чтобы совпадало с Worker)
+# 3. Если нет 'celery_worker', используем 'celery_beat'
+# 4. Если ничего нет - локальный SQLite
+# Это обеспечивает, что Beat и Worker используют один брокер для обмена задачами
+
+# Загрузчик для брокера Beat (приоритет: celery -> celery_worker -> celery_beat -> локальный)
+beat_broker_loader = CeleryDatabaseConfigLoader(
     system_dir=SYSTEM_DIR,
     virtual_env_dir=VIRTUAL_ENV_DIR,
-    section_priorities=['celery_beat', 'celery'],
-    component_name="Celery Beat"
+    section_priorities=['celery', 'celery_worker', 'celery_beat'],
+    component_name="Celery Beat Broker"
 )
 
-# Загружаем конфигурацию
-beat_db_config = beat_db_loader.load_config()
+# Загружаем конфигурацию брокера
+beat_broker_config = beat_broker_loader.load_config()
 
 # Настройки брокера и backend для Beat
-CELERY_BEAT_BROKER_URL = beat_db_config['broker_url']
-CELERY_BEAT_RESULT_BACKEND = beat_db_config['result_backend']
+CELERY_BEAT_BROKER_URL = beat_broker_config['broker_url']
+CELERY_BEAT_RESULT_BACKEND = beat_broker_config['result_backend']
 
 # ==================== Конфигурация scheduler для Beat ====================
 
+# ЛОГИКА ВЫБОРА БД ДЛЯ РАСПИСАНИЯ:
+# 1. Сначала пытаемся использовать 'celery_beat' (отдельная БД для расписания)
+# 2. Если нет, используем общую 'celery'
+# 3. Если ничего нет - локальный SQLite
+# Расписание может храниться в отдельной БД, даже если брокер общий
+
+# Загрузчик для расписания Beat (приоритет: celery_beat -> celery -> локальный)
+beat_scheduler_loader = CeleryDatabaseConfigLoader(
+    system_dir=SYSTEM_DIR,
+    virtual_env_dir=VIRTUAL_ENV_DIR,
+    section_priorities=['celery_beat', 'celery'],
+    component_name="Celery Beat Scheduler"
+)
+
 # Определяем, где хранить расписание
-db_alias = beat_db_loader.get_django_db_alias()
+db_alias = beat_scheduler_loader.get_django_db_alias()
 
 if db_alias is not None:
     # Используем django-celery-beat для хранения расписания в БД
@@ -47,10 +68,17 @@ else:
     logger.info(f"Celery Beat: Расписание хранится в файле {CELERY_BEAT_SCHEDULE_FILENAME}")
 
 # Логируем активную конфигурацию
-if beat_db_config['mode'] == 'database':
-    logger.info(f"Celery Beat: Используется БД '{beat_db_config['section']}' ({beat_db_config['engine']})")
+if beat_broker_config['mode'] == 'database':
+    logger.info(f"Celery Beat: Брокер использует БД '{beat_broker_config['section']}' ({beat_broker_config['engine']})")
 else:
-    logger.info("Celery Beat: Используется локальный SQLite режим")
+    logger.info("Celery Beat: Брокер использует локальный SQLite режим")
+
+# Загружаем конфигурацию расписания, чтобы определить активную секцию
+scheduler_config = beat_scheduler_loader.load_config()
+if scheduler_config['mode'] == 'database' and scheduler_config.get('section'):
+    logger.info(f"Celery Beat: Расписание хранится в БД '{scheduler_config['section']}'")
+else:
+    logger.info("Celery Beat: Расписание хранится в локальном файле")
 
 # ==================== Расписание задач из модулей ====================
 
@@ -67,4 +95,7 @@ CELERY_BEAT_ADDITIONAL_CONFIG = beat_module_manager.get_additional_beat_configs(
 CELERY_BEAT_MODULE_LOGGERS = beat_module_manager.get_module_loggers()
 
 # Список загруженных модулей Beat
-CELERY_BEAT_MODULES = beat_module_manager.get_modules_list() 
+CELERY_BEAT_MODULES = beat_module_manager.get_modules_list()
+
+# ==================== Синхронизация задач с БД ====================
+# Синхронизация будет выполнена в celery.py после полной инициализации Django 
