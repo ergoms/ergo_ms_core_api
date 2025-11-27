@@ -31,8 +31,8 @@ from .llm_clients import LLMClientError, build_llm_client
 # -----------------------------
 # Константы (из настроек Django)
 # -----------------------------
-DEFAULT_MODEL = getattr(settings, "OLLAMA_DEFAULT_MODEL", "mistral:7b")
-OLLAMA_BASE_URL = getattr(settings, "OLLAMA_BASE_URL", "http://localhost:11434")
+DEFAULT_MODEL = getattr(settings, "OLLAMA_DEFAULT_MODEL", None)
+OLLAMA_BASE_URL = getattr(settings, "OLLAMA_BASE_URL", None)
 STATS_TOP_K = 10
 SQL_TIMEOUT_SEC = 30
 
