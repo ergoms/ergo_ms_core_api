@@ -30,6 +30,10 @@ class BaseLLMClient:
     ) -> str:
         raise NotImplementedError
 
+    def check_health(self) -> Dict[str, Any]:
+        """Проверка доступности сервиса. Переопределяется в наследниках."""
+        return {"available": False, "error": "Метод не реализован"}
+
 
 class CompositeLLMClient(BaseLLMClient):
     """Клиент-обёртка, позволяющий использовать единый интерфейс LLM."""
@@ -57,6 +61,12 @@ class CompositeLLMClient(BaseLLMClient):
             stream=stream,
             stream_callback=stream_callback,
         )
+
+    def check_health(self) -> Dict[str, Any]:
+        """Делегирует проверку первому клиенту."""
+        if self._clients:
+            return self._clients[0].check_health()
+        return {"available": False, "error": "Нет клиентов"}
 
 
 class HttpxOllamaClient(BaseLLMClient):
