@@ -340,6 +340,37 @@ class FastBIService:
             "categorical_top": cat_summary,
         }
 
+    def _is_simple_data_request(self, question: str) -> bool:
+        """
+        Определяет, является ли запрос простым выводом данных без анализа.
+        Для таких запросов не нужен комментарий от LLM.
+        """
+        question_lower = question.lower().strip()
+        
+        # Паттерны простого вывода данных (без анализа)
+        simple_patterns = [
+            "покажи данные",
+            "покажи таблицу",
+            "выведи данные",
+            "выведи таблицу",
+            "покажи все",
+            "выведи все",
+            "покажи всё",
+            "выведи всё",
+            "покажи первые",
+            "выведи первые",
+            "покажи последние",
+            "выведи последние",
+            "select *",
+            "select all",
+        ]
+        
+        for pattern in simple_patterns:
+            if pattern in question_lower:
+                return True
+        
+        return False
+    
     def _should_use_sql(self, question: str) -> bool:
         """Определяет, нужен ли SQL запрос для ответа на вопрос."""
         question_lower = question.lower().strip()
@@ -429,33 +460,49 @@ class FastBIService:
         max_sample_rows = 1 if num_cols > 30 else 2  # Меньше строк для больших таблиц
         max_value_length = 50  # Обрезаем длинные строки
         
-        # Получаем примеры данных в формате массива массивов
+        # Получаем примеры данных в TOON-подобном табличном формате
+        # (экономия токенов 30-60% по сравнению с JSON, лучшее понимание LLM)
         sample_rows = self.df.head(max_sample_rows)
-        sample_data = []
+        
+        # Заголовок: имена колонок через |
+        col_names = [col["name"] for col in schema_cols]
+        header = "|".join(col_names)
+        
+        # Строки данных
+        data_lines = []
         for row in sample_rows.iter_rows():
             row_values = []
             for value in row:
                 if value is None:
-                    row_values.append(None)
+                    row_values.append("")
                 elif isinstance(value, (pl.Date, pl.Datetime)):
                     row_values.append(str(value))
-                elif isinstance(value, str) and len(value) > max_value_length:
-                    # Обрезаем длинные строки
-                    row_values.append(value[:max_value_length] + "...")
+                elif isinstance(value, str):
+                    # Обрезаем длинные строки и экранируем | 
+                    clean_val = value[:max_value_length].replace("|", "\\|")
+                    if len(value) > max_value_length:
+                        clean_val += "..."
+                    row_values.append(clean_val)
                 else:
-                    row_values.append(value)
-            sample_data.append(row_values)
+                    row_values.append(str(value))
+            data_lines.append("|".join(row_values))
         
-        # Компактный формат: массив массивов
-        sample_json = json.dumps(sample_data, ensure_ascii=False, default=str, separators=(',', ':'))
+        # Табличный формат: заголовок + строки
+        sample_table = header + "\n" + "\n".join(data_lines)
         
         # Компактный промпт для уменьшения размера
         prompt = (
             f"SQL для таблицы 'df':\n"
             f"Схема: {schema_compact}\n"
             f"Строк: {self.meta['rows']}\n"
-            f"Пример: {sample_json}\n"
-            f"Правила: SELECT только, \"колонки с пробелами\", таблица df\n"
+            f"Пример:\n{sample_table}\n"
+            f"Правила:\n"
+            f"- SELECT только, таблица df\n"
+            f"- Для вывода всех данных используй SELECT * (НЕ перечисляй колонки!)\n"
+            f"- Колонки с пробелами в двойных кавычках: \"Имя колонки\"\n"
+            f"- НЕ используй placeholder'ы (column_name, table_name и т.п.)\n"
+            f"- Используй ТОЛЬКО колонки из схемы выше\n"
+            f"- Если вопрос неясен - верни SELECT * FROM df LIMIT 10\n"
             f"Вопрос: {question}\nSQL:"
         )
         return prompt
@@ -507,9 +554,61 @@ class FastBIService:
         
         return sql
 
+    def _validate_sql_columns(self, sql: str) -> str:
+        """
+        Проверяет SQL на наличие несуществующих колонок и placeholder'ов.
+        Возвращает исправленный SQL или безопасный fallback.
+        """
+        assert self.meta is not None, "Метаданные не подготовлены"
+        
+        # Получаем список допустимых колонок
+        valid_columns = {col["name"].lower() for col in self.meta["schema"]}
+        
+        # Паттерны placeholder'ов которые LLM может генерировать
+        placeholders = [
+            "column_name", "col_name", "column", "field_name", "field",
+            "table_name", "tbl_name", "table", "value", "some_column",
+            "your_column", "any_column", "<column>", "[column]",
+        ]
+        
+        sql_lower = sql.lower()
+        
+        # Проверяем на placeholder'ы
+        for placeholder in placeholders:
+            if placeholder in sql_lower:
+                logger.warning(f"SQL содержит placeholder '{placeholder}', заменяем на безопасный запрос")
+                return "SELECT * FROM df LIMIT 10"
+        
+        # Извлекаем идентификаторы из SQL (в двойных кавычках или без)
+        # Паттерн для идентификаторов в кавычках: "column name"
+        quoted_pattern = re.compile(r'"([^"]+)"')
+        # Паттерн для обычных идентификаторов после WHERE, SELECT, и т.д.
+        unquoted_pattern = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b')
+        
+        # SQL ключевые слова которые нужно игнорировать
+        sql_keywords = {
+            "select", "from", "where", "and", "or", "not", "in", "like", "between",
+            "is", "null", "order", "by", "asc", "desc", "limit", "offset", "group",
+            "having", "join", "left", "right", "inner", "outer", "on", "as", "distinct",
+            "count", "sum", "avg", "min", "max", "case", "when", "then", "else", "end",
+            "df", "true", "false", "cast", "coalesce", "nullif", "union", "all",
+        }
+        
+        # Проверяем колонки в кавычках
+        for match in quoted_pattern.finditer(sql):
+            col_name = match.group(1)
+            if col_name.lower() not in valid_columns:
+                logger.warning(f"SQL содержит несуществующую колонку '{col_name}', заменяем на безопасный запрос")
+                return "SELECT * FROM df LIMIT 10"
+        
+        return sql
+
     def _run_sql(self, sql: str) -> pd.DataFrame:
         """Выполняет SQL запрос через Polars SQL."""
         assert self.df is not None, "DataFrame не загружен"
+        
+        # Валидируем SQL перед выполнением
+        sql = self._validate_sql_columns(sql)
         
         t0 = time.time()
         try:
@@ -549,15 +648,27 @@ class FastBIService:
             if pd.api.types.is_datetime64_any_dtype(sample_copy[col]):
                 sample_copy[col] = sample_copy[col].astype(str)
 
+        # Очистка от NaN для JSON сериализации
+        records = sample_copy.to_dict(orient="records")
+        for record in records:
+            for key, value in list(record.items()):
+                if pd.isna(value):
+                    record[key] = None
+
         payload = {
             "question": question,
-            "result_preview": sample_copy.to_dict(orient="records"),
+            "result_preview": records,
             "rows_returned": len(df),
         }
 
         prompt = (
             "Дай КРАТКИЙ вывод (максимум 2-3 предложения) по данным. Только ключевые находки.\n"
-            "ВАЖНО: Описывай ТОЛЬКО то, что видишь в данных. НЕ выдумывай информацию, названия организаций или контекст!\n"
+            "СТРОГИЕ ПРАВИЛА:\n"
+            "- Описывай ТОЛЬКО то, что БУКВАЛЬНО видишь в данных\n"
+            "- НЕ выдумывай названия организаций, университетов, компаний\n"
+            "- НЕ додумывай контекст (откуда данные, для чего они)\n"
+            "- Если в данных нет названия организации - НЕ называй её\n"
+            "- Используй только имена колонок и значения из данных\n"
             f"Данные:\n{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
 
@@ -662,7 +773,9 @@ class FastBIService:
                 stream_callback({"type": "stage", "text": f"✅ Найдено строк: {len(df)}"})
 
             comment = ""
-            if want_commentary and len(df) > 0:
+            # Не генерируем комментарий для простых запросов на вывод данных
+            is_simple = self._is_simple_data_request(question)
+            if want_commentary and len(df) > 0 and not is_simple:
                 if stream_callback:
                     stream_callback({"type": "stage", "text": "💭 Анализирую результаты..."})
                 comment = self._commentary(question, df, stream_callback)
