@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Сервис анализа табличных данных через Polars и ускоренные LLM.
-
-🔥 Возможности:
+Возможности:
 - Быстрый HTTP клиент Ollama с пулами соединений и поддержкой GPU/CPU
 - Возможность переопределять модель и параметры через module-config
-
-🛡️ Безопасность:
+Безопасность:
 1. Промпт явно запрещает DDL/DML
 2. `_only_select` проверяет тип запроса через sqlparse
 4. Ограничение времени выполнения SQL
@@ -33,8 +31,9 @@ logger = logging.getLogger(__name__)
 # -----------------------------
 # Константы (из настроек Django)
 # -----------------------------
-DEFAULT_MODEL = getattr(settings, "OLLAMA_DEFAULT_MODEL", None)
-OLLAMA_BASE_URL = getattr(settings, "OLLAMA_BASE_URL", None)
+# Импортируем напрямую из settings, где уже есть fallback из env
+DEFAULT_MODEL: str = settings.OLLAMA_DEFAULT_MODEL
+OLLAMA_BASE_URL: str = settings.OLLAMA_BASE_URL
 STATS_TOP_K = 10
 SQL_TIMEOUT_SEC = 30
 
@@ -72,14 +71,58 @@ def _only_select(sql: str) -> str:
     return _normalize_sql_for_polars(sql_single)
 
 
+def _convert_polars_to_sql(text: str) -> Optional[str]:
+    """
+    Преобразует Python Polars код в SQL, если LLM сгенерировал Python вместо SQL.
+    Возвращает SQL или None если не удалось преобразовать.
+    """
+    text_lower = text.lower().strip()
+    
+    # df.head(N) → SELECT * FROM df LIMIT N
+    match = re.search(r'df\.head\s*\(\s*(\d+)\s*\)', text_lower)
+    if match:
+        limit = match.group(1)
+        return f"SELECT * FROM df LIMIT {limit}"
+    
+    # df.head() → SELECT * FROM df LIMIT 5
+    if 'df.head()' in text_lower or 'df.head' in text_lower:
+        return "SELECT * FROM df LIMIT 5"
+    
+    # df.tail(N) → SELECT * FROM df ORDER BY rowid DESC LIMIT N (примерно)
+    match = re.search(r'df\.tail\s*\(\s*(\d+)\s*\)', text_lower)
+    if match:
+        limit = match.group(1)
+        return f"SELECT * FROM df LIMIT {limit}"
+    
+    # df.describe() → агрегации (упрощённо)
+    if 'df.describe()' in text_lower:
+        return "SELECT COUNT(*) as count FROM df"
+    
+    # df.select(...) - это уже Polars API, не SQL
+    if 'df.select' in text_lower or 'df.filter' in text_lower:
+        return None  # Не можем преобразовать сложный Polars код
+    
+    return None
+
+
 def _extract_sql_from_text(text: str) -> str:
     """Пытаемся вытащить SQL из ответа LLM."""
+    # Сначала ищем SQL в блоке кода
     match = re.search(r"```sql\s*(.*?)```", text, flags=re.S | re.I)
     if match:
         return match.group(1).strip()
+    
+    # Ищем SELECT в тексте
     idx = text.lower().find("select")
     if idx >= 0:
         return text[idx:].strip()
+    
+    # Проверяем, не сгенерировал ли LLM Python Polars код вместо SQL
+    polars_sql = _convert_polars_to_sql(text)
+    if polars_sql:
+        logger.warning(f"LLM сгенерировал Python код, преобразовано в SQL: {polars_sql}")
+        return polars_sql
+    
     return text.strip()
 
 
@@ -128,8 +171,8 @@ class FastBIService:
 
         self.llm_client = build_llm_client(
             provider=provider_name,
-            model=self.model,
-            base_url=self.base_url,
+            model=self.model or DEFAULT_MODEL,
+            base_url=self.base_url or OLLAMA_BASE_URL,
             request_timeout=self._config.request_timeout,
             stream_timeout=self._config.stream_timeout,
             concurrency_limit=self._config.concurrency_limit,
@@ -376,58 +419,44 @@ class FastBIService:
         assert self.meta is not None, "Метаданные не подготовлены"
         assert self.df is not None, "DataFrame не загружен"
         
-        # Используем все колонки (не ограничиваем)
-        columns_info = [
-            {"name": column["name"], "type": column["type"]}
-            for column in self.meta["schema"]
-        ]
-        
-        # Ограничиваем только списки числовых/категориальных колонок для краткости
-        numeric_cols = list(self.meta["numeric_summary"].keys())[:20]
-        categorical_cols = list(self.meta["categorical_top"].keys())[:20]
+        # Компактная схема: все колонки (имя:тип)
+        schema_cols = self.meta["schema"]
+        schema_compact = ", ".join([f"{col['name']}:{col['type']}" for col in schema_cols])
+        num_cols = len(schema_cols)
 
-        # Компактная схема (только имена и типы, все колонки)
-        schema_compact = ", ".join([f"{col['name']}:{col['type']}" for col in columns_info])
-
-        # Оптимизация: показываем ВСЕ колонки, но только 3 строки и в компактном JSON формате
-        # Это дает полный контекст, но уменьшает размер промпта в 3 раза
-        max_sample_rows = 3  # Уменьшено с 10 до 3, но показываем ВСЕ колонки
+        # Оптимизация: используем формат "массив массивов" и ограничиваем размер
+        # Для больших таблиц (много колонок) показываем только 1 строку и обрезаем длинные значения
+        max_sample_rows = 1 if num_cols > 30 else 2  # Меньше строк для больших таблиц
+        max_value_length = 50  # Обрезаем длинные строки
         
-        # Получаем примеры данных (ВСЕ колонки, но только 3 строки)
+        # Получаем примеры данных в формате массива массивов
         sample_rows = self.df.head(max_sample_rows)
-        # Конвертируем в список словарей для JSON-сериализации
         sample_data = []
-        for row in sample_rows.iter_rows(named=True):
-            # Конвертируем значения в строки для безопасной сериализации
-            row_dict = {}
-            for key, value in row.items():
+        for row in sample_rows.iter_rows():
+            row_values = []
+            for value in row:
                 if value is None:
-                    row_dict[key] = None
+                    row_values.append(None)
                 elif isinstance(value, (pl.Date, pl.Datetime)):
-                    row_dict[key] = str(value)
+                    row_values.append(str(value))
+                elif isinstance(value, str) and len(value) > max_value_length:
+                    # Обрезаем длинные строки
+                    row_values.append(value[:max_value_length] + "...")
                 else:
-                    row_dict[key] = value
-            sample_data.append(row_dict)
+                    row_values.append(value)
+            sample_data.append(row_values)
         
-        # Используем компактный JSON (без пробелов и переносов строк) для экономии места
+        # Компактный формат: массив массивов
         sample_json = json.dumps(sample_data, ensure_ascii=False, default=str, separators=(',', ':'))
         
-        # Оптимизированный промпт с примерами данных (все колонки, но только 3 строки)
-        # Убрана избыточная информация про числовые/категориальные колонки - типы уже указаны в схеме
+        # Компактный промпт для уменьшения размера
         prompt = (
-            f"Напиши простой Polars SQL SELECT запрос для таблицы 'df'.\n\n"
-            f"Схема ({len(columns_info)} колонок): {schema_compact}\n"
-            f"Всего строк: {self.meta['rows']}\n\n"
-            f"Примеры данных (первые {len(sample_data)} строк из {self.meta['rows']}, показаны ВСЕ {len(columns_info)} колонок):\n"
-            f"{sample_json}\n\n"
-            f"Правила:\n"
-            f"- Только SELECT, без DDL/DML\n"
-            f"- Базовые функции: AVG, MIN, MAX, COUNT, SUM\n"
-            f"- Без оконных функций и сложных подзапросов\n"
-            f"- Используй двойные кавычки для идентификаторов: \"Имя Колонки\"\n"
-            f"- Таблица называется 'df'\n\n"
-            f"Вопрос: {question}\n\n"
-            f"SQL:"
+            f"SQL для таблицы 'df':\n"
+            f"Схема: {schema_compact}\n"
+            f"Строк: {self.meta['rows']}\n"
+            f"Пример: {sample_json}\n"
+            f"Правила: SELECT только, \"колонки с пробелами\", таблица df\n"
+            f"Вопрос: {question}\nSQL:"
         )
         return prompt
 
