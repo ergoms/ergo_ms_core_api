@@ -95,6 +95,29 @@ class HttpxOllamaClient(BaseLLMClient):
         self._client = httpx.Client(base_url=self._base_url, timeout=timeout, limits=limits)
         self._keep_alive = keep_alive
 
+    def check_health(self) -> Dict[str, Any]:
+        """
+        Быстрая проверка доступности Ollama без загрузки модели.
+        Возвращает информацию о сервере и списке моделей.
+        """
+        try:
+            # GET /api/tags - быстрая проверка без загрузки модели
+            resp = self._client.get("/api/tags", timeout=5.0)
+            resp.raise_for_status()
+            data = resp.json()
+            models = [m.get("name", "") for m in data.get("models", [])]
+            return {
+                "available": True,
+                "models": models,
+                "model_loaded": self.model in models or any(self.model in m for m in models),
+            }
+        except httpx.TimeoutException:
+            return {"available": False, "error": "Таймаут подключения к Ollama"}
+        except httpx.ConnectError:
+            return {"available": False, "error": "Не удалось подключиться к Ollama"}
+        except Exception as e:
+            return {"available": False, "error": str(e)}
+
     def _build_payload(
         self,
         prompt: str,

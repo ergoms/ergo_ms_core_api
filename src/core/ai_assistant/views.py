@@ -4,6 +4,7 @@ from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
 from django.http import StreamingHttpResponse
 import json
+import math
 
 from src.core.bi_analysis.bi_datasets.models import FileUpload, Dataset
 from .fast_bi_service import FastBIService, DEFAULT_MODEL, OLLAMA_BASE_URL
@@ -13,6 +14,34 @@ from src.core.bi_analysis.bi_charts.models import Chart
 import pandas as pd
 import numpy as np
 from scipy import signal, stats
+
+
+def _sanitize_for_json(obj):
+    """
+    Рекурсивно очищает объект от значений, которые не поддерживаются JSON.
+    NaN, Infinity, -Infinity заменяются на None.
+    """
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    elif isinstance(obj, (np.floating, np.integer)):
+        val = float(obj) if isinstance(obj, np.floating) else int(obj)
+        if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+            return None
+        return val
+    elif pd.isna(obj):
+        return None
+    return obj
+
+
+def _safe_json_dumps(obj, **kwargs):
+    """Безопасная JSON сериализация с обработкой NaN/Infinity."""
+    return json.dumps(_sanitize_for_json(obj), **kwargs)
 
 
 class UserFilesListView(APIView):
@@ -190,7 +219,8 @@ class BIQueryView(APIView):
                         'rows': result['rows'],
                         'columns': result['columns'],
                     }
-                    yield f"data: {json.dumps(final_data, ensure_ascii=False)}\n\n"
+                    # Используем _safe_json_dumps для обработки NaN/Infinity в данных
+                    yield f"data: {_safe_json_dumps(final_data, ensure_ascii=False)}\n\n"
                 else:
                     yield f"data: {json.dumps({'type': 'error', 'message': result.get('error', 'Ошибка')})}\n\n"
                 
@@ -257,19 +287,30 @@ class BIQueryView(APIView):
 class OllamaStatusView(APIView):
     """
     GET /api/ai_assistant/ollama_status/
-    Проверить доступность Ollama
+    Проверить доступность Ollama (быстрая проверка без загрузки модели)
     """
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
         try:
             _, client = _create_ollama_client({'model': DEFAULT_MODEL})
-            client.complete("ping", num_predict=1, temperature=0.0, stream=False)
-            return Response({
-                'available': True,
-                'message': 'Ollama доступен',
-                'model_loaded': DEFAULT_MODEL
-            })
+            
+            # Используем быстрый health check без генерации
+            health = client.check_health()
+            
+            if health.get('available'):
+                return Response({
+                    'available': True,
+                    'message': 'Ollama доступен',
+                    'model': DEFAULT_MODEL,
+                    'model_exists': health.get('model_loaded', False),
+                    'available_models': health.get('models', []),
+                })
+            else:
+                return Response({
+                    'available': False,
+                    'message': health.get('error', 'Ollama недоступен'),
+                })
         except Exception as e:
             return Response({
                 'available': False,
@@ -399,7 +440,8 @@ class ChartAnalysisView(APIView):
                     'rows': len(rows),
                     'columns': list(df.columns),
                 }
-                yield f"data: {json.dumps(final_data, ensure_ascii=False)}\n\n"
+                # Используем _safe_json_dumps для обработки NaN/Infinity в данных
+                yield f"data: {_safe_json_dumps(final_data, ensure_ascii=False)}\n\n"
                 
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
