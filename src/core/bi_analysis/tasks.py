@@ -16,8 +16,7 @@ from src.core.bi_analysis.bi_datasets.models import FileUpload
 from src.core.bi_analysis.config import (
     get_compute_device, 
     CHUNK_SIZE, 
-    MAX_WORKERS,
-    PREVIEW_LIMIT
+    MAX_WORKERS
 )
 from src.core.bi_analysis.services.services import introspect_columns
 
@@ -141,7 +140,7 @@ def _read_file_with_polars(file_upload_id: int, sheet_name: Optional[str] = None
 
 
 def _read_file_chunked(file_upload_id: int, sheet_name: Optional[str] = None,
-                      row_limit: int = PREVIEW_LIMIT,
+                      row_limit: Optional[int] = None,
                       progress_callback=None) -> Tuple[List[str], List[List[Any]]]:
     """
     Читает файл по частям (чанками) для больших файлов с векторизацией.
@@ -266,7 +265,7 @@ def _read_files_parallel(file_data_list: List[Dict[str, Any]]) -> List[Tuple[Lis
                 _read_file_with_polars,
                 file_data['file_id'],
                 file_data.get('sheet_name'),
-                file_data.get('row_limit', PREVIEW_LIMIT)
+                file_data.get('row_limit')
             ): idx
             for idx, file_data in enumerate(file_data_list)
         }
@@ -323,14 +322,14 @@ def _read_files_parallel_with_progress(file_data_list: List[Dict[str, Any]],
                 return _read_file_chunked(
                     file_data['file_id'],
                     file_data.get('sheet_name'),
-                    file_data.get('row_limit', PREVIEW_LIMIT),
+                    file_data.get('row_limit'),
                     local_progress_callback
                 )
             else:
                 return _read_file_with_polars(
                     file_data['file_id'],
                     file_data.get('sheet_name'),
-                    file_data.get('row_limit', PREVIEW_LIMIT),
+                    file_data.get('row_limit'),
                     local_progress_callback
                 )
         except Exception as e:
@@ -355,7 +354,7 @@ def _read_files_parallel_with_progress(file_data_list: List[Dict[str, Any]],
 
 
 @shared_task(bind=True, name='src.core.bi_analysis.tasks.process_dataset_preview')
-def process_dataset_preview(self, dataset_id: int, limit: int = PREVIEW_LIMIT):
+def process_dataset_preview(self, dataset_id: int, limit: Optional[int] = None):
     """
     Асинхронная задача для обработки предпросмотра датасета.
     Использует polars, векторизацию и параллельную обработку для ускорения.
@@ -420,8 +419,10 @@ def process_draft_preview(self, draft_data: Dict[str, Any]):
         from django.conf import settings
         
         joined_tables = draft_data.get('joinedTables', [])
-        # Лимит берется из настроек Django (из .env переменной VITE_BI_PREVIEW_ROWS_LIMIT)
-        limit = int(draft_data.get('limit', getattr(settings, 'BI_PREVIEW_ROWS_LIMIT', 1000)))
+        # Лимиты убраны - если limit не указан, загружаем все данные
+        limit = draft_data.get('limit')
+        if limit is not None:
+            limit = int(limit)
         
         def get_sheet_name(table_dict):
             if not isinstance(table_dict, dict):
@@ -622,7 +623,7 @@ def process_draft_preview(self, draft_data: Dict[str, Any]):
 
 @shared_task(bind=True, name='src.core.bi_analysis.tasks.process_file_preview')
 def process_file_preview(self, temp_path: str, sheet_name: Optional[str] = None, 
-                        row_limit: int = 200, has_header: bool = True):
+                        row_limit: int = 1000000, has_header: bool = True):
     """
     Асинхронная задача для обработки предпросмотра временного файла.
     Использует polars с векторизацией и чанкингом для максимальной производительности.

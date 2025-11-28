@@ -31,7 +31,7 @@ def get_compute_device() -> ComputeDevice:
 # Настройки для обработки файлов
 CHUNK_SIZE = int(os.getenv('BI_ANALYSIS_CHUNK_SIZE', '100000'))  # Размер чанка для обработки
 MAX_WORKERS = int(os.getenv('BI_ANALYSIS_MAX_WORKERS', '4'))  # Количество потоков для параллельной обработки
-PREVIEW_LIMIT = int(os.getenv('BI_ANALYSIS_PREVIEW_LIMIT', '1000'))  # Лимит строк для предпросмотра
+PREVIEW_LIMIT = int(os.getenv('BI_ANALYSIS_PREVIEW_LIMIT', '1000000000'))  # Лимит строк для предпросмотра (практически без ограничений)
 
 # Настройки для celery задач
 CELERY_TASK_TIMEOUT = int(os.getenv('BI_ANALYSIS_CELERY_TIMEOUT', '300'))  # 5 минут

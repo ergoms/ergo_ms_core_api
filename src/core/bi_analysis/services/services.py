@@ -461,9 +461,6 @@ def sync_dataset_fields_with_current_table(dataset):
             field.delete()
 
 
-DEFAULT_PREVIEW_LIMIT = 1000
-
-
 def _read_excel_table(path, sheet_name=None, row_limit=None):
     wb = load_workbook(filename=path, read_only=True, data_only=True)
     try:
@@ -512,6 +509,62 @@ def _read_csv_table(path, row_limit=None, encoding='cp1251'):
                 break
 
     return TableData(columns, rows)
+
+
+def count_file_rows(file_upload_id, sheet_name=None):
+    """
+    Подсчитывает общее количество строк в файле без загрузки всех данных.
+    Использует polars для эффективного подсчёта.
+    """
+    try:
+        upload = FileUpload.objects.get(pk=file_upload_id)
+    except FileUpload.DoesNotExist:
+        raise ValidationError(f"FileUpload с id={file_upload_id} не найден")
+    
+    if not upload.file:
+        raise ValidationError(f"FileUpload {file_upload_id} не имеет файла")
+    
+    path = upload.file.path
+    
+    # Проверяем, является ли файл бинарным
+    from src.core.bi_analysis.bi_datasets.binary_storage import is_binary_file, read_from_binary
+    
+    if is_binary_file(path) or upload.file_type == 'bin':
+        # Для бинарных файлов читаем все данные для подсчёта
+        try:
+            columns, rows = read_from_binary(path, row_limit=None)
+            return len(rows)
+        except Exception as e:
+            logger.error(f"Ошибка чтения бинарного файла для подсчёта: {str(e)}")
+            raise ValidationError(f"Ошибка чтения бинарного файла: {str(e)}")
+    
+    # Используем polars для эффективного подсчёта
+    try:
+        import polars as pl
+        sheet = sheet_name or getattr(upload, 'sheet_name', None)
+        
+        if upload.file_type == 'xlsx':
+            if sheet:
+                df = pl.read_excel(path, sheet_name=sheet)
+            else:
+                df = pl.read_excel(path)
+        elif upload.file_type in ('csv', 'txt'):
+            df = pl.read_csv(path)
+        else:
+            raise ValidationError(f"Неподдерживаемый тип файла: {upload.file_type}")
+        
+        return len(df)
+    except ImportError:
+        # Если polars недоступен, используем fallback
+        logger.warning("Polars недоступен для подсчёта строк, используется fallback метод")
+        # Читаем файл с большим лимитом для подсчёта
+        table_data = read_file_to_dataframe(file_upload_id, sheet_name, row_limit=1000000)
+        return len(table_data.rows)
+    except Exception as e:
+        logger.warning(f"Ошибка подсчёта строк через polars: {str(e)}, используется fallback")
+        # Fallback: читаем файл для подсчёта
+        table_data = read_file_to_dataframe(file_upload_id, sheet_name, row_limit=1000000)
+        return len(table_data.rows)
 
 
 def read_file_to_dataframe(file_upload_id, sheet_name=None, row_limit=None, use_polars=True):
@@ -583,17 +636,8 @@ def dataframe_to_sql_values(table, table_alias='t0', row_limit=None):
     if not table.columns:
         return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
 
-    # Ограничиваем количество строк в VALUES clause для производительности
-    # Используем настройку из .env (BI_PREVIEW_MAX_VALUES_ROWS)
-    from django.conf import settings
-    MAX_VALUES_ROWS = getattr(settings, 'BI_PREVIEW_MAX_VALUES_ROWS', 10000)
-    
-    if row_limit is not None and row_limit > 0:
-        # Если указан лимит, используем его, но не больше максимума
-        limited = table.limited(min(row_limit, MAX_VALUES_ROWS))
-    else:
-        # Если лимит не указан, ограничиваем до максимума
-        limited = table.limited(MAX_VALUES_ROWS)
+    # Лимиты полностью убраны - всегда используем все доступные данные
+    limited = table
     
     if len(limited) == 0:
         return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
@@ -872,6 +916,158 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
     # Добавляем LIMIT если есть
     if limit is not None:
         query_parts.append(sql.SQL('LIMIT {}').format(sql.Literal(limit)))
+    
+    final_query = sql.SQL(' ').join(query_parts)
+    return final_query
+
+
+def build_dataset_count_query(dataset, where_clause=None, search=None):
+    """
+    Строит SQL-запрос COUNT(*) для датасета.
+    Используется для подсчёта общего количества строк без загрузки всех данных.
+    
+    Args:
+        dataset: объект Dataset
+        where_clause: дополнительное условие WHERE
+        search: строка поиска (будет добавлена в WHERE как LIKE по всем текстовым полям)
+    
+    Returns:
+        SQL объект для выполнения запроса COUNT(*)
+    """
+    # Получаем главную таблицу (без JOIN)
+    main_table = dataset.tables.filter(joined_on_type__isnull=True).first()
+    if not main_table:
+        raise ValueError("Не найдена главная таблица для датасета")
+    
+    # Алиас для главной таблицы
+    main_alias = 't0'
+    
+    # Определяем, является ли источник файловым
+    is_file_source = main_table.file_upload_id is not None
+    
+    if is_file_source:
+        # Для файловых источников читаем данные напрямую из файла
+        # Для COUNT читаем все данные (без лимита)
+        try:
+            df = read_file_to_dataframe(
+                main_table.file_upload_id,
+                sheet_name=getattr(main_table, 'sheet_name', None),
+                row_limit=None  # Читаем все данные для COUNT
+            )
+            from_with_alias, _ = dataframe_to_sql_values(df, main_alias, row_limit=None)
+        except Exception as e:
+            raise ValueError(f"Ошибка чтения файла: {str(e)}")
+    else:
+        # Для БД источников используем прямое подключение к таблице
+        table_name = main_table.table_name
+        if '.' in table_name:
+            schema, table = table_name.split('.', 1)
+            from_clause = sql.SQL('{}.{}').format(
+                sql.Identifier(schema),
+                sql.Identifier(table)
+            )
+        else:
+            from_clause = sql.Identifier(table_name)
+        
+        from_with_alias = sql.SQL('{} AS {}').format(from_clause, sql.Identifier(main_alias))
+    
+    # Собираем JOIN'ы (та же логика, что и в build_dataset_query)
+    joins = []
+    joined_tables = dataset.tables.filter(joined_on_type__isnull=False).order_by('id')
+    table_id_to_alias = {main_table.id: main_alias}
+    
+    for idx, join_table in enumerate(joined_tables, start=1):
+        if not join_table.joined_on_left or not join_table.joined_on_right:
+            continue
+        
+        table_alias = f't{idx}'
+        table_id_to_alias[join_table.id] = table_alias
+        
+        is_join_file_source = join_table.file_upload_id is not None
+        
+        if is_join_file_source:
+            try:
+                df_join = read_file_to_dataframe(
+                    join_table.file_upload_id,
+                    sheet_name=getattr(join_table, 'sheet_name', None),
+                    row_limit=None
+                )
+                join_table_ref, _ = dataframe_to_sql_values(df_join, table_alias, row_limit=None)
+            except Exception as e:
+                raise ValueError(f"Ошибка чтения файла для JOIN: {str(e)}")
+        else:
+            table_name = join_table.table_name
+            if '.' in table_name:
+                schema, table = table_name.split('.', 1)
+                join_from_clause = sql.SQL('{}.{}').format(
+                    sql.Identifier(schema),
+                    sql.Identifier(table)
+                )
+            else:
+                join_from_clause = sql.Identifier(table_name)
+            
+            join_table_ref = sql.SQL('{} AS {}').format(join_from_clause, sql.Identifier(table_alias))
+        
+        # Определяем тип JOIN
+        join_type_map = {
+            'inner': 'INNER JOIN',
+            'left': 'LEFT JOIN',
+            'right': 'RIGHT JOIN',
+            'full': 'FULL OUTER JOIN'
+        }
+        join_type = join_type_map.get(join_table.joined_on_type, 'INNER JOIN')
+        
+        # Получаем алиасы для левой и правой таблиц
+        left_table_alias = table_id_to_alias.get(join_table.joined_on_left.id, main_alias)
+        right_table_alias = table_alias
+        
+        # Формируем условие JOIN
+        left_col = sql.Identifier(left_table_alias, join_table.joined_on_left_column)
+        right_col = sql.Identifier(right_table_alias, join_table.joined_on_right_column)
+        join_condition = sql.SQL('{} = {}').format(left_col, right_col)
+        
+        joins.append(sql.SQL('{} {} ON {}').format(
+            sql.SQL(join_type),
+            join_table_ref,
+            join_condition
+        ))
+    
+    # Собираем условия WHERE (та же логика, что и в build_dataset_query)
+    where_conditions = []
+    
+    if where_clause:
+        where_conditions.append(sql.SQL(where_clause))
+    
+    if search:
+        # Поиск по всем текстовым полям
+        search_conditions = []
+        for field in dataset.fields.all():
+            table_alias = table_id_to_alias.get(field.source_table.id, main_alias)
+            col_ref = sql.Identifier(table_alias, field.source_column)
+            search_conditions.append(
+                sql.SQL('CAST({} AS TEXT) ILIKE {}').format(
+                    col_ref,
+                    sql.Literal(f'%{search}%')
+                )
+            )
+        
+        if search_conditions:
+            where_conditions.append(
+                sql.SQL('({})').format(sql.SQL(' OR ').join(search_conditions))
+            )
+    
+    # Собираем итоговый COUNT запрос
+    query_parts = [
+        sql.SQL('SELECT COUNT(*)'),
+        sql.SQL('FROM {}').format(from_with_alias)
+    ]
+    
+    # Добавляем JOIN'ы
+    query_parts.extend(joins)
+    
+    # Добавляем WHERE если есть условия
+    if where_conditions:
+        query_parts.append(sql.SQL('WHERE {}').format(sql.SQL(' AND ').join(where_conditions)))
     
     final_query = sql.SQL(' ').join(query_parts)
     return final_query

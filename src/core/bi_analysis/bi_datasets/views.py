@@ -381,16 +381,10 @@ class DatasetPreviewView(APIView):
         if not dataset:
             return Response({"detail": "Not found"}, status=404)
 
-        limit = int(request.query_params.get('limit', 1000))
+        limit = int(request.query_params.get('limit', 1000000))
         offset = int(request.query_params.get('offset', 0))
         search = request.query_params.get('search', '').strip()
         use_async = request.query_params.get('async', 'false').lower() == 'true'
-        
-        # Проверяем максимальный лимит из настроек (.env)
-        from django.conf import settings
-        max_limit = getattr(settings, 'BI_PREVIEW_MAX_VALUES_ROWS', 10000)
-        if limit > max_limit:
-            limit = max_limit
         
         try:
             # Проверяем, есть ли таблицы в датасете
@@ -415,7 +409,18 @@ class DatasetPreviewView(APIView):
             if use_fast_path:
                 # Быстрый путь: прямое чтение файла через polars, как в upload эндпоинте
                 try:
-                    from src.core.bi_analysis.services.services import read_file_to_dataframe
+                    from src.core.bi_analysis.services.services import read_file_to_dataframe, count_file_rows
+                    
+                    # Подсчитываем общее количество строк (только при первой загрузке или если offset=0)
+                    total_count = None
+                    if offset == 0:
+                        try:
+                            total_count = count_file_rows(
+                                main_table.file_upload_id,
+                                sheet_name=getattr(main_table, 'sheet_name', None)
+                            )
+                        except Exception as e:
+                            logger.warning(f"Не удалось подсчитать общее количество строк: {str(e)}")
                     
                     # Читаем файл с лимитом строк
                     table_data = read_file_to_dataframe(
@@ -431,11 +436,17 @@ class DatasetPreviewView(APIView):
                     # Преобразуем строки в список кортежей (как в SQL результате)
                     rows_tuples = [tuple(row) for row in rows]
                     
-                    return Response({
+                    response_data = {
                         "columns": columns,
                         "rows": rows_tuples,
                         "has_more": len(rows) == limit  # Указываем, есть ли еще данные
-                    })
+                    }
+                    
+                    # Добавляем total_count, если он был подсчитан
+                    if total_count is not None:
+                        response_data["total_count"] = total_count
+                    
+                    return Response(response_data)
                 except Exception as e:
                     # Если не удалось использовать быстрый путь, используем обычный
                     logger.warning(f"Не удалось использовать быстрый путь для preview: {str(e)}. Используется SQL путь.")
@@ -461,11 +472,29 @@ class DatasetPreviewView(APIView):
                         # Продолжаем выполнение в синхронном режиме ниже
             
             # Обычный путь: через SQL запрос (для JOIN'ов, поиска, offset и т.д.)
-            from src.core.bi_analysis.services.services import build_dataset_query
+            from src.core.bi_analysis.services.services import build_dataset_query, build_dataset_count_query
+            
+            # Подсчитываем общее количество строк (только при первой загрузке или если offset=0)
+            total_count = None
+            if offset == 0:
+                try:
+                    count_query = build_dataset_count_query(
+                        dataset,
+                        search=search if search else None
+                    )
+                    with connection.cursor() as count_cursor:
+                        count_cursor.execute(count_query)
+                        total_count = count_cursor.fetchone()[0]
+                except Exception as e:
+                    logger.warning(f"Не удалось подсчитать общее количество строк: {str(e)}")
+            
+            # При поиске не применяем лимит, чтобы поиск выполнялся по всем данным
+            # Без поиска используем лимит для пагинации
+            query_limit = None if search else limit
             
             query = build_dataset_query(
                 dataset, 
-                limit=limit, 
+                limit=query_limit, 
                 offset=offset,
                 search=search if search else None
             )
@@ -482,11 +511,17 @@ class DatasetPreviewView(APIView):
         except Exception as e:
             return Response({"detail": f"Ошибка: {str(e)}"}, status=500)
 
-        return Response({
+        response_data = {
             "columns": columns,
             "rows": rows,
             "has_more": len(rows) == limit  # Указываем, есть ли еще данные
-        })
+        }
+        
+        # Добавляем total_count, если он был подсчитан
+        if total_count is not None:
+            response_data["total_count"] = total_count
+        
+        return Response(response_data)
 
 
 class DatasetPreviewTaskStatusView(APIView):
@@ -592,8 +627,11 @@ class DatasetDraftPreviewView(APIView):
         from django.conf import settings
         
         use_async = data.get('async', False)
-        # Лимит берется из настроек Django (из .env переменной VITE_BI_PREVIEW_ROWS_LIMIT)
-        limit = int(data.get('limit', getattr(settings, 'BI_PREVIEW_ROWS_LIMIT', 1000)))
+        # Лимиты убраны - если limit не указан, загружаем все данные
+        # Если limit указан, используем его для пагинации
+        limit = data.get('limit')
+        if limit is not None:
+            limit = int(limit)
         
         # Для больших лимитов или множества файлов используем асинхронную обработку
         file_count = sum([
@@ -648,12 +686,8 @@ class DatasetDraftPreviewView(APIView):
             file_read_limit = None
             if limit is not None:
                 # Читаем достаточно данных с учетом offset и небольшого запаса
+                # Убрано ограничение MAX_VALUES_ROWS - загружаем все строки
                 file_read_limit = limit + (offset or 0) + 100  # Запас в 100 строк для корректной работы
-                # Ограничиваем максимальное количество строк в VALUES (чтобы не создавать огромные SQL запросы)
-                # Для больших файлов используем разумный лимит
-                MAX_VALUES_ROWS = getattr(settings, 'BI_PREVIEW_MAX_VALUES_ROWS', 10000)
-                if file_read_limit > MAX_VALUES_ROWS:
-                    file_read_limit = MAX_VALUES_ROWS
             
             try:
                 df_main = read_file_to_dataframe(
@@ -1642,7 +1676,10 @@ class XlsxTempPreviewView(APIView):
         temp_path     = request_data.get('temp_path')
         has_header    = request_data.get('has_header', 'true').lower() == 'true' if isinstance(request_data.get('has_header'), str) else True
         sheet_name    = request_data.get('sheet_name')
-        row_limit     = int(request_data.get('row_limit', 200))
+        # Лимиты убраны - если row_limit не указан, загружаем все данные
+        row_limit = request_data.get('row_limit')
+        if row_limit is not None:
+            row_limit = int(row_limit)
         use_async     = request_data.get('async', 'false').lower() == 'true' if isinstance(request_data.get('async'), str) else False
 
         if not temp_path or not os.path.exists(temp_path):
@@ -1651,7 +1688,8 @@ class XlsxTempPreviewView(APIView):
         # Определяем размер файла для выбора стратегии
         file_size = os.path.getsize(temp_path)
         # Для файлов больше 5MB или при явном запросе используем асинхронную обработку
-        should_use_async = use_async or file_size > 5 * 1024 * 1024 or row_limit > 500
+        # Если row_limit не указан (None), считаем что это большой файл и используем асинхронную обработку
+        should_use_async = use_async or file_size > 5 * 1024 * 1024 or (row_limit is not None and row_limit > 500) or row_limit is None
 
         if should_use_async:
             from src.core.bi_analysis.tasks import process_file_preview
