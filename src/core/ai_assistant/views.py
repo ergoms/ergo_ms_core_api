@@ -23,27 +23,75 @@ def _sanitize_for_json(obj):
     Рекурсивно очищает объект от значений, которые не поддерживаются JSON.
     NaN, Infinity, -Infinity заменяются на None.
     """
-    if isinstance(obj, dict):
-        return {k: _sanitize_for_json(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_sanitize_for_json(item) for item in obj]
-    elif isinstance(obj, float):
+    # Ранний выход для простых типов
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, bool)):
+        return obj
+    if isinstance(obj, bytes):
+        return obj.decode('utf-8', errors='ignore')
+    
+    # Оптимизация для float - самый частый случай
+    if isinstance(obj, float):
         if math.isnan(obj) or math.isinf(obj):
             return None
         return obj
-    elif isinstance(obj, (np.floating, np.integer)):
-        val = float(obj) if isinstance(obj, np.floating) else int(obj)
-        if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
-            return None
-        return val
-    elif pd.isna(obj):
+    
+    # Оптимизация для numpy/pandas типов
+    if isinstance(obj, (np.floating, np.integer)):
+        if isinstance(obj, np.floating):
+            val = float(obj)
+            if math.isnan(val) or math.isinf(val):
+                return None
+            return val
+        return int(obj)
+    
+    # Проверка на numpy arrays и pandas структуры - обрабатываем их отдельно
+    if isinstance(obj, np.ndarray):
+        return [_sanitize_for_json(item) for item in obj.tolist()]
+    
+    if isinstance(obj, pd.Series):
+        return [_sanitize_for_json(item) for item in obj.tolist()]
+    
+    if isinstance(obj, pd.DataFrame):
+        # DataFrame преобразуем в список словарей (records)
+        return obj.replace({np.nan: None, pd.NA: None}).to_dict(orient='records')
+    
+    # Проверка на NaN/None только для скалярных значений (не массивов)
+    # pd.isna() для массивов возвращает массив, что вызывает ошибку в if
+    try:
+        if not isinstance(obj, (list, tuple, dict, np.ndarray, pd.Series, pd.DataFrame)):
+            if pd.isna(obj):
+                return None
+    except (TypeError, ValueError):
+        # Если pd.isna() не может обработать тип, пропускаем
+        pass
+    
+    # Словари
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    
+    # Списки
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(item) for item in obj]
+    
+    # Для остальных типов пробуем преобразовать в строку
+    try:
+        return str(obj)
+    except Exception:
         return None
-    return obj
 
 
 def _safe_json_dumps(obj, **kwargs):
     """Безопасная JSON сериализация с обработкой NaN/Infinity."""
-    return json.dumps(_sanitize_for_json(obj), **kwargs)
+    # Оптимизированные параметры JSON для скорости
+    default_kwargs = {
+        'ensure_ascii': False,
+        'separators': (',', ':'),  # Без пробелов - быстрее и меньше размер
+        'check_circular': False,   # Если уверены, что нет циклов
+    }
+    default_kwargs.update(kwargs)
+    return json.dumps(_sanitize_for_json(obj), **default_kwargs)
 
 
 class UserFilesListView(APIView):
@@ -165,44 +213,43 @@ class BIQueryView(APIView):
                     yield f"data: {json.dumps({'type': 'error', 'message': 'Ошибка загрузки файла'})}\n\n"
                     return
                 
-                # Callback для streaming событий - отправляем сразу!
-                def stream_callback(event):
-                    # Отправляем событие немедленно
-                    data = json.dumps(event, ensure_ascii=False)
-                    # ВАЖНО: не return, а используем nonlocal для доступа к yield
-                    streaming_events.append(event)
-                
-                # Список для временного хранения (используется в callback)
-                streaming_events = []
-                
-                # Задаем вопрос с streaming
-                # Используем генератор вместо накопления
+                # Оптимизация: используем Queue для эффективной передачи событий между потоками
+                from queue import Queue, Empty
                 import threading
+                
+                streaming_events_queue = Queue()
                 result_container = {}
                 exception_container = {}
                 
                 def run_ask():
                     try:
                         def immediate_callback(event):
-                            streaming_events.append(event)
+                            streaming_events_queue.put(event)
                         result_container['result'] = service.ask(question, want_commentary=want_commentary, stream_callback=immediate_callback)
                     except Exception as e:
                         exception_container['error'] = e
+                    finally:
+                        # Отправляем сигнал завершения
+                        streaming_events_queue.put(None)
                 
                 # Запускаем в отдельном потоке
                 ask_thread = threading.Thread(target=run_ask)
                 ask_thread.start()
                 
                 # Отправляем события по мере их поступления
-                while ask_thread.is_alive() or streaming_events:
-                    while streaming_events:
-                        event = streaming_events.pop(0)
-                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    # Небольшая пауза чтобы не спамить
-                    import time
-                    time.sleep(0.01)
+                # Оптимизация: используем блокирующее ожидание вместо активного polling
+                while ask_thread.is_alive() or not streaming_events_queue.empty():
+                    try:
+                        # Блокируемся максимум на 0.1 секунды - эффективнее чем sleep в цикле
+                        event = streaming_events_queue.get(timeout=0.1)
+                        if event is None:  # Сигнал завершения
+                            break
+                        yield f"data: {_safe_json_dumps(event, ensure_ascii=False)}\n\n"
+                    except Empty:
+                        # Если очередь пуста, продолжаем проверять поток
+                        continue
                 
-                ask_thread.join()
+                ask_thread.join(timeout=5.0)  # Таймаут на завершение потока
                 
                 # Проверяем ошибки
                 if 'error' in exception_container:
@@ -941,13 +988,14 @@ class ChatStreamView(APIView):
                 
                 full_prompt = f"{system_prompt}\n\nВопрос пользователя: {message}"
                 
-                # Контейнеры для результата и streaming
-                streaming_chunks = []
+                # Оптимизация: используем Queue вместо списка
+                from queue import Queue, Empty
+                streaming_chunks_queue = Queue()
                 result_container = {}
                 exception_container = {}
                 
                 def stream_callback(text):
-                    streaming_chunks.append(text)
+                    streaming_chunks_queue.put(text)
                 
                 def run_complete():
                     try:
@@ -961,20 +1009,25 @@ class ChatStreamView(APIView):
                         result_container['response'] = result.strip()
                     except Exception as e:
                         exception_container['error'] = e
+                    finally:
+                        # Сигнал завершения
+                        streaming_chunks_queue.put(None)
                 
                 # Запускаем в отдельном потоке
                 complete_thread = threading.Thread(target=run_complete)
                 complete_thread.start()
                 
-                # Отправляем чанки по мере их поступления
-                while complete_thread.is_alive() or streaming_chunks:
-                    while streaming_chunks:
-                        chunk = streaming_chunks.pop(0)
-                        yield f"data: {json.dumps({'type': 'chunk', 'text': chunk}, ensure_ascii=False)}\n\n"
-                    import time
-                    time.sleep(0.01)
+                # Оптимизация: используем блокирующее ожидание вместо активного polling
+                while complete_thread.is_alive() or not streaming_chunks_queue.empty():
+                    try:
+                        chunk = streaming_chunks_queue.get(timeout=0.1)
+                        if chunk is None:  # Сигнал завершения
+                            break
+                        yield f"data: {_safe_json_dumps({'type': 'chunk', 'text': chunk}, ensure_ascii=False)}\n\n"
+                    except Empty:
+                        continue
                 
-                complete_thread.join()
+                complete_thread.join(timeout=5.0)
                 
                 # Проверяем ошибки
                 if 'error' in exception_container:
