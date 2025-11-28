@@ -7,6 +7,7 @@
 - Валидаторы паролей
 - Ограничения запросов для анонимных и аутентифицированных пользователей
 - Настройки JWT-аутентификации
+- Настройки для режима "Запомнить меня"
 - Настройки Swagger для документации API
 """
 
@@ -55,9 +56,23 @@ REST_FRAMEWORK = {
 if not hasattr(settings, 'REST_FRAMEWORK'):
     setattr(settings, 'REST_FRAMEWORK', REST_FRAMEWORK)
 
-# Настройка время жизни токенов доступа и обновления.
+# Настройка время жизни токенов доступа и обновления (стандартные).
 ACCESS_TOKEN_LIFETIME = env.int('API_ACCESS_TOKEN_LIFETIME', default=30)
 REFRESH_TOKEN_LIFETIME = env.int('API_REFRESH_TOKEN_LIFETIME', default=1440)
+
+# Настройка времени жизни токенов для режима "Запомнить меня" (в минутах).
+# По умолчанию: 7 дней для access, 30 дней для refresh
+REMEMBER_ME_ACCESS_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_ACCESS_TOKEN_LIFETIME', default=10080)
+REMEMBER_ME_REFRESH_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_REFRESH_TOKEN_LIFETIME', default=43200)
+
+# Тип развертывания: development или production
+# В development режиме токены имеют увеличенное время жизни (365 дней)
+DEPLOY_TYPE = env.str('API_DEPLOY_TYPE', default='production')
+IS_DEVELOPMENT = DEPLOY_TYPE == 'development'
+
+# Время жизни токенов в dev режиме (365 дней в минутах)
+DEV_ACCESS_TOKEN_LIFETIME = 525600
+DEV_REFRESH_TOKEN_LIFETIME = 525600
 
 # Конфигурация JWT-аутентификации.
 SIMPLE_JWT = {
@@ -74,3 +89,34 @@ SIMPLE_JWT = {
     'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
     'TOKEN_TYPE_CLAIM': 'token_type',
 }
+
+
+def get_token_lifetime(remember_me: bool = False) -> tuple:
+    """
+    Возвращает время жизни access и refresh токенов в зависимости от:
+    - Режима развертывания (API_DEPLOY_TYPE: development/production)
+    - Флага "Запомнить меня"
+    
+    Returns:
+        tuple: (access_lifetime, refresh_lifetime) в виде timedelta
+    """
+    
+    if IS_DEVELOPMENT:
+        # В development режиме используем увеличенное время жизни (365 дней)
+        return (
+            timedelta(minutes=DEV_ACCESS_TOKEN_LIFETIME),
+            timedelta(minutes=DEV_REFRESH_TOKEN_LIFETIME)
+        )
+    
+    if remember_me:
+        # В production режиме с "Запомнить меня" используем увеличенное время
+        return (
+            timedelta(minutes=REMEMBER_ME_ACCESS_TOKEN_LIFETIME),
+            timedelta(minutes=REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
+        )
+    
+    # Стандартное время жизни токенов
+    return (
+        timedelta(minutes=ACCESS_TOKEN_LIFETIME),
+        timedelta(minutes=REFRESH_TOKEN_LIFETIME)
+    )
