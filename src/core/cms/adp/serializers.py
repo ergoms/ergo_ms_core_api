@@ -1,7 +1,6 @@
 from rest_framework.serializers import (
     ModelSerializer,
     CharField,
-    BooleanField,
     IntegerField,
     ValidationError,
     Serializer,
@@ -22,7 +21,6 @@ class UserRegistrationValidationSerializer(Serializer):
     username = CharField(required=True)
     email = CharField(required=True)
     password = CharField(write_only=True, style={'input_type': 'password'})
-    is_superuser = BooleanField(required=True)
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
@@ -41,7 +39,7 @@ class UserRegistrationSerializer(ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'middle_name', 'username', 'email', 'password', 'is_superuser']
+        fields = ['first_name', 'last_name', 'middle_name', 'username', 'email', 'password']
 
     def create(self, validated_data):
         user = User.objects.create_user(
@@ -51,7 +49,6 @@ class UserRegistrationSerializer(ModelSerializer):
             middle_name=validated_data.get('middle_name', ''),
             email=validated_data['email'],
             password=validated_data['password'],
-            is_superuser=validated_data['is_superuser'],
         )
 
         return user
