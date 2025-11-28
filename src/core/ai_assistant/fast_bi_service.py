@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional
 
 import polars as pl
 import pandas as pd
+import numpy as np
 import sqlparse
 from django.conf import settings
 
@@ -759,12 +760,9 @@ class FastBIService:
             if pd.api.types.is_datetime64_any_dtype(sample_copy[col]):
                 sample_copy[col] = sample_copy[col].astype(str)
 
-        # Очистка от NaN для JSON сериализации
+        # Оптимизация: используем векторизованную замену NaN вместо цикла
+        sample_copy = sample_copy.replace({np.nan: None, pd.NA: None})
         records = sample_copy.to_dict(orient="records")
-        for record in records:
-            for key, value in list(record.items()):
-                if pd.isna(value):
-                    record[key] = None
 
         payload = {
             "question": question,
@@ -891,15 +889,24 @@ class FastBIService:
                     stream_callback({"type": "stage", "text": "💭 Анализирую результаты..."})
                 comment = self._commentary(question, df, stream_callback)
 
-            df_copy = df.copy()
-            for col in df_copy.columns:
-                if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
-                    df_copy[col] = df_copy[col].astype(str)
+            # Оптимизация: используем более эффективное преобразование DataFrame
+            # Предварительно конвертируем datetime колонки, чтобы избежать проблем с JSON
+            df_for_json = df.copy()
+            datetime_cols = df_for_json.select_dtypes(include=['datetime64']).columns
+            if len(datetime_cols) > 0:
+                # Векторизованная конвертация всех datetime колонок сразу
+                for col in datetime_cols:
+                    df_for_json[col] = df_for_json[col].astype(str)
+            
+            # Оптимизация: to_dict('records') быстрее чем ручной перебор для больших DataFrame
+            # Но предварительно заменяем NaN на None для JSON совместимости
+            df_for_json = df_for_json.replace({pd.NA: None, np.nan: None})
+            records = df_for_json.to_dict(orient="records")
 
             return {
                 "success": True,
                 "sql": sql,
-                "data": df_copy.to_dict(orient="records"),
+                "data": records,
                 "comment": comment,
                 "rows": len(df),
                 "columns": list(df.columns) if len(df) > 0 else [],
