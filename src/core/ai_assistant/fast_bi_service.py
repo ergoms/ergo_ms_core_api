@@ -25,6 +25,7 @@ from django.conf import settings
 
 from .config import RuntimeLLMConfig, build_runtime_config
 from .llm_clients import LLMClientError, build_llm_client
+from .file_cache import get_file_cache, CachedFile
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,7 @@ class FastBIService:
     def load_file(self, file_path: str, table_name: str = "t") -> Dict[str, Any]:
         """
         Загружает файл напрямую в Polars DataFrame.
+        Использует кеширование для избежания повторной загрузки.
 
         Args:
             file_path: Путь к файлу (CSV, XLSX, XLS, BIN)
@@ -204,44 +206,73 @@ class FastBIService:
         if not path.exists():
             raise FileNotFoundError(f"Файл не найден: {file_path}")
 
-        try:
-            # Проверяем, является ли файл бинарным (.bin)
-            from src.core.bi_analysis.bi_datasets.binary_storage import is_binary_file, read_from_binary
+        # Проверяем кеш
+        cache = get_file_cache()
+        cached = cache.get(file_path)
+        
+        if cached is not None:
+            # Используем закешированные данные
+            self.df = cached.df
+            self.meta = cached.meta
+            self.table_name = table_name  # Переопределяем table_name для SQL
             
-            if is_binary_file(str(path)) or path.suffix.lower() == ".bin":
-                # Читаем из бинарного файла через Polars IPC
-                columns, rows = read_from_binary(str(path), row_limit=None)
-                
-                if not rows:
-                    raise ValueError("Бинарный файл не содержит данных")
-                
-                # Создаем Polars DataFrame напрямую из списка строк
-                self.df = pl.DataFrame(rows, schema=columns, orient="row")
-                
-            elif path.suffix.lower() in [".csv", ".tsv"]:
-                # Читаем CSV напрямую в Polars
-                self.df = pl.read_csv(path, try_parse_dates=True)
-                
-            elif path.suffix.lower() in [".xlsx", ".xls"]:
-                # Читаем Excel через pandas (Polars не поддерживает Excel напрямую)
-                # Затем конвертируем в Polars
-                pandas_df = pd.read_excel(path)
-                self.df = pl.from_pandas(pandas_df)
-            else:
-                raise ValueError(f"Неподдерживаемый формат файла: {path.suffix}")
-
-            self._prepare_metadata()
-
-            assert self.meta is not None, "Метаданные не подготовлены"
+            logger.info(f"Файл загружен из кеша: {file_path}")
             return {
                 "success": True,
                 "table_name": self.table_name,
                 "rows": self.meta["rows"],
                 "columns": len(self.meta["schema"]),
+                "cached": True,
+            }
+
+        try:
+            # Загружаем файл с диска
+            self._load_file_from_disk(path)
+            self._prepare_metadata()
+
+            assert self.meta is not None, "Метаданные не подготовлены"
+            assert self.df is not None, "DataFrame не загружен"
+            
+            # Сохраняем в кеш
+            cache.put(file_path, self.df, self.meta, self.table_name)
+            
+            logger.info(f"Файл загружен с диска и закеширован: {file_path}")
+            return {
+                "success": True,
+                "table_name": self.table_name,
+                "rows": self.meta["rows"],
+                "columns": len(self.meta["schema"]),
+                "cached": False,
             }
 
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"Ошибка загрузки файла: {exc}") from exc
+
+    def _load_file_from_disk(self, path: Path) -> None:
+        """Загружает файл с диска в self.df."""
+        from src.core.bi_analysis.bi_datasets.binary_storage import is_binary_file, read_from_binary
+        
+        if is_binary_file(str(path)) or path.suffix.lower() == ".bin":
+            # Читаем из бинарного файла через Polars IPC
+            columns, rows = read_from_binary(str(path), row_limit=None)
+            
+            if not rows:
+                raise ValueError("Бинарный файл не содержит данных")
+            
+            # Создаем Polars DataFrame напрямую из списка строк
+            self.df = pl.DataFrame(rows, schema=columns, orient="row")
+            
+        elif path.suffix.lower() in [".csv", ".tsv"]:
+            # Читаем CSV напрямую в Polars
+            self.df = pl.read_csv(path, try_parse_dates=True)
+            
+        elif path.suffix.lower() in [".xlsx", ".xls"]:
+            # Читаем Excel через pandas (Polars не поддерживает Excel напрямую)
+            # Затем конвертируем в Polars
+            pandas_df = pd.read_excel(path)
+            self.df = pl.from_pandas(pandas_df)
+        else:
+            raise ValueError(f"Неподдерживаемый формат файла: {path.suffix}")
 
     def _prepare_metadata(self) -> None:
         """Подготавливает метаданные о загруженной таблице."""
