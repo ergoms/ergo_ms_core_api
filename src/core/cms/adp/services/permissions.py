@@ -25,6 +25,10 @@ class PermissionService:
         ).first()
         
         if user_role:
+            PermissionService._sync_user_admin_flag(
+                user,
+                PermissionService._is_admin_role(user_role.role)
+            )
             return user_role
         
         # Если у пользователя нет активной роли - назначаем роль по умолчанию
@@ -96,6 +100,26 @@ class PermissionService:
         )
 
     @staticmethod
+    def _is_admin_role(role: Role) -> bool:
+        """Определяет, относится ли роль к административным."""
+        if not role:
+            return False
+        return role.role_type == 'admin'
+
+    @staticmethod
+    def _sync_user_admin_flag(user: User, should_be_admin: bool):
+        """
+        Синхронизирует значение django-поля is_staff пользователя с назначенной ролью.
+        """
+        if not getattr(user, 'pk', None):
+            return
+        
+        current_is_staff = getattr(user, 'is_staff', False)
+        if current_is_staff != should_be_admin:
+            user.is_staff = should_be_admin
+            user.save(update_fields=['is_staff'])
+
+    @staticmethod
     def ensure_system_roles():
         """Гарантирует наличие базовых системных ролей."""
         # Создаём или обновляем роль "Пользователь" - делаем её системной
@@ -122,16 +146,20 @@ class PermissionService:
         if not created and not user_role.is_active:
             user_role.is_active = True
             user_role.save(update_fields=['is_active'])
+        PermissionService._sync_user_admin_flag(user, False)
         return user_role
     
     @staticmethod
     def is_admin(user: User) -> bool:
         """Проверить, является ли пользователь администратором"""
-        if user.is_superuser:
+        if getattr(user, 'is_superuser', False):
+            return True
+        
+        if getattr(user, 'is_staff', False):
             return True
         
         user_role = PermissionService.get_user_role(user)
-        if user_role and user_role.role.is_system:
+        if user_role and PermissionService._is_admin_role(user_role.role):
             return True
         
         return False
@@ -364,5 +392,10 @@ class PermissionService:
         # Назначаем ролевые группы
         if role_groups:
             user_role.role_groups.set(role_groups)
+        
+        PermissionService._sync_user_admin_flag(
+            user,
+            PermissionService._is_admin_role(role)
+        )
         
         return user_role

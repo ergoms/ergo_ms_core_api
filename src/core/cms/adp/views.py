@@ -62,10 +62,6 @@ class UserRegistrationValidationView(BaseAPIView):
                     format=openapi.FORMAT_PASSWORD, 
                     description='Подтверждение пароля'
                 ),
-                'is_superuser': openapi.Schema(
-                    type=openapi.TYPE_BOOLEAN,                      
-                    description='Является ли суперпользователем'
-                ),
             },
 
             required=['first_name', 'username', 'email', 'password', 'password_confirm'],
@@ -284,10 +280,6 @@ class UserRegistrationView(BaseAPIView):
                     type=openapi.TYPE_STRING, 
                     format=openapi.FORMAT_PASSWORD, 
                     description='Подтверждение пароля'
-                ),
-                'is_superuser': openapi.Schema(
-                    type=openapi.TYPE_BOOLEAN,                      
-                    description='Является ли суперпользователем'
                 ),
             },
 
