@@ -2,8 +2,19 @@
 Django команда для управления моделями Ollama
 """
 
+import subprocess
+import sys
+import psutil
+import logging
+import time
+from pathlib import Path
+from typing import Optional, List
+
 from django.core.management.base import BaseCommand, CommandError
+from django.conf import settings
 from src.core.ollama_framework.methods import OllamaMethods
+
+logger = logging.getLogger('core.ollama_framework.commands')
 
 
 class Command(BaseCommand):
@@ -12,6 +23,106 @@ class Command(BaseCommand):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ollama_methods = OllamaMethods(self.stdout)
+    
+    def find_ollama(self) -> Optional[psutil.Process]:
+        """
+        Ищет запущенный процесс Ollama.
+
+        Returns:
+            Optional[psutil.Process]: Объект процесса если Ollama запущен, иначе None
+        """
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                cmdline = proc.info.get('cmdline') or []
+                cmdline_lower = [part.lower() for part in cmdline]
+                
+                # Ищем процесс ollama serve
+                if 'ollama' in cmdline_lower and 'serve' in cmdline_lower:
+                    logger.debug(f'Найден процесс Ollama: PID={proc.pid}')
+                    return proc
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return None
+
+    def start_ollama_background(self) -> bool:
+        """
+        Запускает Ollama сервер в фоновом режиме.
+
+        Returns:
+            bool: True если запуск успешен, False иначе
+        """
+        try:
+            # Определяем путь к core/api/ (поднимаемся на 6 уровней вверх)
+            # ollama.py -> commands -> management -> ollama_framework -> core -> src -> api
+            api_dir = Path(__file__).resolve().parents[6]  # Путь к core/api/
+            cmd: List[str] = ['ollama', 'serve']
+            
+            # Запускаем в фоне (на Windows и Linux по-разному)
+            if sys.platform == 'win32':
+                # Windows: используем CREATE_NO_WINDOW флаг
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=str(api_dir),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+            else:
+                # Linux: запускаем в фоне
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=str(api_dir),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
+            
+            # Ждем немного, чтобы сервер успел запуститься
+            time.sleep(2)
+            
+            # Проверяем, что процесс все еще работает
+            if process.poll() is None:
+                logger.info(f'Ollama запущен в фоне (PID: {process.pid})')
+                return True
+            else:
+                logger.error('Ollama процесс завершился сразу после запуска')
+                return False
+                
+        except FileNotFoundError:
+            logger.error('Ollama не найден. Убедитесь, что Ollama установлен и доступен в PATH.')
+            return False
+        except Exception as e:
+            logger.error(f'Ошибка при запуске Ollama: {e}')
+            return False
+
+    def ensure_ollama_running(self):
+        """
+        Убеждается, что Ollama сервер запущен. Если нет - запускает его.
+        """
+        if not self.find_ollama():
+            self.stdout.write(self.style.WARNING('🦙 Ollama не запущен. Запускаю...\n'))  # type: ignore[attr-defined]
+            
+            if not self.start_ollama_background():
+                raise CommandError('❌ Не удалось запустить Ollama. Убедитесь, что Ollama установлен и доступен в PATH.')
+            
+            # Ждем, пока Ollama станет доступен
+            self.stdout.write(self.style.WARNING('⏳ Ожидание запуска Ollama...'))  # type: ignore[attr-defined]
+            base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434')
+            
+            for i in range(30):
+                try:
+                    import httpx
+                    response = httpx.get(f"{base_url}/api/tags", timeout=2.0)
+                    if response.status_code == 200:
+                        self.stdout.write(self.style.SUCCESS('\n✅ Ollama готов к работе\n'))  # type: ignore[attr-defined]
+                        return
+                except:
+                    pass
+                time.sleep(1)
+                if (i + 1) % 5 == 0:
+                    self.stdout.write(f'   ... еще {30 - i - 1} секунд')
+            
+            raise CommandError('❌ Ollama не стал доступен за отведенное время')
     
     def add_arguments(self, parser):
         parser.add_argument(
@@ -63,6 +174,11 @@ class Command(BaseCommand):
             help='Отправить сообщение к модели (например: --chat "Привет! Как дела?")'
         )
         parser.add_argument(
+            '--prompt',
+            nargs='+',
+            help='Отправить запрос к модели (алиас для --chat, например: --prompt "Привет! Как дела?")'
+        )
+        parser.add_argument(
             '--model',
             type=str,
             default='llama2',
@@ -103,16 +219,27 @@ class Command(BaseCommand):
         
         # Новые аргументы для чата
         chat_message_parts = options['chat']
+        prompt_message_parts = options.get('prompt')  # Поддержка --prompt
         model_name = options['model']
         interactive = options['interactive']
         system_prompt = options['system_prompt']
         temperature = options['temperature']
         max_tokens = options['max_tokens']
         
-        # Объединяем части сообщения в одну строку
-        chat_message = ' '.join(chat_message_parts) if chat_message_parts else None
+        # Объединяем части сообщения в одну строку (--prompt имеет приоритет над --chat)
+        if prompt_message_parts:
+            chat_message = ' '.join(prompt_message_parts)
+        elif chat_message_parts:
+            chat_message = ' '.join(chat_message_parts)
+        else:
+            chat_message = None
         
         try:
+            # Для команд, требующих Ollama API, проверяем запуск сервера
+            needs_ollama = bool(chat_message or interactive or test_model or train_model or generate_data)
+            if needs_ollama:
+                self.ensure_ollama_running()
+            
             if show_info:
                 self.ollama_methods.show_info()
             elif list_models:
