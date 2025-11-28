@@ -27,6 +27,8 @@ AGG_CHOICES = [
 ]
 
 class FileUpload(models.Model):
+    objects: models.Manager['FileUpload']
+    
     name = models.CharField(max_length=255)
     connection = models.ForeignKey(Connection, null=True, blank=True, on_delete=models.CASCADE, related_name='files')
     file = models.FileField(upload_to='uploads/')

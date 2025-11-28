@@ -1,3 +1,5 @@
+from typing import Tuple, cast
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
@@ -78,7 +80,7 @@ def _create_ollama_client(ollama_config=None):
     base_url = runtime_config.provider_config.get("base_url", runtime_config.base_url or OLLAMA_BASE_URL)
     client = build_llm_client(
         provider=provider_name,
-        model=runtime_config.model,
+        model=runtime_config.model or DEFAULT_MODEL,
         base_url=base_url,
         request_timeout=runtime_config.request_timeout,
         stream_timeout=runtime_config.stream_timeout,
@@ -741,7 +743,8 @@ class ChartAnalysisView(APIView):
             
             # 4. ВЫЯВЛЕНИЕ АНОМАЛИЙ (выбросы по z-score)
             if len(y_values) > 3:
-                z_scores = np.abs(stats.zscore(y_values))
+                z_scores_raw = stats.zscore(y_values)
+                z_scores: np.ndarray = np.abs(np.asarray(z_scores_raw))
                 anomaly_indices = np.where(z_scores > 2)[0]  # |z-score| > 2
                 for idx in anomaly_indices:
                     results['anomalies'].append({
@@ -753,7 +756,13 @@ class ChartAnalysisView(APIView):
             # 5. ОПРЕДЕЛЕНИЕ ТРЕНДА (линейная регрессия)
             if len(y_values) > 2:
                 x_numeric = np.arange(len(y_values))
-                slope, intercept, r_value, p_value, std_err = stats.linregress(x_numeric, y_values)
+                linreg_result = cast(
+                    Tuple[float, float, float, float, float],
+                    stats.linregress(x_numeric, y_values)
+                )
+                # LinregressResult: (slope, intercept, rvalue, pvalue, stderr)
+                slope = linreg_result[0]
+                r_value = linreg_result[2]
                 
                 if abs(slope) < 0.01:
                     trend_type = "стабильный"
@@ -764,9 +773,9 @@ class ChartAnalysisView(APIView):
                 
                 results['trend'] = {
                     'type': trend_type,
-                    'slope': float(slope),
-                    'r_squared': float(r_value ** 2),
-                    'change_per_point': float(slope)
+                    'slope': slope,
+                    'r_squared': r_value ** 2,
+                    'change_per_point': slope
                 }
             
             # 6. КОРРЕЛЯЦИЯ (если есть другие числовые колонки)
@@ -860,7 +869,7 @@ class ChatView(APIView):
         try:
             runtime_config, client = _create_ollama_client(ollama_config)
             temperature = (ollama_config or {}).get('temperature', 0.3)
-            max_tokens = (ollama_config or {}).get('max_tokens', 512)
+            max_tokens = (ollama_config or {}).get('max_tokens', 2048)
 
             system_prompt = """Ты - полезный AI ассистент системы ERGO MS. 
 Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
@@ -923,7 +932,7 @@ class ChatStreamView(APIView):
             try:
                 runtime_config, client = _create_ollama_client(ollama_config)
                 temperature = (ollama_config or {}).get('temperature', 0.3)
-                max_tokens = (ollama_config or {}).get('max_tokens', 512)
+                max_tokens = (ollama_config or {}).get('max_tokens', 2048)
 
                 system_prompt = """Ты - полезный AI ассистент системы ERGO MS. 
 Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
