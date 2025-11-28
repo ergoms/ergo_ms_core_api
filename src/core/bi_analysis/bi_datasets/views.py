@@ -455,7 +455,9 @@ class DatasetPreviewView(APIView):
                 # Асинхронная обработка только для действительно больших лимитов или при явном запросе
                 # Увеличиваем порог, чтобы для обычных случаев (до 5000 строк) использовался синхронный режим
                 async_threshold = 5000
-                should_use_async = use_async or (limit > async_threshold and has_joins)
+                # Проверяем limit только если он указан (не None)
+                limit_exceeds_threshold = limit is not None and limit > async_threshold
+                should_use_async = use_async or (limit_exceeds_threshold and has_joins)
                 
                 if should_use_async:
                     try:
@@ -640,7 +642,9 @@ class DatasetDraftPreviewView(APIView):
         ])
         
         async_threshold = getattr(settings, 'BI_PREVIEW_ASYNC_THRESHOLD', 5000)
-        if use_async or limit > async_threshold or file_count > 2:
+        # Проверяем limit только если он указан (не None)
+        limit_exceeds_threshold = limit is not None and limit > async_threshold
+        if use_async or limit_exceeds_threshold or file_count > 2:
             try:
                 from src.core.bi_analysis.tasks import process_draft_preview
                 task = process_draft_preview.delay(data)

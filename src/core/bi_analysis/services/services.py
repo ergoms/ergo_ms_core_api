@@ -287,7 +287,7 @@ def auto_join_table(dataset, table, left_column, right_column,
 
     # Синхронизируем поля датасета после добавления JOIN
     # (можно добавить новые поля из присоединенной таблицы)
-    sync_dataset_fields_after_join(dataset, table)
+    sync_dataset_fields_after_all_joins(dataset)
 
     return left_column
 
@@ -375,11 +375,35 @@ def sync_dataset_fields_after_all_joins(dataset):
                 source_table = None
                 for table in dataset.tables.all():
                     try:
-                        table_cols = introspect_columns(table.table_name)
-                        if col_name in table_cols:
-                            source_table = table
-                            break
-                    except:
+                        # Для файловых источников используем columns_info
+                        if table.file_upload_id:
+                            if table.columns_info:
+                                table_cols = table.columns_info
+                            else:
+                                # Если columns_info нет, пробуем получить из FileUpload
+                                from src.core.bi_analysis.bi_datasets.models import FileUpload
+                                try:
+                                    file_upload = FileUpload.objects.get(pk=table.file_upload_id)
+                                    table_cols = file_upload.columns_info or []
+                                except:
+                                    continue
+                        else:
+                            # Для БД источников используем introspect_columns
+                            table_cols = introspect_columns(table.table_name)
+                        
+                        # Проверяем, есть ли колонка в таблице
+                        if isinstance(table_cols, list):
+                            # Если это список строк
+                            if col_name in table_cols:
+                                source_table = table
+                                break
+                        elif isinstance(table_cols, dict):
+                            # Если это словарь с информацией о колонках
+                            if col_name in table_cols or any(col.get('name') == col_name for col in table_cols.values() if isinstance(col, dict)):
+                                source_table = table
+                                break
+                    except Exception as e:
+                        # Пропускаем ошибки при проверке таблицы
                         continue
                 
                 if source_table:
@@ -1009,22 +1033,22 @@ def build_dataset_count_query(dataset, where_clause=None, search=None):
             join_table_ref = sql.SQL('{} AS {}').format(join_from_clause, sql.Identifier(table_alias))
         
         # Определяем тип JOIN
-        join_type_map = {
-            'inner': 'INNER JOIN',
-            'left': 'LEFT JOIN',
-            'right': 'RIGHT JOIN',
-            'full': 'FULL OUTER JOIN'
-        }
-        join_type = join_type_map.get(join_table.joined_on_type, 'INNER JOIN')
+        join_type = (join_table.joined_on_type or 'LEFT JOIN').strip().upper()
+        if 'JOIN' not in join_type:
+            join_type = f'{join_type} JOIN'
         
-        # Получаем алиасы для левой и правой таблиц
-        left_table_alias = table_id_to_alias.get(join_table.joined_on_left.id, main_alias)
-        right_table_alias = table_alias
+        # Определяем левую таблицу для JOIN
+        # joined_on_left - это колонка в главной таблице (или предыдущей joined таблице)
+        # Для простоты будем считать, что left_column всегда из главной таблицы
+        left_table_alias = main_alias  # По умолчанию главная таблица
         
-        # Формируем условие JOIN
-        left_col = sql.Identifier(left_table_alias, join_table.joined_on_left_column)
-        right_col = sql.Identifier(right_table_alias, join_table.joined_on_right_column)
-        join_condition = sql.SQL('{} = {}').format(left_col, right_col)
+        # Условие JOIN: left_column из левой таблицы = right_column из join таблицы
+        join_condition = sql.SQL('{}.{} = {}.{}').format(
+            sql.Identifier(left_table_alias),
+            sql.Identifier(join_table.joined_on_left),
+            sql.Identifier(table_alias),
+            sql.Identifier(join_table.joined_on_right)
+        )
         
         joins.append(sql.SQL('{} {} ON {}').format(
             sql.SQL(join_type),
