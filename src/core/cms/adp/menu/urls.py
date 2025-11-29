@@ -1,0 +1,33 @@
+"""
+URL маршруты для управления меню.
+"""
+
+from django.urls import path
+
+from .views import (
+    UserMenuView,
+    MenuItemListView,
+    MenuItemDetailView,
+    MenuItemReorderView,
+    MenuSeparatorListView,
+    MenuSeparatorDetailView,
+    MenuSyncView,
+    MenuAccessLogView,
+    AvailableRoutesView,
+    AvailableIconsView,
+)
+
+
+urlpatterns = [
+    path('', UserMenuView.as_view(), name='user_menu'),
+    path('items/', MenuItemListView.as_view(), name='menu_items'),
+    path('items/<int:item_id>/', MenuItemDetailView.as_view(), name='menu_item_detail'),
+    path('items/reorder/', MenuItemReorderView.as_view(), name='menu_items_reorder'),
+    path('separators/', MenuSeparatorListView.as_view(), name='menu_separators'),
+    path('separators/<int:separator_id>/', MenuSeparatorDetailView.as_view(), name='menu_separator_detail'),
+    path('sync/', MenuSyncView.as_view(), name='menu_sync'),
+    path('access-log/', MenuAccessLogView.as_view(), name='menu_access_log'),
+    path('available-routes/', AvailableRoutesView.as_view(), name='available_routes'),
+    path('available-icons/', AvailableIconsView.as_view(), name='available_icons'),
+]
+

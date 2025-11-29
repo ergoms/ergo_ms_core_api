@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, include
 
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -67,4 +67,7 @@ urlpatterns = [
     path('module-permissions/', ModulePermissionListView.as_view(), name='module_permissions'),
     path('module-permissions/<int:permission_id>/', ModulePermissionDetailView.as_view(), name='module_permission_detail'),
     path('admin-users/', AdminUserRoleListView.as_view(), name='admin_users'),
+    
+    # Menu Management endpoints (подключаем подмодуль menu)
+    path('menu/', include('src.core.cms.adp.menu.urls')),
 ]
