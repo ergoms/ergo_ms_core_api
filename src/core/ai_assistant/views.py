@@ -3,16 +3,21 @@ from typing import Tuple, cast
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
+from rest_framework.viewsets import ViewSet
 from django.shortcuts import get_object_or_404
 from django.http import StreamingHttpResponse
+from django.utils import timezone
 import json
 import math
+from datetime import datetime
 
 from src.core.bi_analysis.bi_datasets.models import FileUpload, Dataset
 from .fast_bi_service import FastBIService, DEFAULT_MODEL, OLLAMA_BASE_URL
 from .config import build_runtime_config
 from .llm_clients import build_llm_client, LLMClientError
 from src.core.bi_analysis.bi_charts.models import Chart
+from src.core.utils.mixins import SwaggerSafeMixin
+from .models import ChatSession, ChatMessage
 import pandas as pd
 import numpy as np
 from scipy import signal, stats
@@ -162,6 +167,8 @@ class BIQueryView(APIView):
         want_commentary = request.data.get('want_commentary', True)
         use_stream = request.data.get('stream', True)  # По умолчанию streaming включен
         ollama_config = request.data.get('ollama_config')  # Настройки Ollama из module-config
+        session_id = request.data.get('session_id')  # ID сессии чата
+        module = 'bi'  # BI модуль
         
         if not file_id:
             return Response({
@@ -184,17 +191,53 @@ class BIQueryView(APIView):
                 'error': 'Файл не найден на диске'
             }, status=status.HTTP_404_NOT_FOUND)
         
+        # Получаем или создаем сессию чата
+        if session_id:
+            try:
+                session = ChatSession.objects.get(id=session_id, user=request.user, module=module)
+            except ChatSession.DoesNotExist:
+                session = None
+        else:
+            session = None
+        
+        if not session:
+            # Создаем новую сессию с названием на основе файла
+            session = ChatSession.objects.create(
+                user=request.user,
+                module=module,
+                title=f"BI: {file_upload.name}",
+                metadata={'file_id': file_id, 'file_name': file_upload.name}
+            )
+        
+        # Сохраняем сообщение пользователя
+        user_message = ChatMessage.objects.create(
+            session=session,
+            message_type=ChatMessage.MESSAGE_TYPE_USER,
+            content=question,
+            metadata={
+                'file_id': file_id,
+                'file_name': file_upload.name,
+                'ollama_config': ollama_config,
+            } if ollama_config else {
+                'file_id': file_id,
+                'file_name': file_upload.name,
+            }
+        )
+        
         # Если запрошен streaming режим
         if use_stream:
-            return self._streaming_response(file_upload, question, want_commentary, ollama_config)
+            return self._streaming_response(file_upload, question, want_commentary, ollama_config, session, user_message)
         
         # Обычный режим (без streaming)
-        return self._regular_response(file_upload, question, want_commentary, ollama_config)
+        return self._regular_response(file_upload, question, want_commentary, ollama_config, session, user_message)
     
-    def _streaming_response(self, file_upload, question, want_commentary, ollama_config=None):
+    def _streaming_response(self, file_upload, question, want_commentary, ollama_config=None, session=None, user_message=None):
         """Возвращает streaming ответ через Server-Sent Events."""
         def event_stream():
             service = None
+            assistant_message = None
+            request_started_at = timezone.now()
+            
             try:
                 # Инициализируем сервис с настройками модуля
                 service = FastBIService(ollama_config=ollama_config)
@@ -220,6 +263,7 @@ class BIQueryView(APIView):
                 streaming_events_queue = Queue()
                 result_container = {}
                 exception_container = {}
+                commentary_parts = []
                 
                 def run_ask():
                     try:
@@ -244,6 +288,11 @@ class BIQueryView(APIView):
                         event = streaming_events_queue.get(timeout=0.1)
                         if event is None:  # Сигнал завершения
                             break
+                        
+                        # Собираем комментарий для сохранения
+                        if event.get('type') == 'commentary' and event.get('text'):
+                            commentary_parts.append(event['text'])
+                        
                         yield f"data: {_safe_json_dumps(event, ensure_ascii=False)}\n\n"
                     except Empty:
                         # Если очередь пуста, продолжаем проверять поток
@@ -256,6 +305,8 @@ class BIQueryView(APIView):
                     raise exception_container['error']
                 
                 result = result_container.get('result', {})
+                response_received_at = timezone.now()
+                processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
                 
                 # Отправляем финальные данные
                 if result['success']:
@@ -270,6 +321,46 @@ class BIQueryView(APIView):
                     }
                     # Используем _safe_json_dumps для обработки NaN/Infinity в данных
                     yield f"data: {_safe_json_dumps(final_data, ensure_ascii=False)}\n\n"
+                    
+                    # Сохраняем ответ ассистента
+                    if session and user_message:
+                        commentary_text = ''.join(commentary_parts) if commentary_parts else result.get('comment', '')
+                        assistant_message = ChatMessage.objects.create(
+                            session=session,
+                            message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
+                            content=commentary_text,
+                            request_started_at=request_started_at,
+                            response_received_at=response_received_at,
+                            processing_time_ms=processing_time,
+                            metadata={
+                                'file_id': file_upload.id,
+                                'file_name': file_upload.name,
+                                'sql': result.get('sql'),
+                                'rows': result.get('rows'),
+                                'columns': result.get('columns'),
+                                'data': result.get('data'),
+                                'ollama_config': ollama_config,
+                            } if ollama_config else {
+                                'file_id': file_upload.id,
+                                'file_name': file_upload.name,
+                                'sql': result.get('sql'),
+                                'rows': result.get('rows'),
+                                'columns': result.get('columns'),
+                                'data': result.get('data'),
+                            }
+                        )
+                        
+                        # Обновляем время сессии
+                        session.updated_at = timezone.now()
+                        session.save(update_fields=['updated_at'])
+                        
+                        # Отправляем информацию о сессии
+                        yield f"data: {json.dumps({
+                            'type': 'session_info',
+                            'session_id': str(session.id),
+                            'message_id': str(assistant_message.id),
+                            'processing_time_ms': processing_time,
+                        }, ensure_ascii=False)}\n\n"
                 else:
                     yield f"data: {json.dumps({'type': 'error', 'message': result.get('error', 'Ошибка')})}\n\n"
                 
@@ -289,9 +380,11 @@ class BIQueryView(APIView):
         response['X-Accel-Buffering'] = 'no'
         return response
     
-    def _regular_response(self, file_upload, question, want_commentary, ollama_config=None):
+    def _regular_response(self, file_upload, question, want_commentary, ollama_config=None, session=None, user_message=None):
         """Возвращает обычный (не streaming) ответ."""
         try:
+            request_started_at = timezone.now()
+            
             # Инициализируем сервис с настройками модуля
             service = FastBIService(ollama_config=ollama_config)
             
@@ -309,7 +402,41 @@ class BIQueryView(APIView):
             result = service.ask(question, want_commentary=want_commentary)
             service.close()
             
+            response_received_at = timezone.now()
+            processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
+            
             if result['success']:
+                # Сохраняем ответ ассистента
+                if session and user_message:
+                    assistant_message = ChatMessage.objects.create(
+                        session=session,
+                        message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
+                        content=result.get('comment', ''),
+                        request_started_at=request_started_at,
+                        response_received_at=response_received_at,
+                        processing_time_ms=processing_time,
+                        metadata={
+                            'file_id': file_upload.id,
+                            'file_name': file_upload.name,
+                            'sql': result.get('sql'),
+                            'rows': result.get('rows'),
+                            'columns': result.get('columns'),
+                            'data': result.get('data'),
+                            'ollama_config': ollama_config,
+                        } if ollama_config else {
+                            'file_id': file_upload.id,
+                            'file_name': file_upload.name,
+                            'sql': result.get('sql'),
+                            'rows': result.get('rows'),
+                            'columns': result.get('columns'),
+                            'data': result.get('data'),
+                        }
+                    )
+                    
+                    # Обновляем время сессии
+                    session.updated_at = timezone.now()
+                    session.save(update_fields=['updated_at'])
+                
                 return Response({
                     'success': True,
                     'file_name': file_upload.name,
@@ -319,6 +446,9 @@ class BIQueryView(APIView):
                     'comment': result['comment'],
                     'rows': result['rows'],
                     'columns': result['columns'],
+                    'session_id': str(session.id) if session else None,
+                    'message_id': str(assistant_message.id) if session and user_message else None,
+                    'processing_time_ms': processing_time,
                 }, status=status.HTTP_200_OK)
             else:
                 return Response({
@@ -898,7 +1028,9 @@ class ChatView(APIView):
     
     Body:
     {
-        "message": "Как работает система?"
+        "message": "Как работает система?",
+        "session_id": "uuid",  # опционально, для продолжения существующего чата
+        "module": "chat"  # опционально, модуль AI ассистента
     }
     """
     permission_classes = [permissions.IsAuthenticated]
@@ -906,6 +1038,8 @@ class ChatView(APIView):
     def post(self, request):
         message = request.data.get('message')
         ollama_config = request.data.get('ollama_config')  # Настройки Ollama из module-config
+        session_id = request.data.get('session_id')
+        module = request.data.get('module', 'chat')
         
         if not message or not message.strip():
             return Response({
@@ -914,6 +1048,33 @@ class ChatView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            # Получаем или создаем сессию чата
+            if session_id:
+                try:
+                    session = ChatSession.objects.get(id=session_id, user=request.user)
+                except ChatSession.DoesNotExist:
+                    session = None
+            else:
+                session = None
+            
+            if not session:
+                session = ChatSession.objects.create(
+                    user=request.user,
+                    module=module,
+                    title=message[:50] if message else 'Новый чат'
+                )
+            
+            # Сохраняем сообщение пользователя
+            user_message = ChatMessage.objects.create(
+                session=session,
+                message_type=ChatMessage.MESSAGE_TYPE_USER,
+                content=message,
+                metadata={'ollama_config': ollama_config} if ollama_config else {}
+            )
+            
+            # Засекаем время начала запроса
+            request_started_at = timezone.now()
+            
             runtime_config, client = _create_ollama_client(ollama_config)
             temperature = (ollama_config or {}).get('temperature', 0.3)
             max_tokens = (ollama_config or {}).get('max_tokens', 2048)
@@ -923,8 +1084,20 @@ class ChatView(APIView):
 Отвечай кратко, по делу и дружелюбно на русском языке.
 Если не знаешь ответа, честно скажи об этом."""
             
+            # Загружаем контекст из истории чата
+            previous_messages = session.messages.filter(
+                message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT
+            ).order_by('-created_at')[:5]  # Последние 5 ответов для контекста
+            
+            context = ""
+            if previous_messages.exists():
+                context_parts = []
+                for msg in reversed(previous_messages):
+                    context_parts.append(f"Предыдущий ответ: {msg.content[:200]}")
+                context = "\n".join(context_parts) + "\n\n"
+            
             # Формируем сообщения
-            full_prompt = f"{system_prompt}\n\nВопрос пользователя: {message}"
+            full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}"
             
             answer = client.complete(
                 full_prompt,
@@ -933,10 +1106,36 @@ class ChatView(APIView):
                 stream=False,
             ).strip()
             
+            # Засекаем время получения ответа
+            response_received_at = timezone.now()
+            processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
+            
+            # Сохраняем ответ ассистента
+            assistant_message = ChatMessage.objects.create(
+                session=session,
+                message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
+                content=answer,
+                request_started_at=request_started_at,
+                response_received_at=response_received_at,
+                processing_time_ms=processing_time,
+                metadata={
+                    'ollama_config': ollama_config,
+                    'model': runtime_config.model,
+                } if ollama_config else {'model': runtime_config.model}
+            )
+            
+            # Обновляем время сессии
+            session.updated_at = timezone.now()
+            session.save(update_fields=['updated_at'])
+            
             return Response({
                 'success': True,
                 'response': answer,
                 'message': answer,  # Для совместимости
+                'session_id': str(session.id),
+                'message_id': str(assistant_message.id),
+                'processing_time_ms': processing_time,
+                'timestamp': assistant_message.created_at.isoformat(),
             }, status=status.HTTP_200_OK)
         
         except Exception as e:
@@ -953,12 +1152,14 @@ class ChatStreamView(APIView):
     
     Body:
     {
-        "message": "Как работает система?"
+        "message": "Как работает система?",
+        "session_id": "uuid",  # опционально, для продолжения существующего чата
+        "module": "chat"  # опционально, модуль AI ассистента
     }
     
     Response: SSE stream с событиями:
     - {"type": "chunk", "text": "..."} - часть ответа
-    - {"type": "done", "full_response": "..."} - завершение
+    - {"type": "done", "full_response": "...", "session_id": "...", "message_id": "...", "processing_time_ms": 123} - завершение
     - {"type": "error", "message": "..."} - ошибка
     """
     permission_classes = [permissions.IsAuthenticated]
@@ -966,6 +1167,8 @@ class ChatStreamView(APIView):
     def post(self, request):
         message = request.data.get('message')
         ollama_config = request.data.get('ollama_config')
+        session_id = request.data.get('session_id')
+        module = request.data.get('module', 'chat')
         
         if not message or not message.strip():
             return Response({
@@ -973,10 +1176,37 @@ class ChatStreamView(APIView):
                 'error': 'Не указано сообщение'
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        # Получаем или создаем сессию чата
+        if session_id:
+            try:
+                session = ChatSession.objects.get(id=session_id, user=request.user)
+            except ChatSession.DoesNotExist:
+                session = None
+        else:
+            session = None
+        
+        if not session:
+            session = ChatSession.objects.create(
+                user=request.user,
+                module=module,
+                title=message[:50] if message else 'Новый чат'
+            )
+        
+        # Сохраняем сообщение пользователя
+        user_message = ChatMessage.objects.create(
+            session=session,
+            message_type=ChatMessage.MESSAGE_TYPE_USER,
+            content=message,
+            metadata={'ollama_config': ollama_config} if ollama_config else {}
+        )
+        
         def event_stream():
             import threading
             
             try:
+                # Засекаем время начала запроса
+                request_started_at = timezone.now()
+                
                 runtime_config, client = _create_ollama_client(ollama_config)
                 temperature = (ollama_config or {}).get('temperature', 0.3)
                 max_tokens = (ollama_config or {}).get('max_tokens', 2048)
@@ -986,7 +1216,19 @@ class ChatStreamView(APIView):
 Отвечай кратко, по делу и дружелюбно на русском языке.
 Если не знаешь ответа, честно скажи об этом."""
                 
-                full_prompt = f"{system_prompt}\n\nВопрос пользователя: {message}"
+                # Загружаем контекст из истории чата
+                previous_messages = session.messages.filter(
+                    message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT
+                ).order_by('-created_at')[:5]  # Последние 5 ответов для контекста
+                
+                context = ""
+                if previous_messages.exists():
+                    context_parts = []
+                    for msg in reversed(previous_messages):
+                        context_parts.append(f"Предыдущий ответ: {msg.content[:200]}")
+                    context = "\n".join(context_parts) + "\n\n"
+                
+                full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}"
                 
                 # Оптимизация: используем Queue вместо списка
                 from queue import Queue, Empty
@@ -1033,9 +1275,39 @@ class ChatStreamView(APIView):
                 if 'error' in exception_container:
                     raise exception_container['error']
                 
+                # Засекаем время получения ответа
+                response_received_at = timezone.now()
+                processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
+                
                 # Отправляем финальное событие
                 full_response = result_container.get('response', '')
-                yield f"data: {json.dumps({'type': 'done', 'full_response': full_response}, ensure_ascii=False)}\n\n"
+                
+                # Сохраняем ответ ассистента
+                assistant_message = ChatMessage.objects.create(
+                    session=session,
+                    message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
+                    content=full_response,
+                    request_started_at=request_started_at,
+                    response_received_at=response_received_at,
+                    processing_time_ms=processing_time,
+                    metadata={
+                        'ollama_config': ollama_config,
+                        'model': runtime_config.model,
+                    } if ollama_config else {'model': runtime_config.model}
+                )
+                
+                # Обновляем время сессии
+                session.updated_at = timezone.now()
+                session.save(update_fields=['updated_at'])
+                
+                yield f"data: {json.dumps({
+                    'type': 'done',
+                    'full_response': full_response,
+                    'session_id': str(session.id),
+                    'message_id': str(assistant_message.id),
+                    'processing_time_ms': processing_time,
+                    'timestamp': assistant_message.created_at.isoformat(),
+                }, ensure_ascii=False)}\n\n"
                 
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
@@ -1047,6 +1319,144 @@ class ChatStreamView(APIView):
         response['Cache-Control'] = 'no-cache'
         response['X-Accel-Buffering'] = 'no'
         return response
+
+
+class ChatSessionViewSet(ViewSet, SwaggerSafeMixin):
+    """
+    ViewSet для работы с сессиями чатов
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def list(self, request):
+        """
+        GET /api/ai_assistant/chat_sessions/
+        Получить список сессий чатов пользователя
+        """
+        user = self.get_safe_user()
+        queryset = ChatSession.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        # Фильтрация по модулю
+        module = request.query_params.get('module')
+        if module:
+            queryset = queryset.filter(module=module)
+        
+        sessions = []
+        for session in queryset[:50]:  # Ограничиваем 50 последними
+            sessions.append({
+                'id': str(session.id),
+                'title': session.title or 'Без названия',
+                'module': session.module,
+                'message_count': session.message_count,
+                'created_at': session.created_at.isoformat(),
+                'updated_at': session.updated_at.isoformat(),
+                'metadata': session.metadata or {},
+            })
+        
+        return Response({
+            'success': True,
+            'sessions': sessions,
+            'count': len(sessions),
+        })
+    
+    def retrieve(self, request, pk=None):
+        """
+        GET /api/ai_assistant/chat_sessions/{id}/
+        Получить сессию чата с сообщениями
+        """
+        user = self.get_safe_user()
+        queryset = ChatSession.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        try:
+            session = queryset.get(id=pk)
+        except ChatSession.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Сессия не найдена'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        messages = []
+        for msg in session.messages.all():
+            messages.append({
+                'id': str(msg.id),
+                'type': msg.message_type,
+                'content': msg.content,
+                'created_at': msg.created_at.isoformat(),
+                'request_started_at': msg.request_started_at.isoformat() if msg.request_started_at else None,
+                'response_received_at': msg.response_received_at.isoformat() if msg.response_received_at else None,
+                'processing_time_ms': msg.processing_time_ms,
+                'metadata': msg.metadata,
+            })
+        
+        return Response({
+            'success': True,
+            'session': {
+                'id': str(session.id),
+                'title': session.title or 'Без названия',
+                'module': session.module,
+                'message_count': session.message_count,
+                'created_at': session.created_at.isoformat(),
+                'updated_at': session.updated_at.isoformat(),
+                'metadata': session.metadata or {},
+            },
+            'messages': messages,
+        })
+    
+    def create(self, request):
+        """
+        POST /api/ai_assistant/chat_sessions/
+        Создать новую сессию чата
+        """
+        user = self.get_safe_user()
+        if not user:
+            return Response({
+                'success': False,
+                'error': 'Пользователь не найден'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        title = request.data.get('title', 'Новый чат')
+        module = request.data.get('module', 'chat')
+        
+        session = ChatSession.objects.create(
+            user=user,
+            title=title,
+            module=module
+        )
+        
+        return Response({
+            'success': True,
+            'session': {
+                'id': str(session.id),
+                'title': session.title,
+                'module': session.module,
+                'message_count': 0,
+                'created_at': session.created_at.isoformat(),
+                'updated_at': session.updated_at.isoformat(),
+            }
+        }, status=status.HTTP_201_CREATED)
+    
+    def destroy(self, request, pk=None):
+        """
+        DELETE /api/ai_assistant/chat_sessions/{id}/
+        Удалить сессию чата
+        """
+        user = self.get_safe_user()
+        queryset = ChatSession.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        try:
+            session = queryset.get(id=pk)
+            session.delete()
+            return Response({
+                'success': True,
+                'message': 'Сессия удалена'
+            }, status=status.HTTP_200_OK)
+        except ChatSession.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Сессия не найдена'
+            }, status=status.HTTP_404_NOT_FOUND)
 
 
 
