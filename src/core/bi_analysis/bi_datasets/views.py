@@ -1037,6 +1037,21 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
         encoding   = request.query_params.get('encoding', 'utf-8')
         delimiter  = request.query_params.get('delimiter', ',')
         has_header = request.query_params.get('has_header', 'true').lower() == 'true'
+        
+        # Пагинация строк
+        limit = request.query_params.get('limit')
+        offset = request.query_params.get('offset', '0')
+        limit = int(limit) if limit else None
+        offset = int(offset) if offset else 0
+        
+        # Подсчитываем общее количество строк для пагинации
+        total_rows_count = None
+        try:
+            from src.core.bi_analysis.services.services import count_file_rows
+            sheet_name = request.query_params.get('sheet_name') or request.query_params.get('sheet')
+            total_rows_count = count_file_rows(instance.id, sheet_name)
+        except Exception as e:
+            logger.warning(f"Не удалось подсчитать строки для файла {instance.id}: {str(e)}")
 
         try:
             # Проверяем, является ли файл бинарным
@@ -1045,11 +1060,24 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
             if is_binary_file(instance.file.path) or instance.file_type == 'bin':
                 # Читаем из бинарного файла
                 columns, rows = read_from_binary(instance.file.path, row_limit=None)
-                if has_header and rows:
-                    parsed = [columns, *rows]
+                
+                # Применяем пагинацию
+                total_count = len(rows)
+                if limit is not None:
+                    paginated_rows = rows[offset:offset + limit]
                 else:
-                    parsed = rows
+                    paginated_rows = rows[offset:]
+                
+                if has_header and paginated_rows:
+                    parsed = [columns, *paginated_rows]
+                else:
+                    parsed = paginated_rows
+                
                 data['parsed'] = parsed
+                if total_rows_count is None:
+                    data['total_count'] = total_count
+                else:
+                    data['total_count'] = total_rows_count
                 return Response(data)
             
             if instance.file_type in ('csv', 'txt'):
@@ -1101,13 +1129,51 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
                                         cleaned_row.append(value)
                                 rows_list.append(cleaned_row)
                             
-                            if has_header:
-                                parsed = [list(columns), *rows_list]
+                            # Применяем пагинацию
+                            total_count = len(rows_list)
+                            if limit is not None:
+                                paginated_rows = rows_list[offset:offset + limit]
                             else:
-                                parsed = rows_list
+                                paginated_rows = rows_list[offset:]
+                            
+                            if has_header:
+                                parsed = [list(columns), *paginated_rows]
+                            else:
+                                parsed = paginated_rows
+                            
+                            # Добавляем общее количество строк
+                            if total_rows_count is None:
+                                data['total_count'] = total_count
+                            else:
+                                data['total_count'] = total_rows_count
                     except ImportError:
                         # Polars не установлен, используем старый метод
-                        parsed = self._parse_csv(instance.file.path, encoding, delimiter, has_header)
+                        all_parsed = self._parse_csv(instance.file.path, encoding, delimiter, has_header)
+                        
+                        # Применяем пагинацию
+                        if has_header and len(all_parsed) > 1:
+                            header = [all_parsed[0]]
+                            rows = all_parsed[1:]
+                            total_count = len(rows)
+                            if limit is not None:
+                                paginated_rows = rows[offset:offset + limit]
+                            else:
+                                paginated_rows = rows[offset:]
+                            parsed = header + paginated_rows
+                            if total_rows_count is None:
+                                data['total_count'] = total_count
+                            else:
+                                data['total_count'] = total_rows_count
+                        else:
+                            total_count = len(all_parsed)
+                            if limit is not None:
+                                parsed = all_parsed[offset:offset + limit]
+                            else:
+                                parsed = all_parsed[offset:]
+                            if total_rows_count is None:
+                                data['total_count'] = total_count
+                            else:
+                                data['total_count'] = total_rows_count
 
             elif instance.file_type == 'xlsx':
                 # Читаем через Polars для эффективной обработки больших Excel файлов
@@ -1158,21 +1224,84 @@ class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
                                 cleaned_row.append(value)
                         rows_list.append(cleaned_row)
                     
-                    if has_header and rows_list:
-                        parsed = [list(columns), *rows_list]
+                    # Применяем пагинацию
+                    total_count = len(rows_list)
+                    if limit is not None:
+                        paginated_rows = rows_list[offset:offset + limit]
                     else:
-                        parsed = rows_list
+                        paginated_rows = rows_list[offset:]
+                    
+                    if has_header and paginated_rows:
+                        parsed = [list(columns), *paginated_rows]
+                    else:
+                        parsed = paginated_rows
+                    
+                    # Добавляем общее количество строк
+                    if total_rows_count is None:
+                        data['total_count'] = total_count
+                    else:
+                        data['total_count'] = total_rows_count
                         
                 except ImportError:
                     # Polars не установлен, используем старый метод
-                    parsed, sheets = self._parse_xlsx(instance.file.path, has_header)
+                    all_parsed, sheets = self._parse_xlsx(instance.file.path, has_header)
                     data['sheets'] = sheets
+                    
+                    # Применяем пагинацию
+                    if has_header and len(all_parsed) > 1:
+                        header = [all_parsed[0]]
+                        rows = all_parsed[1:]
+                        total_count = len(rows)
+                        if limit is not None:
+                            paginated_rows = rows[offset:offset + limit]
+                        else:
+                            paginated_rows = rows[offset:]
+                        parsed = header + paginated_rows
+                        if total_rows_count is None:
+                            data['total_count'] = total_count
+                        else:
+                            data['total_count'] = total_rows_count
+                    else:
+                        total_count = len(all_parsed)
+                        if limit is not None:
+                            parsed = all_parsed[offset:offset + limit]
+                        else:
+                            parsed = all_parsed[offset:]
+                        if total_rows_count is None:
+                            data['total_count'] = total_count
+                        else:
+                            data['total_count'] = total_rows_count
                 except Exception as e:
                     logger.error(f"Ошибка при чтении Excel через Polars: {e}")
                     # Fallback на старый метод
                     try:
-                        parsed, sheets = self._parse_xlsx(instance.file.path, has_header)
+                        all_parsed, sheets = self._parse_xlsx(instance.file.path, has_header)
                         data['sheets'] = sheets
+                        
+                        # Применяем пагинацию
+                        if has_header and len(all_parsed) > 1:
+                            header = [all_parsed[0]]
+                            rows = all_parsed[1:]
+                            total_count = len(rows)
+                            if limit is not None:
+                                paginated_rows = rows[offset:offset + limit]
+                            else:
+                                paginated_rows = rows[offset:]
+                            parsed = header + paginated_rows
+                            if total_rows_count is None:
+                                data['total_count'] = total_count
+                            else:
+                                data['total_count'] = total_rows_count
+                        else:
+                            total_count = len(all_parsed)
+                            if limit is not None:
+                                parsed = all_parsed[offset:offset + limit]
+                            else:
+                                parsed = all_parsed[offset:]
+                            if total_rows_count is None:
+                                data['total_count'] = total_count
+                            else:
+                                data['total_count'] = total_rows_count
                     except Exception as e2:
                         logger.error(f"Ошибка при чтении Excel через fallback метод: {e2}")
                         raise ValidationError(f"Ошибка чтения Excel файла: {str(e2)}")
