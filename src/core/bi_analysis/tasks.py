@@ -5,6 +5,7 @@ Celery задачи для асинхронной обработки предп�
 
 import logging
 import os
+import gc
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from celery import shared_task
@@ -226,6 +227,11 @@ def _read_file_chunked(file_upload_id: int, sheet_name: Optional[str] = None,
                 rows_read += len(chunk_rows_list)
                 chunk_count += 1
                 
+                # Очистка мусора после каждого чанка для больших файлов
+                if chunk_count % 10 == 0:  # Каждые 10 чанков
+                    del chunk_df
+                    gc.collect()
+                
                 # Обновляем прогресс
                 if progress_callback and estimated_rows > 0:
                     progress = min(0.9, 0.1 + (rows_read / estimated_rows) * 0.8)
@@ -346,9 +352,13 @@ def _read_files_parallel_with_progress(file_data_list: List[Dict[str, Any]],
             idx = futures[future]
             try:
                 results[idx] = future.result()
+                # Очистка мусора после обработки каждого файла
+                gc.collect()
             except Exception as e:
                 logger.error(f"Ошибка чтения файла {file_data_list[idx]}: {str(e)}")
                 results[idx] = ([], [])
+                # Очистка мусора даже при ошибке
+                gc.collect()
     
     return results
 
