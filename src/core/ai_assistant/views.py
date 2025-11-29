@@ -18,9 +18,47 @@ from .llm_clients import build_llm_client, LLMClientError
 from src.core.bi_analysis.bi_charts.models import Chart
 from src.core.utils.mixins import SwaggerSafeMixin
 from .models import ChatSession, ChatMessage
+from .math_tools import MathToolsService
 import pandas as pd
 import numpy as np
 from scipy import signal, stats
+
+# Глобальный экземпляр сервиса математики (ленивая инициализация)
+_math_service: MathToolsService | None = None
+
+
+def _get_math_service() -> MathToolsService:
+    """Получает или создаёт сервис математических вычислений."""
+    global _math_service
+    if _math_service is None:
+        _math_service = MathToolsService()
+    return _math_service
+
+
+def _process_math_query(message: str) -> tuple[bool, str | None, dict | None]:
+    """
+    Проверяет и обрабатывает математический запрос.
+    
+    Returns:
+        (is_math, result_text, metadata) - если is_math=True, result_text содержит результат
+    """
+    math_service = _get_math_service()
+    
+    if not math_service.is_math_query(message):
+        return False, None, None
+    
+    result = math_service.calculate(message)
+    if result.success:
+        formatted = math_service.format_result_for_chat(result)
+        metadata = {
+            'math_result': True,
+            'operation_type': result.operation_type,
+            'result': str(result.result),
+            'result_latex': result.result_latex,
+        }
+        return True, formatted, metadata
+    
+    return False, None, None
 
 
 def _sanitize_for_json(obj):
@@ -128,7 +166,12 @@ class UserFilesListView(APIView):
 
 
 def _create_ollama_client(ollama_config=None):
-    runtime_config = build_runtime_config(ollama_config or {})
+    # Принудительно используем Ollama если провайдер не указан явно
+    config_with_defaults = ollama_config or {}
+    if 'provider' not in config_with_defaults:
+        config_with_defaults = {**config_with_defaults, 'provider': 'ollama'}
+    
+    runtime_config = build_runtime_config(config_with_defaults)
     provider_name = runtime_config.provider.value if hasattr(runtime_config.provider, "value") else str(runtime_config.provider)
     base_url = runtime_config.provider_config.get("base_url", runtime_config.base_url or OLLAMA_BASE_URL)
     client = build_llm_client(
@@ -1075,12 +1118,16 @@ class ChatView(APIView):
             # Засекаем время начала запроса
             request_started_at = timezone.now()
             
+            # Проверяем математический запрос
+            is_math, math_result, math_metadata = _process_math_query(message)
+            
             runtime_config, client = _create_ollama_client(ollama_config)
             temperature = (ollama_config or {}).get('temperature', 0.3)
             max_tokens = (ollama_config or {}).get('max_tokens', 2048)
 
             system_prompt = """Ты - полезный AI ассистент системы ERGO MS. 
 Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
+Ты умеешь выполнять математические вычисления: арифметика, алгебра, производные, интегралы, пределы, решение уравнений.
 Отвечай кратко, по делу и дружелюбно на русском языке.
 Если не знаешь ответа, честно скажи об этом."""
             
@@ -1096,8 +1143,12 @@ class ChatView(APIView):
                     context_parts.append(f"Предыдущий ответ: {msg.content[:200]}")
                 context = "\n".join(context_parts) + "\n\n"
             
-            # Формируем сообщения
-            full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}"
+            # Если математический запрос - добавляем результат в контекст
+            if is_math and math_result:
+                math_context = f"\n\n[МАТЕМАТИЧЕСКИЙ РЕЗУЛЬТАТ]\n{math_result}\n[/МАТЕМАТИЧЕСКИЙ РЕЗУЛЬТАТ]\n\nПрокомментируй этот результат кратко, объясни что получилось."
+                full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}{math_context}"
+            else:
+                full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}"
             
             answer = client.complete(
                 full_prompt,
@@ -1105,6 +1156,10 @@ class ChatView(APIView):
                 temperature=temperature,
                 stream=False,
             ).strip()
+            
+            # Если был математический результат, добавляем его в начало ответа
+            if is_math and math_result:
+                answer = f"{math_result}\n\n{answer}"
             
             # Засекаем время получения ответа
             response_received_at = timezone.now()
@@ -1207,12 +1262,22 @@ class ChatStreamView(APIView):
                 # Засекаем время начала запроса
                 request_started_at = timezone.now()
                 
+                # Проверяем математический запрос
+                is_math, math_result, math_metadata = _process_math_query(message)
+                math_prefix = ""
+                
+                # Если математический запрос - сначала отправляем результат
+                if is_math and math_result:
+                    yield f"data: {_safe_json_dumps({'type': 'math_result', 'text': math_result}, ensure_ascii=False)}\n\n"
+                    math_prefix = f"{math_result}\n\n"
+                
                 runtime_config, client = _create_ollama_client(ollama_config)
                 temperature = (ollama_config or {}).get('temperature', 0.3)
                 max_tokens = (ollama_config or {}).get('max_tokens', 2048)
 
                 system_prompt = """Ты - полезный AI ассистент системы ERGO MS. 
 Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
+Ты умеешь выполнять математические вычисления: арифметика, алгебра, производные, интегралы, пределы, решение уравнений.
 Отвечай кратко, по делу и дружелюбно на русском языке.
 Если не знаешь ответа, честно скажи об этом."""
                 
@@ -1228,7 +1293,12 @@ class ChatStreamView(APIView):
                         context_parts.append(f"Предыдущий ответ: {msg.content[:200]}")
                     context = "\n".join(context_parts) + "\n\n"
                 
-                full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}"
+                # Если математический запрос - добавляем результат в контекст
+                if is_math and math_result:
+                    math_context = f"\n\n[МАТЕМАТИЧЕСКИЙ РЕЗУЛЬТАТ]\n{math_result}\n[/МАТЕМАТИЧЕСКИЙ РЕЗУЛЬТАТ]\n\nПрокомментируй этот результат кратко, объясни что получилось."
+                    full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}{math_context}"
+                else:
+                    full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}"
                 
                 # Оптимизация: используем Queue вместо списка
                 from queue import Queue, Empty
@@ -1280,7 +1350,7 @@ class ChatStreamView(APIView):
                 processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
                 
                 # Отправляем финальное событие
-                full_response = result_container.get('response', '')
+                full_response = math_prefix + result_container.get('response', '')
                 
                 # Сохраняем ответ ассистента
                 assistant_message = ChatMessage.objects.create(
