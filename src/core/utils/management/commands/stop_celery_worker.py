@@ -5,17 +5,37 @@
 функциональность для поиска и остановки запущенного процесса Celery worker.
 
 Пример использования:
->>> python src/manage.py celery_worker_stop
+>>> python src/manage.py stop_celery_worker --all
+>>> python src/manage.py stop_celery_worker --worker=gpu
+>>> python src/manage.py stop_celery_worker --hostname=gpu_worker
 """
 
 import psutil
 import logging
+import yaml
 
-from typing import Optional, List, cast
+from typing import Optional, List, Dict, Any, cast
+from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandParser
+from src.config.settings.base import SYSTEM_DIR
 
 logger = logging.getLogger('core.utils.commands')
+
+# Путь к конфигу worker'ов
+WORKERS_CONFIG_PATH = SYSTEM_DIR / 'celery_workers.yaml'
+
+
+def load_workers_config() -> Dict[str, Any]:
+    """Загружает конфигурацию worker'ов из YAML файла."""
+    if not WORKERS_CONFIG_PATH.exists():
+        return {}
+    try:
+        with open(WORKERS_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.error(f"Ошибка загрузки конфигурации worker'ов: {e}")
+        return {}
 
 class Command(BaseCommand):
     """
@@ -34,6 +54,12 @@ class Command(BaseCommand):
             parser: Парсер аргументов командной строки
         """
         parser.add_argument(
+            '--worker',
+            type=str,
+            default=None,
+            help='Имя worker\'а из celery_workers.yaml (gpu, cpu, parser, default)'
+        )
+        parser.add_argument(
             '--queues',
             type=str,
             default=None,
@@ -47,6 +73,7 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--all',
+            default=True,
             action='store_true',
             help='Остановить все запущенные worker\'ы'
         )
@@ -125,26 +152,101 @@ class Command(BaseCommand):
             List[psutil.Process]: Список процессов worker'ов
         """
         workers = []
+        seen_pids = set()
+        
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                pid = proc.info.get('pid')
+                if pid in seen_pids:
+                    continue
+                    
+                cmdline = proc.info.get('cmdline') or []
+                if not cmdline:
+                    continue
+                    
+                cmdline_str = ' '.join(cmdline).lower()
+
+                # Совпадение: celery worker процесс
+                # Ищем "celery" и "worker" в командной строке
+                is_celery_worker = ('celery' in cmdline_str and 'worker' in cmdline_str)
+
+                if is_celery_worker:
+                    workers.append(proc)
+                    seen_pids.add(pid)
+                    logger.debug(
+                        f"Найден процесс Celery worker: PID={pid}, CMDLINE={' '.join(cmdline)}"
+                    )
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        
+        logger.info(f"Найдено {len(workers)} Celery worker процессов")
+        return workers
+    
+    def find_workers_by_hostname(self, hostname: str) -> List[psutil.Process]:
+        """
+        Ищет процессы Celery worker по hostname.
+
+        Args:
+            hostname: Имя worker'а (hostname)
+
+        Returns:
+            List[psutil.Process]: Список найденных процессов
+        """
+        workers = []
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 cmdline = proc.info.get('cmdline') or []
-                cmdline_lower = [part.lower() for part in cmdline]
+                if not cmdline:
+                    continue
+                    
+                cmdline_str = ' '.join(cmdline)
+                cmdline_lower = cmdline_str.lower()
 
-                # Совпадение 1: стандартный процесс Celery worker
-                is_celery_worker = ('celery' in cmdline_lower and 'worker' in cmdline_lower)
-
-                # Совпадение 2: процесс запуска через обертку "api start_celery_worker"
-                is_wrapper_worker = ('start_celery_worker' in cmdline_lower)
-
-                if is_celery_worker or is_wrapper_worker:
+                # Проверяем что это celery worker
+                if 'celery' not in cmdline_lower or 'worker' not in cmdline_lower:
+                    continue
+                
+                # Проверяем hostname
+                if f'--hostname={hostname}' in cmdline_str or f'-n {hostname}' in cmdline_str:
                     workers.append(proc)
-                    logger.debug(
-                        f"Найден процесс Celery worker: PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
-                    )
-            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                logger.error(f'Ошибка при поиске процесса: {e}')
+                    logger.debug(f"Найден worker с hostname={hostname}: PID={proc.pid}")
+                    
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
+        
         return workers
+
+    def _stop_processes(self, processes: List[psutil.Process], label: str = "") -> int:
+        """
+        Останавливает список процессов.
+        
+        Args:
+            processes: Список процессов для остановки
+            label: Метка для логирования
+            
+        Returns:
+            Количество успешно остановленных процессов
+        """
+        stopped_count = 0
+        for process in processes:
+            try:
+                pid = process.pid
+                logger.info(f'Остановка Celery worker {label}(PID: {pid})')
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    logger.warning(f'Таймаут при ожидании завершения PID={pid}, принудительное завершение')
+                    process.kill()
+                    process.wait(timeout=2)
+                stopped_count += 1
+                self.stdout.write(self.style.SUCCESS(f'  Остановлен PID={pid}'))
+            except psutil.NoSuchProcess:
+                self.stdout.write(self.style.WARNING(f'  Процесс PID={process.pid} уже завершен'))
+                stopped_count += 1
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f'  Ошибка остановки PID={process.pid}: {e}'))
+        return stopped_count
 
     def handle(self, *args: tuple, **options: dict) -> None:
         """
@@ -152,57 +254,79 @@ class Command(BaseCommand):
 
         Args:
             *args: Позиционные аргументы
-            **options: Именованные аргументы, включая queues, hostname, all
+            **options: Именованные аргументы
         """
+        worker_name: Optional[str] = cast(Optional[str], options.get('worker'))
         queues: Optional[str] = cast(Optional[str], options.get('queues'))
         hostname: Optional[str] = cast(Optional[str], options.get('hostname'))
         stop_all: bool = cast(bool, options.get('all', False))
         
-        logger.info(f'Запуск команды stop_celery_worker (queues={queues}, hostname={hostname}, all={stop_all})')
+        logger.info(f'Запуск команды stop_celery_worker (worker={worker_name}, queues={queues}, hostname={hostname}, all={stop_all})')
         
+        # Режим 1: Остановить все worker'ы
         if stop_all:
-            # Останавливаем все worker'ы
+            self.stdout.write("Поиск всех Celery worker'ов...")
             workers = self.find_all_celery_workers()
+            
             if not workers:
-                msg = 'Запущенные Celery worker процессы не найдены'
-                logger.warning(msg)
-                self.stdout.write(self.style.WARNING(msg))
+                self.stdout.write(self.style.WARNING('Запущенные Celery worker процессы не найдены'))
                 return
             
-            stopped_count = 0
-            for process in workers:
-                try:
-                    logger.info(f'Остановка Celery worker (PID: {process.pid})')
-                    process.terminate()
-                    process.wait(timeout=5)
-                    stopped_count += 1
-                    msg = f'Celery worker процесс (PID: {process.pid}) успешно остановлен'
-                    logger.info(msg)
-                    self.stdout.write(self.style.SUCCESS(msg))
-                except Exception as e:
-                    msg = f'Ошибка при остановке Celery worker (PID: {process.pid}): {str(e)}'
-                    logger.error(msg)
-                    self.stdout.write(self.style.ERROR(msg))
+            self.stdout.write(f"Найдено {len(workers)} worker'ов, останавливаем...")
+            stopped = self._stop_processes(workers)
+            self.stdout.write(self.style.SUCCESS(f"\nОстановлено: {stopped} из {len(workers)}"))
+            return
+        
+        # Режим 2: Остановить worker по имени из конфига
+        if worker_name:
+            config = load_workers_config()
+            workers_config = config.get('workers', {})
             
-            msg = f'Остановлено worker\'ов: {stopped_count} из {len(workers)}'
-            self.stdout.write(self.style.SUCCESS(msg))
-        else:
-            # Останавливаем конкретный worker
-            process = self.find_celery_worker(queues=queues, hostname=hostname)
+            if worker_name not in workers_config:
+                available = ', '.join(workers_config.keys()) if workers_config else 'нет'
+                self.stdout.write(self.style.ERROR(f"Worker '{worker_name}' не найден. Доступные: {available}"))
+                return
             
+            worker_conf = workers_config[worker_name]
+            target_hostname = worker_conf.get('hostname', f'worker@{worker_name}')
+            
+            self.stdout.write(f"Поиск worker'а '{worker_name}' (hostname={target_hostname})...")
+            workers = self.find_workers_by_hostname(target_hostname)
+            
+            if not workers:
+                self.stdout.write(self.style.WARNING(f"Worker '{worker_name}' не запущен"))
+                return
+            
+            stopped = self._stop_processes(workers, f"'{worker_name}' ")
+            self.stdout.write(self.style.SUCCESS(f"\nWorker '{worker_name}' остановлен ({stopped} процессов)"))
+            return
+        
+        # Режим 3: Остановить по hostname
+        if hostname:
+            self.stdout.write(f"Поиск worker'ов с hostname={hostname}...")
+            workers = self.find_workers_by_hostname(hostname)
+            
+            if not workers:
+                self.stdout.write(self.style.WARNING(f"Worker с hostname={hostname} не найден"))
+                return
+            
+            stopped = self._stop_processes(workers)
+            self.stdout.write(self.style.SUCCESS(f"\nОстановлено: {stopped}"))
+            return
+        
+        # Режим 4: Остановить по очередям
+        if queues:
+            process = self.find_celery_worker(queues=queues)
             if process:
-                try:
-                    logger.info(f'Остановка Celery worker (PID: {process.pid})')
-                    process.terminate()
-                    process.wait(timeout=5)
-                    msg = f'Celery worker процесс (PID: {process.pid}) успешно остановлен'
-                    logger.info(msg)
-                    self.stdout.write(self.style.SUCCESS(msg))
-                except Exception as e:
-                    msg = f'Ошибка при остановке Celery worker: {str(e)}'
-                    logger.error(msg)
-                    self.stdout.write(self.style.ERROR(msg))
+                self._stop_processes([process])
+                self.stdout.write(self.style.SUCCESS("Worker остановлен"))
             else:
-                msg = 'Celery worker процесс не найден'
-                logger.warning(msg)
-                self.stdout.write(self.style.WARNING(msg))
+                self.stdout.write(self.style.WARNING(f"Worker с очередями {queues} не найден"))
+            return
+        
+        # Без параметров — показать справку
+        self.stdout.write("Использование:")
+        self.stdout.write("  --all              Остановить все worker'ы")
+        self.stdout.write("  --worker=<имя>     Остановить worker из celery_workers.yaml")
+        self.stdout.write("  --hostname=<имя>   Остановить worker по hostname")
+        self.stdout.write("  --queues=<список>  Остановить worker по очередям")

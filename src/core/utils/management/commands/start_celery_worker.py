@@ -5,21 +5,43 @@
 функциональность для запуска процесса Celery worker с настройкой пула потоков и уровня логирования.
 
 Пример использования:
->>> python src/manage.py start_celery_worker [--loglevel=info]
+>>> python src/manage.py start_celery_worker                 # Запустить все worker'ы из конфига
+>>> python src/manage.py start_celery_worker --worker=gpu    # Запустить конкретный worker
+>>> python src/manage.py start_celery_worker --queues=video_analysis  # Запустить для конкретных очередей
 """
 
 import subprocess
 import sys
 import psutil
 import logging
+import yaml
 
 from pathlib import Path
-from typing import Optional, List, cast
+from typing import Optional, List, Dict, Any, cast
 
 from django.core.management.base import BaseCommand, CommandParser
 from src.core.utils.celery.manager import CeleryModuleManager
+from src.config.settings.base import SYSTEM_DIR
 
 logger = logging.getLogger('core.utils.commands')
+
+# Путь к конфигу worker'ов
+WORKERS_CONFIG_PATH = SYSTEM_DIR / 'celery_workers.yaml'
+
+
+def load_workers_config() -> Dict[str, Any]:
+    """Загружает конфигурацию worker'ов из YAML файла."""
+    if not WORKERS_CONFIG_PATH.exists():
+        logger.debug(f"Файл конфигурации worker'ов не найден: {WORKERS_CONFIG_PATH}")
+        return {}
+    
+    try:
+        with open(WORKERS_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+            return config or {}
+    except Exception as e:
+        logger.error(f"Ошибка загрузки конфигурации worker'ов: {e}")
+        return {}
 
 class Command(BaseCommand):
     """
@@ -37,6 +59,18 @@ class Command(BaseCommand):
         Args:
             parser: Парсер аргументов командной строки
         """
+        parser.add_argument(
+            '--worker',
+            type=str,
+            default=None,
+            help='Имя worker\'а из celery_workers.yaml (gpu, cpu, parser, default, all). '
+                 'Используйте --list-workers для списка доступных worker\'ов.'
+        )
+        parser.add_argument(
+            '--list-workers',
+            action='store_true',
+            help='Показать список доступных worker\'ов из конфигурации'
+        )
         parser.add_argument(
             '--loglevel',
             default='info',
@@ -108,63 +142,47 @@ class Command(BaseCommand):
         logger.debug('Процесс Celery worker не найден')
         return None
 
-    def handle(self, *args: tuple, **options: dict) -> None:
-        """
-        Выполняет команду запуска Celery worker.
-
-        Args:
-            *args: Позиционные аргументы
-            **options: Именованные аргументы, включая loglevel, queues, hostname
-        """
-        queues: Optional[str] = cast(Optional[str], options.get('queues'))
-        hostname: Optional[str] = cast(Optional[str], options.get('hostname'))
+    def list_available_workers(self) -> None:
+        """Выводит список доступных worker'ов из конфигурации."""
+        config = load_workers_config()
+        workers = config.get('workers', {})
         
-        logger.info(f'Запуск команды start_celery_worker (queues={queues}, hostname={hostname})')
-        
-        # Проверяем, не запущен ли уже worker с такими же очередями или hostname
-        if self.find_celery_worker(queues=queues, hostname=hostname):
-            msg = f'Celery worker с указанными параметрами уже запущен'
-            logger.warning(msg)
-            self.stdout.write(self.style.WARNING(msg))
+        if not workers:
+            self.stdout.write(self.style.WARNING(
+                f"Конфигурация worker'ов не найдена. Создайте файл {WORKERS_CONFIG_PATH}"
+            ))
             return
+        
+        self.stdout.write(self.style.SUCCESS("\nДоступные worker'ы из celery_workers.yaml:\n"))
+        for name, worker_config in workers.items():
+            description = worker_config.get('description', 'Без описания')
+            queues = worker_config.get('queues', [])
+            if queues == 'all':
+                queues_str = 'все очереди'
+            else:
+                queues_str = ', '.join(queues) if queues else 'не указаны'
+            concurrency = worker_config.get('concurrency', 'по умолчанию')
+            hostname = worker_config.get('hostname', 'авто')
+            
+            self.stdout.write(f"  {self.style.NOTICE(name)}:")
+            self.stdout.write(f"    Описание: {description}")
+            self.stdout.write(f"    Очереди: {queues_str}")
+            self.stdout.write(f"    Concurrency: {concurrency}")
+            self.stdout.write(f"    Hostname: {hostname}")
+            self.stdout.write("")
+        
+        self.stdout.write(self.style.SUCCESS(
+            "Использование: api start_celery_worker --worker=<имя>\n"
+        ))
 
-        # Определяем рабочую директорию (core/api/)
-        api_dir = Path(__file__).resolve().parents[5]  # Путь к core/api/
-        
-        # Получаем все очереди из модулей
-        module_manager = CeleryModuleManager()
-        all_queues = module_manager.get_all_task_queues()
-        
-        # Формируем список очередей
-        if queues:
-            # Используем указанные очереди
-            queue_names = set(q.strip() for q in str(queues).split(','))
-            # Проверяем, что все указанные очереди существуют
-            available_queues = set(all_queues.keys())
-            invalid_queues = queue_names - available_queues
-            if invalid_queues:
-                msg = f'Неизвестные очереди: {", ".join(invalid_queues)}. Доступные очереди: {", ".join(sorted(available_queues))}'
-                logger.error(msg)
-                self.stdout.write(self.style.ERROR(msg))
-                return
-        else:
-            # Используем все очереди из модулей (всегда включаем default)
-            queue_names = set(['default'])  # Очередь по умолчанию всегда должна быть
-            queue_names.update(all_queues.keys())  # Добавляем все очереди из модулей
-        
-        # Сортируем для консистентности
-        queue_list = sorted(queue_names)
-        queues_str = ','.join(queue_list)
-        
-        # Генерируем hostname, если не указан
-        if not hostname:
-            # Создаем уникальное имя на основе очередей
-            queue_suffix = '_'.join(sorted(queue_list))[:50]  # Ограничиваем длину
-            hostname = f'worker@{queue_suffix}'
-        
-        logger.info(f'Очереди для worker: {queues_str}')
-        logger.info(f'Hostname worker: {hostname}')
-        
+    def build_worker_command(
+        self, 
+        queues_str: str, 
+        hostname: str, 
+        loglevel: str, 
+        concurrency: Optional[int] = None
+    ) -> List[str]:
+        """Формирует команду для запуска одного worker'а."""
         cmd: List[str] = [
             sys.executable,
             '-m',
@@ -174,24 +192,284 @@ class Command(BaseCommand):
             'worker',
             '-Q', queues_str,
             f'--hostname={hostname}',
-            f'--loglevel={options["loglevel"]}',
+            f'--loglevel={loglevel}',
             '--pool=threads',
             '-E',
         ]
-        
-        # Добавляем параметр concurrency, если указан
-        concurrency = options.get('concurrency')
         if concurrency:
             cmd.append(f'--concurrency={concurrency}')
+        return cmd
+
+    def start_single_worker(
+        self, 
+        api_dir: Path, 
+        queues_str: str, 
+        hostname: str, 
+        loglevel: str,
+        concurrency: Optional[int] = None,
+        background: bool = False
+    ) -> Optional[subprocess.Popen]:
+        """
+        Запускает один worker.
+        
+        Args:
+            api_dir: Рабочая директория
+            queues_str: Строка очередей через запятую
+            hostname: Имя worker'а
+            loglevel: Уровень логирования
+            concurrency: Количество потоков
+            background: Запускать в фоне
+            
+        Returns:
+            Popen объект если background=True, иначе None
+        """
+        cmd = self.build_worker_command(queues_str, hostname, loglevel, concurrency)
+        
+        logger.info(f'Запуск Celery worker: {" ".join(cmd)}')
+        self.stdout.write(self.style.SUCCESS(f'  Запуск worker "{hostname}" для очередей: {queues_str}'))
+        
+        if background:
+            # Запускаем в фоне
+            process = subprocess.Popen(
+                cmd, 
+                cwd=str(api_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                start_new_session=True
+            )
+            return process
+        else:
+            subprocess.run(cmd, cwd=str(api_dir))
+            return None
+
+    def handle(self, *args: tuple, **options: dict) -> None:
+        """
+        Выполняет команду запуска Celery worker.
+
+        Поведение:
+        - Без параметров: запускает все worker'ы из celery_workers.yaml (или один worker со всеми очередями если yaml нет)
+        - --worker=<имя>: запускает конкретный worker из yaml
+        - --queues=<очереди>: запускает worker для указанных очередей
+        """
+        # Показать список worker'ов
+        if options.get('list_workers'):
+            self.list_available_workers()
+            return
+        
+        # Загружаем конфиг
+        config = load_workers_config()
+        defaults = config.get('defaults', {})
+        workers_config = config.get('workers', {})
+        
+        # Определяем рабочую директорию (core/api/)
+        api_dir = Path(__file__).resolve().parents[5]
+        
+        # Получаем все очереди из модулей
+        module_manager = CeleryModuleManager()
+        all_module_queues = module_manager.get_all_task_queues()
+        
+        worker_name = cast(Optional[str], options.get('worker'))
+        queues_option = cast(Optional[str], options.get('queues'))
+        hostname_option = cast(Optional[str], options.get('hostname'))
+        concurrency_option = cast(Optional[int], options.get('concurrency'))
+        loglevel_option = cast(str, options.get('loglevel', 'info'))
+        
+        # Режим 1: Указан конкретный worker из конфига
+        if worker_name:
+            if worker_name not in workers_config:
+                available = ', '.join(workers_config.keys()) if workers_config else 'нет'
+                self.stdout.write(self.style.ERROR(
+                    f"Worker '{worker_name}' не найден. Доступные: {available}"
+                ))
+                return
+            
+            self._start_worker_from_config(
+                str(worker_name),
+                workers_config[worker_name], 
+                defaults, 
+                api_dir, 
+                all_module_queues
+            )
+            return
+        
+        # Режим 2: Указаны очереди напрямую
+        if queues_option or hostname_option:
+            self._start_worker_direct(
+                api_dir, 
+                all_module_queues,
+                queues_option, 
+                hostname_option, 
+                loglevel_option, 
+                concurrency_option
+            )
+            return
+        
+        # Режим 3: Нет параметров — запускаем все worker'ы из конфига
+        if workers_config:
+            self._start_all_workers(workers_config, defaults, api_dir, all_module_queues)
+        else:
+            # Нет конфига — запускаем один worker со всеми очередями
+            self.stdout.write(self.style.WARNING(
+                f"Конфиг {WORKERS_CONFIG_PATH} не найден. Запуск worker'а со всеми очередями."
+            ))
+            self._start_worker_direct(api_dir, all_module_queues, None, None, loglevel_option, None)
+
+    def _resolve_queues(
+        self, 
+        queues_config: Any, 
+        all_module_queues: Dict[str, Any]
+    ) -> List[str]:
+        """Преобразует конфигурацию очередей в список строк."""
+        if queues_config == 'all' or queues_config is None:
+            queue_names = set(['default'])
+            queue_names.update(all_module_queues.keys())
+            return sorted(queue_names)
+        elif isinstance(queues_config, list):
+            return queues_config
+        elif isinstance(queues_config, str):
+            return [q.strip() for q in queues_config.split(',')]
+        return []
+
+    def _start_worker_from_config(
+        self, 
+        name: str, 
+        worker_conf: Dict[str, Any], 
+        defaults: Dict[str, Any],
+        api_dir: Path,
+        all_module_queues: Dict[str, Any]
+    ) -> None:
+        """Запускает один worker из конфигурации."""
+        queues = self._resolve_queues(worker_conf.get('queues'), all_module_queues)
+        hostname = worker_conf.get('hostname', f'worker@{name}')
+        concurrency = worker_conf.get('concurrency')
+        loglevel = worker_conf.get('loglevel', defaults.get('loglevel', 'info'))
+        
+        description = worker_conf.get('description', '')
+        self.stdout.write(self.style.SUCCESS(f"\nЗапуск worker '{name}': {description}"))
+        
+        # Проверяем не запущен ли уже
+        queues_str = ','.join(queues)
+        if self.find_celery_worker(hostname=hostname):
+            self.stdout.write(self.style.WARNING(f"Worker '{hostname}' уже запущен"))
+            return
         
         try:
-            logger.info(f'Запуск Celery worker с командой: {" ".join(cmd)}')
-            logger.info(f'Рабочая директория: {api_dir}')
-            self.stdout.write(self.style.SUCCESS(f'Запуск Celery worker для очередей: {queues_str}'))
-            subprocess.run(cmd, cwd=str(api_dir))
+            self.start_single_worker(api_dir, queues_str, hostname, loglevel, concurrency, background=False)
         except KeyboardInterrupt:
-            logger.info('Получен сигнал прерывания, завершение работы')
+            logger.info('Получен сигнал прерывания')
             sys.exit(0)
-        except Exception as e:
-            logger.error(f'Ошибка при запуске Celery worker: {e}')
-            raise 
+
+    def _start_worker_direct(
+        self,
+        api_dir: Path,
+        all_module_queues: Dict[str, Any],
+        queues: Optional[str],
+        hostname: Optional[str],
+        loglevel: str,
+        concurrency: Optional[int]
+    ) -> None:
+        """Запускает worker с указанными параметрами напрямую."""
+        if queues:
+            queue_names = set(q.strip() for q in queues.split(','))
+            available_queues = set(all_module_queues.keys())
+            invalid_queues = queue_names - available_queues - {'default'}
+            if invalid_queues:
+                self.stdout.write(self.style.ERROR(
+                    f'Неизвестные очереди: {", ".join(invalid_queues)}. '
+                    f'Доступные: {", ".join(sorted(available_queues))}'
+                ))
+                return
+            queue_list = sorted(queue_names)
+        else:
+            queue_list = sorted(set(['default']) | set(all_module_queues.keys()))
+        
+        queues_str = ','.join(queue_list)
+        
+        if not hostname:
+            queue_suffix = '_'.join(queue_list)[:50]
+            hostname = f'worker@{queue_suffix}'
+        
+        if self.find_celery_worker(hostname=hostname):
+            self.stdout.write(self.style.WARNING(f"Worker '{hostname}' уже запущен"))
+            return
+        
+        self.stdout.write(self.style.SUCCESS(f"\nЗапуск Celery worker"))
+        
+        try:
+            self.start_single_worker(api_dir, queues_str, hostname, loglevel, concurrency, background=False)
+        except KeyboardInterrupt:
+            logger.info('Получен сигнал прерывания')
+            sys.exit(0)
+
+    def _start_all_workers(
+        self, 
+        workers_config: Dict[str, Dict[str, Any]], 
+        defaults: Dict[str, Any],
+        api_dir: Path,
+        all_module_queues: Dict[str, Any]
+    ) -> None:
+        """Запускает все worker'ы из конфигурации параллельно в фоне."""
+        import time
+        
+        processes: List[subprocess.Popen] = []
+        started_workers: List[str] = []
+        
+        self.stdout.write(self.style.SUCCESS(
+            f"\nЗапуск {len(workers_config)} worker'ов из celery_workers.yaml...\n"
+        ))
+        
+        for name, worker_conf in workers_config.items():
+            queues = self._resolve_queues(worker_conf.get('queues'), all_module_queues)
+            hostname = worker_conf.get('hostname', f'worker@{name}')
+            concurrency = worker_conf.get('concurrency')
+            loglevel = worker_conf.get('loglevel', defaults.get('loglevel', 'info'))
+            
+            # Проверяем не запущен ли уже
+            if self.find_celery_worker(hostname=hostname):
+                self.stdout.write(self.style.WARNING(f"  Worker '{hostname}' уже запущен, пропуск"))
+                continue
+            
+            queues_str = ','.join(queues)
+            cmd = self.build_worker_command(queues_str, hostname, loglevel, concurrency)
+            
+            self.stdout.write(f"  Запуск '{name}' ({hostname}) -> очереди: {queues_str}")
+            
+            proc = subprocess.Popen(
+                cmd, 
+                cwd=str(api_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                start_new_session=True
+            )
+            processes.append(proc)
+            started_workers.append(hostname)
+            
+            time.sleep(0.3)
+        
+        if not processes:
+            self.stdout.write(self.style.WARNING("Нет worker'ов для запуска"))
+            return
+        
+        self.stdout.write(self.style.SUCCESS(
+            f"\nЗапущено {len(processes)} worker'ов: {', '.join(started_workers)}"
+        ))
+        self.stdout.write("Нажмите Ctrl+C для остановки...\n")
+        
+        # Ждем завершения
+        try:
+            while True:
+                alive = [p for p in processes if p.poll() is None]
+                if not alive:
+                    self.stdout.write(self.style.WARNING("Все worker'ы завершились"))
+                    break
+                time.sleep(1)
+        except KeyboardInterrupt:
+            self.stdout.write(self.style.WARNING("\nОстановка worker'ов..."))
+            for proc in processes:
+                if proc.poll() is None:
+                    proc.terminate()
+            time.sleep(2)
+            for proc in processes:
+                if proc.poll() is None:
+                    proc.kill()
+            self.stdout.write(self.style.SUCCESS("Worker'ы остановлены")) 
