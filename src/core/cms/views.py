@@ -1417,8 +1417,11 @@ class GetCMSPages(BaseAPIViewAuthMixin):
             pages = CMSPage.objects.all()
             pages_list = []
             for page in pages:
-                normalized_path = _normalize_path(page.path)
+                raw_path = page.path.replace('\\\\', '\\')
+                normalized_path = _normalize_path(raw_path)
+
                 module_name = path_to_module.get(normalized_path, 'core')
+
                 pages_list.append(
                     {
                         'id': page.id,
