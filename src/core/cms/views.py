@@ -14,16 +14,73 @@ from django.contrib.auth.models import (Group, Permission, User)
 
 from src.core.utils.base.base_views import BaseAPIViewAuthMixin
 from src.core.cms.models import (
-    ExpandedPermission, 
-    Accession, 
-    GroupCategory, 
-    ExpandedGroup, 
-    PermissionMark, 
+    ExpandedPermission,
     Accession,
-    CMSPage, 
-    CMSPageComponent
+    GroupCategory,
+    ExpandedGroup,
+    PermissionMark,
+    Accession,
+    CMSPage,
+    CMSPageComponent,
 )
 from src.core.cms.commands import GetUserExpandedPermissions
+from src.core.utils.auto_api.auto_config import ModuleDiscoverer
+
+
+def _normalize_path(path: str) -> str:
+    """
+    Приводит путь к каноничному виду:
+    - оставляет '/' как есть
+    - для остальных строк удаляет завершающий слеш
+    """
+    if not path:
+        return path
+    if path == '/':
+        return '/'
+    return path[:-1] if path.endswith('/') else path
+
+
+def _discover_client_routes_index() -> dict[str, str]:
+    """
+    Строит индекс client-путей -> имени модуля для всех маршрутов
+    из core и внешних модулей.
+
+    Используется CMS для синхронизации и отображения страниц
+    (экран ModulePagePermissions).
+    """
+    path_to_module: dict[str, str] = {}
+
+    discoverer = ModuleDiscoverer()
+    route_modules = discoverer.discover_client_route_modules()
+
+    for module_key, routes_path in route_modules.items():
+        # module_key имеет вид 'module:<name>' или 'core:<name>'
+        try:
+            _, module_name = module_key.split(':', 1)
+        except ValueError:
+            module_name = module_key
+
+        try:
+            with open(routes_path, 'r', encoding='utf-8') as routes_file:
+                routes_content = routes_file.read()
+
+            module_paths = re.findall(
+                r'["\']path["\']\s*:\s*["\'](.*?)["\']',
+                routes_content,
+            )
+
+            for route_path in module_paths:
+                # приводим escape-последовательности к runtime-формату
+                cleaned_path = route_path.replace('\\\\', '\\')
+                normalized = _normalize_path(cleaned_path)
+                # если путь уже есть, не перезаписываем — первый модуль считается основным
+                path_to_module.setdefault(normalized, module_name)
+        except Exception:
+            # Ошибку отдельного модуля не считаем критичной для всей выборки
+            continue
+
+    return path_to_module
+
 
 #Управление категорями групп
 class AddGroupCategory(BaseAPIViewAuthMixin):
@@ -1299,40 +1356,32 @@ class PatchAllProgectPages(BaseAPIViewAuthMixin):
                 break
         if(request.user.is_superuser | access):
             try:
-                paths = []
-                path =(os.getcwd().replace('\\','/')).replace('/api','/client/src/js/routers.js')
-                with open(path, 'r', encoding='utf-8') as file:
-                    content = file.read()
-                    const_pattern = r'const\s+(\w+Routes?)\s*='
-                    route_constants = re.findall(const_pattern, content)
-                    route_constants = [const for const in route_constants if (const != 'mainRoutes')& (const!= 'adminpanelRoutes')
-                        & (const!= 'userRoutes') & (const!='settingsRoutes') &(const!= 'startRoutes')]
-                    for const_name in route_constants:
-                        const_pattern = rf"const {const_name} = \[(.*?)\]"
-                        const_match = re.search(const_pattern, content, re.DOTALL)
-                        content_const = const_match.group(1)
-                        const_pattern = f"path: '(.*?)'"
-                        mainpath = re.search(const_pattern,content_const).group(1)
-                        const_pattern = r'children:(.*)'
-                        children = re.search(const_pattern, content_const, re.DOTALL)
-                        if children:
-                            const_pattern = f"path: '(.*?)'"
-                            paths1 = re.findall(const_pattern,children.group(1))
-                            for p in paths1:
-                                paths.append(mainpath+'/'+p)
-                            
-                        else:
-                            const_pattern =f"path: '(.*?)'"
-                            mainpathes = re.findall(const_pattern,content_const)
-                            for mainp in mainpathes:
-                                paths.append(mainp)
-                for p in paths:
-                    CMSPage.objects.get_or_create(path = p)
+                # Получаем все клиентские маршруты (core + внешние модули)
+                client_routes_index = _discover_client_routes_index()
+                normalized_paths = set(client_routes_index.keys())
+
+                # Нормализуем и обновляем существующие пути в CMSPage,
+                # чтобы избавиться от дубликатов вида '/path' и '/path/'.
+                for path in normalized_paths:
+                    normalized = _normalize_path(path)
+                    # Ищем существующие записи с нормализованным путём или тем же путём c завершающим слешем
+                    candidates = CMSPage.objects.filter(path__in=[normalized, f'{normalized}/'])
+                    if candidates.exists():
+                        # Оставляем первую запись с нормализованным путём
+                        main_page = candidates.first()
+                        if main_page.path != normalized:
+                            main_page.path = normalized
+                            main_page.save(update_fields=['path'])
+                        # Удаляем остальные дубликаты, если есть
+                        candidates.exclude(pk=main_page.pk).delete()
+                    else:
+                        CMSPage.objects.create(path=normalized)
+
                 return Response(
-                    paths,
+                    sorted(normalized_paths),
                     status=status.HTTP_200_OK
                 )
-                
+
             except Exception as e:
                 return Response(
                     {'error': str(e)},
@@ -1342,7 +1391,8 @@ class PatchAllProgectPages(BaseAPIViewAuthMixin):
             return Response(
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
+
 class GetCMSPages(BaseAPIViewAuthMixin):
     @swagger_auto_schema(
         operation_description="Получение всех страниц CMS",
@@ -1359,23 +1409,33 @@ class GetCMSPages(BaseAPIViewAuthMixin):
             if exp.permission_mark.id == 4:
                 access = True
                 break
-        if(request.user.is_superuser | access):
+
+        if request.user.is_superuser | access:
+            # Формируем индекс path -> module_name из клиентских маршрутов (core + внешние модули)
+            path_to_module = _discover_client_routes_index()
+
             pages = CMSPage.objects.all()
             pages_list = []
             for page in pages:
-                pages_list.append({
-                    'id': page.id,
-                    'path': page.path,
-                    'type': page.liminationtype
-                })
+                normalized_path = _normalize_path(page.path)
+                module_name = path_to_module.get(normalized_path, 'core')
+                pages_list.append(
+                    {
+                        'id': page.id,
+                        'path': page.path,
+                        'type': page.liminationtype,
+                        'module_name': module_name,
+                    }
+                )
+
             return Response(
                 {'pages': pages_list},
                 status=status.HTTP_200_OK
             )
-        else:
-            return Response(
-                status=status.HTTP_403_FORBIDDEN
-            )
+
+        return Response(
+            status=status.HTTP_403_FORBIDDEN
+        )
 
 class UpdatePageLiminationType(BaseAPIViewAuthMixin):
     @swagger_auto_schema(
