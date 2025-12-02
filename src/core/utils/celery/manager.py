@@ -10,7 +10,7 @@ from pathlib import Path
 
 from src.config.settings.base import MODULES_DIR
 from src.core.utils.celery.base import CeleryModuleConfig
-from src.core.utils.auto_api.auto_config import discover_installed_apps, discover_modules_apps, is_valid_module_name
+from src.core.utils.auto_api.auto_config import ModuleDiscoverer, is_valid_module_name
 
 class CeleryModuleManager:
     """
@@ -32,8 +32,10 @@ class CeleryModuleManager:
             self.logger.warning(f"Директория модулей не найдена: {modules_dir}")
             return
         
-        # Используем существующий алгоритм для обнаружения Django приложений
-        installed_apps = discover_modules_apps(str(modules_dir))
+        # Обнаруживаем Django приложения модулей через ModuleDiscoverer
+        discoverer = ModuleDiscoverer()
+        installed_apps: List[str] = []
+        discoverer._find_modules_apps(str(modules_dir), installed_apps)
         
         # Также ищем вложенные модули с tasks.py
         nested_modules = self._discover_nested_modules(modules_dir)

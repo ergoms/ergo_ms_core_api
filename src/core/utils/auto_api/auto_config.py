@@ -285,46 +285,6 @@ class ModuleDiscoverer:
         """Очищает весь кеш."""
         self._cache.clear()
 
-# Создаем глобальный экземпляр для обратной совместимости
-_module_discoverer = ModuleDiscoverer()
-
-def discover_installed_apps(apps_dir: str) -> List[str]:
-    """
-    Рекурсивно обходит директории и находит установленные приложения, включая подмодули.
-    Использует единый ModuleDiscoverer для унификации поиска.
-    
-    Аргументы:
-        apps_dir (str): Базовая директория, в которой находятся приложения.
-    Возвращает:
-        list: Список строк, представляющих пути к установленным приложениям.
-    """
-    # Определяем базовый модуль для core директории
-    base_module = 'src.core'
-    installed_apps = []
-    
-    _module_discoverer._recursively_find_apps(apps_dir, base_module, installed_apps)
-    
-    return installed_apps
-
-def discover_installed_app_urls(apps_dir: str, prefix: Optional[str] = None) -> List:
-    """
-    Рекурсивно обходит директории и находит URL-конфигурации для установленных приложений.
-    Использует единый ModuleDiscoverer для унификации поиска.
-
-    Аргументы:
-        apps_dir (str): Базовая директория, в которой находятся приложения.
-        prefix (str): Префикс для импорта модулей (например, "src.modules").
-
-    Возвращает:
-        list: Список URL-конфигураций для установленных приложений.
-    """
-    urlpatterns = []
-    
-    _module_discoverer._recursively_find_urls(apps_dir, prefix or '', '', urlpatterns)
-    
-    return urlpatterns
-
-
 def check_app_config_name(directory: str, config_name: str) -> bool:
     """
     Проверяет все файлы apps.py в указанной директории на наличие определенного названия конфига.
@@ -376,37 +336,3 @@ def is_valid_module_name(module_name: str) -> bool:
     # Регулярное выражение для проверки
     pattern = r'^[a-z_]+$'
     return bool(re.match(pattern, module_name))
-
-def discover_modules_apps(modules_dir: str) -> List[str]:
-    """
-    Обходит директорию modules и находит установленные приложения в структуре <module_name>/api/.
-    Использует единый ModuleDiscoverer для унификации поиска.
-    
-    Аргументы:
-        modules_dir (str): Базовая директория modules.
-        
-    Возвращает:
-        list: Список строк, представляющих пути к установленным приложениям.
-    """
-    installed_apps = []
-    
-    _module_discoverer._find_modules_apps(modules_dir, installed_apps)
-    
-    return installed_apps
-
-def discover_modules_urls(modules_dir: str) -> List[str]:
-    """
-    Обходит директорию modules и находит URL-конфигурации в структуре <module_name>/api/.
-    Использует единый ModuleDiscoverer для унификации поиска.
-    
-    Аргументы:
-        modules_dir (str): Базовая директория modules.
-        
-    Возвращает:
-        list: Список URL-конфигураций для установленных приложений.
-    """
-    urlpatterns = []
-    
-    _module_discoverer._find_modules_urls(modules_dir, urlpatterns)
-    
-    return urlpatterns
