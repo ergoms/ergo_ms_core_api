@@ -10,13 +10,21 @@ def create_system_roles(apps, schema_editor):
     """
     Создаёт базовые системные роли: 'Пользователь' и 'Администратор'.
     Использует SQL для корректной работы с наследованием от Group.
+    Кроссплатформенное решение для SQLite и PostgreSQL.
     """
     from django.db import connection
+    from django.utils import timezone
     
     roles_to_create = [
         ('Пользователь', 'Роль по умолчанию для всех пользователей', True),
         ('Администратор', 'Системная роль с полным доступом', True),
     ]
+    
+    # Получаем текущее время
+    now = timezone.now()
+    
+    # Определяем тип БД для правильного синтаксиса
+    vendor = connection.vendor
     
     with connection.cursor() as cursor:
         for name, description, is_system in roles_to_create:
@@ -27,12 +35,25 @@ def create_system_roles(apps, schema_editor):
             if row:
                 group_id = row[0]
             else:
-                # Создаём Group
-                cursor.execute(
-                    "INSERT INTO auth_group (name) VALUES (%s) RETURNING id",
-                    [name]
-                )
-                group_id = cursor.fetchone()[0]
+                # Создаём Group (кроссплатформенный подход)
+                if vendor == 'postgresql':
+                    # PostgreSQL поддерживает RETURNING
+                    cursor.execute(
+                        "INSERT INTO auth_group (name) VALUES (%s) RETURNING id",
+                        [name]
+                    )
+                    group_id = cursor.fetchone()[0]
+                else:
+                    # SQLite и другие - используем lastrowid
+                    cursor.execute(
+                        "INSERT INTO auth_group (name) VALUES (%s)",
+                        [name]
+                    )
+                    group_id = cursor.lastrowid
+                    if not group_id:
+                        # Если lastrowid не сработал, делаем SELECT
+                        cursor.execute("SELECT id FROM auth_group WHERE name = %s", [name])
+                        group_id = cursor.fetchone()[0]
             
             # Проверяем, существует ли Role
             cursor.execute(
@@ -40,18 +61,18 @@ def create_system_roles(apps, schema_editor):
                 [group_id]
             )
             if not cursor.fetchone():
-                # Создаём Role
+                # Создаём Role с текущим временем как параметром (Django автоматически конвертирует datetime)
                 cursor.execute("""
                     INSERT INTO cms_adp_role (group_ptr_id, description, is_system, created_at, updated_at)
-                    VALUES (%s, %s, %s, NOW(), NOW())
-                """, [group_id, description, is_system])
+                    VALUES (%s, %s, %s, %s, %s)
+                """, [group_id, description, is_system, now, now])
             else:
                 # Обновляем is_system, если роль уже существует
                 cursor.execute("""
                     UPDATE cms_adp_role 
-                    SET is_system = %s, description = %s, updated_at = NOW()
+                    SET is_system = %s, description = %s, updated_at = %s
                     WHERE group_ptr_id = %s
-                """, [is_system, description, group_id])
+                """, [is_system, description, now, group_id])
 
 
 def delete_system_roles(apps, schema_editor):
