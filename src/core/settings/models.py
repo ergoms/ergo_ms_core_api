@@ -49,6 +49,13 @@ class AppearanceSettings(models.Model):
     theme_name = models.CharField(_("Название темы"), max_length=100, default="default")
     # Дополнительные JSON-настройки, например, цветовые схемы
     config = models.JSONField(_("Конфигурация темы"), default=dict, blank=True)
+    # Полная конфигурация темы (light и dark)
+    theme_config = models.JSONField(
+        _("Полная конфигурация темы"),
+        default=dict,
+        blank=True,
+        help_text=_("JSON с настройками цветов для light и dark тем")
+    )
 
     class Meta:
         verbose_name = _("Настройки внешнего вида")
@@ -56,6 +63,110 @@ class AppearanceSettings(models.Model):
 
     def __str__(self):
         return f"{self.theme_name}"
+
+
+class Theme(models.Model):
+    """Модель для хранения пользовательских тем"""
+    
+    class ThemeBase(models.TextChoices):
+        LIGHT = 'light', _('Светлая')
+        DARK = 'dark', _('Тёмная')
+    
+    name = models.CharField(_("Название темы"), max_length=100)
+    description = models.TextField(_("Описание"), blank=True)
+    author = models.CharField(_("Автор"), max_length=100, blank=True)
+    base_theme = models.CharField(
+        _("Базовая тема"),
+        max_length=10,
+        choices=ThemeBase.choices,
+        default=ThemeBase.LIGHT,
+        help_text=_("На какой теме основана (влияет на Bootstrap переменные)")
+    )
+    is_active = models.BooleanField(_("Активна"), default=False)
+    is_default = models.BooleanField(
+        _("По умолчанию"),
+        default=False,
+        help_text=_("Использовать как тему по умолчанию")
+    )
+    is_system = models.BooleanField(
+        _("Системная"),
+        default=False,
+        help_text=_("Системные темы нельзя удалить")
+    )
+    
+    # Цвета темы - кастомные переменные
+    colors = models.JSONField(
+        _("Цвета темы"),
+        default=dict,
+        help_text=_("Кастомные CSS переменные --color-*")
+    )
+    
+    # Bootstrap переменные
+    bootstrap_colors = models.JSONField(
+        _("Bootstrap цвета"),
+        default=dict,
+        blank=True,
+        help_text=_("Переопределение Bootstrap переменных --bs-*")
+    )
+    
+    created_at = models.DateTimeField(_("Создана"), auto_now_add=True)
+    updated_at = models.DateTimeField(_("Обновлена"), auto_now=True)
+    
+    class Meta:
+        verbose_name = _("Тема")
+        verbose_name_plural = _("Темы")
+        ordering = ['-is_default', '-is_system', 'name']
+    
+    def __str__(self):
+        return self.name
+    
+    def save(self, *args, **kwargs):
+        # Если устанавливаем тему по умолчанию, снимаем флаг с других
+        if self.is_default:
+            Theme.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)
+        # Если устанавливаем активную тему, снимаем флаг с других
+        if self.is_active:
+            Theme.objects.filter(is_active=True).exclude(pk=self.pk).update(is_active=False)
+        super().save(*args, **kwargs)
+    
+    @classmethod
+    def get_default_colors(cls, base_theme='light'):
+        """Возвращает цвета по умолчанию для указанной базовой темы"""
+        if base_theme == 'dark':
+            return {
+                'headerBackground': 'rgba(30, 30, 30, 0.85)',
+                'authBackground': 'rgba(30, 30, 30, 0.7)',
+                'background': '#111112',
+                'border': '#555555',
+                'primaryText': '#c9cccf',
+                'secondaryText': '#6e6e6e',
+                'primaryBackground': '#18181a',
+                'secondaryBackground': '#2a2a2c',
+                'hoverBackground': '#3d3d3f',
+                'accent': '#f14336'
+            }
+        return {
+            'headerBackground': 'rgba(255, 255, 255, 0.85)',
+            'authBackground': 'rgba(255, 255, 255, 0.7)',
+            'background': '#f2f2f2',
+            'border': '#e0e0e0',
+            'primaryText': '#101223',
+            'secondaryText': '#6e6e6e',
+            'primaryBackground': '#ffffff',
+            'secondaryBackground': '#f1f1f1',
+            'hoverBackground': '#e1e1e1',
+            'accent': '#d0322d'
+        }
+    
+    @classmethod
+    def get_default_bootstrap_colors(cls, base_theme='light'):
+        """
+        Возвращает Bootstrap переменные по умолчанию.
+        Значения синхронизированы с _theme.scss
+        """
+        # Пустой объект - Bootstrap переменные не переопределяются по умолчанию
+        # Используются стандартные значения Bootstrap + кастомные из colors
+        return {}
 
 class SecuritySettings(models.Model):
     enable_backup = models.BooleanField(

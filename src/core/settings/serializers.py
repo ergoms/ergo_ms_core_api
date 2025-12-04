@@ -9,7 +9,7 @@ from .models import Category
 from .models import Tag
 from .models import UserAvatar
 from .models import (
-    GeneralSettings, AppearanceSettings,
+    GeneralSettings, AppearanceSettings, Theme,
     SecuritySettings, MediaSettings, PermalinkSettings, EmailSettings, AuditLog
 )
 
@@ -49,6 +49,45 @@ class AppearanceSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = AppearanceSettings
         fields = '__all__'
+
+
+class ThemeSerializer(serializers.ModelSerializer):
+    """Сериализатор для тем оформления"""
+    
+    class Meta:
+        model = Theme
+        fields = [
+            'id', 'name', 'description', 'author', 'base_theme',
+            'is_active', 'is_default', 'is_system',
+            'colors', 'bootstrap_colors',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'is_system']
+    
+    def validate(self, data):
+        # Нельзя редактировать системные темы
+        if self.instance and self.instance.is_system:
+            # Можно только активировать/деактивировать
+            allowed_fields = {'is_active', 'is_default'}
+            changed_fields = set(data.keys()) - allowed_fields
+            if changed_fields:
+                raise serializers.ValidationError(
+                    "Нельзя редактировать системные темы. "
+                    "Создайте копию для редактирования."
+                )
+        return data
+
+
+class ThemeExportSerializer(serializers.Serializer):
+    """Сериализатор для экспорта темы"""
+    name = serializers.CharField()
+    description = serializers.CharField(allow_blank=True, required=False)
+    author = serializers.CharField(allow_blank=True, required=False)
+    base_theme = serializers.ChoiceField(choices=['light', 'dark'])
+    colors = serializers.JSONField()
+    bootstrap_colors = serializers.JSONField(required=False, default=dict)
+    version = serializers.CharField(default='1.0')
+    exported_at = serializers.DateTimeField(read_only=True)
 
 class SecuritySettingsSerializer(serializers.ModelSerializer):
     class Meta:

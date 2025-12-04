@@ -15,6 +15,7 @@ router.register(r'categories', CategoryViewSet)
 router.register(r'tags', TagViewSet)
 router.register('audit-logs', AuditLogViewSet, basename='auditlog')
 router.register(r'user-avatars', UserAvatarViewSet, basename='user-avatars')
+router.register(r'themes', ThemeViewSet, basename='themes')
 
 urlpatterns = [
     path('files/<str:filename>', FileDownloadByNameView.as_view(), name='file-download-by-name'),
