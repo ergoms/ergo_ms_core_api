@@ -158,8 +158,94 @@ class DatabaseConnectionTester:
             connection.close()
             return True
         except Exception as e:
-            logger.error(f"PostgreSQL подключение не удалось: {str(e)}")
+            # Извлекаем понятное сообщение об ошибке
+            error_message = DatabaseConnectionTester._extract_postgresql_error(e, dbname)
+            logger.error(f"PostgreSQL подключение не удалось: {error_message}")
             return False
+    
+    @staticmethod
+    def _extract_postgresql_error(e: Exception, dbname: str = '') -> str:
+        """
+        Извлекает понятное сообщение об ошибке из исключения PostgreSQL.
+        Правильно обрабатывает ошибки декодирования и разделяет их от ошибок подключения.
+        
+        Args:
+            e: Исключение от psycopg2
+            dbname: Имя базы данных (для более точных сообщений об ошибках)
+        """
+        # Сначала пытаемся извлечь понятное сообщение из args исключения
+        messages = []
+        decode_error_occurred = False
+        
+        for arg in e.args:
+            if isinstance(arg, bytes):
+                # Пытаемся декодировать байты
+                try:
+                    # Сначала пробуем UTF-8
+                    decoded = arg.decode('utf-8', errors='strict')
+                    messages.append(decoded)
+                except UnicodeDecodeError:
+                    decode_error_occurred = True
+                    try:
+                        # Пробуем cp1251 (Windows кодировка)
+                        decoded = arg.decode('cp1251', errors='replace')
+                        messages.append(decoded)
+                    except Exception:
+                        # Если не получилось - используем repr
+                        messages.append(repr(arg))
+            else:
+                # Обычные строки
+                try:
+                    messages.append(str(arg))
+                except Exception as decode_err:
+                    # Если даже str() вызывает ошибку декодирования
+                    decode_error_occurred = True
+                    messages.append(f"[Ошибка декодирования: {type(decode_err).__name__}]")
+        
+        # Формируем итоговое сообщение
+        if messages:
+            base_message = ' '.join(messages).strip()
+        else:
+            base_message = str(type(e).__name__)
+        
+        # Определяем тип ошибки для более понятного сообщения
+        error_type = type(e).__name__
+        error_lower = base_message.lower()
+        
+        # Если произошла ошибка декодирования, добавляем пояснение
+        if decode_error_occurred:
+            # Пытаемся определить реальную причину ошибки подключения
+            if 'password authentication failed' in error_lower or 'authentication failed' in error_lower:
+                return "Ошибка авторизации: неверное имя пользователя или пароль"
+            elif 'could not connect' in error_lower or 'connection refused' in error_lower:
+                return "Не удалось подключиться к серверу: проверьте хост и порт"
+            elif 'timeout' in error_lower:
+                return "Превышено время ожидания подключения: сервер недоступен"
+            elif 'database' in error_lower and 'does not exist' in error_lower:
+                if dbname:
+                    return f"База данных '{dbname}' не найдена"
+                else:
+                    return "База данных не найдена"
+            else:
+                return f"Ошибка подключения (также произошла ошибка декодирования сообщения): {base_message[:200]}"
+        
+        # Если ошибки декодирования не было, анализируем обычные ошибки
+        if 'password authentication failed' in error_lower or 'authentication failed' in error_lower:
+            return "Ошибка авторизации: неверное имя пользователя или пароль"
+        elif 'could not connect' in error_lower or 'connection refused' in error_lower:
+            return "Не удалось подключиться к серверу: проверьте хост и порт"
+        elif 'timeout' in error_lower or 'timed out' in error_lower:
+            return "Превышено время ожидания подключения: сервер недоступен"
+        elif 'database' in error_lower and 'does not exist' in error_lower:
+            if dbname:
+                return f"База данных '{dbname}' не найдена"
+            else:
+                return "База данных не найдена"
+        elif 'could not translate host name' in error_lower or 'getaddrinfo failed' in error_lower:
+            return "Не удалось разрешить имя хоста: проверьте правильность адреса"
+        else:
+            # Возвращаем базовое сообщение, ограничив его длину
+            return base_message[:500] if len(base_message) > 500 else base_message
     
     @staticmethod
     def test_mysql(host: str, port: int, user: str, password: str, database: str) -> bool:
