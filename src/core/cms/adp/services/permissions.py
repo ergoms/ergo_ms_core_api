@@ -2,14 +2,54 @@
 Сервис для проверки прав доступа пользователей к ресурсам системы.
 """
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 from django.contrib.auth.models import User
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
+
+
+# Реестр хуков для расширения проверки прав модулями
+# Ключ: имя хука, Значение: список callable
+_permission_hooks: Dict[str, List[Callable]] = {
+    'check_module_permission': [],  # Хуки для проверки прав модулей
+}
+
+
+def register_permission_hook(hook_name: str, callback: Callable):
+    """
+    Зарегистрировать хук для расширения проверки прав.
+    
+    Модули могут регистрировать свои хуки для добавления
+    дополнительной логики проверки прав.
+    
+    Args:
+        hook_name: Имя хука ('check_module_permission')
+        callback: Функция-обработчик
+        
+    Сигнатура callback для 'check_module_permission':
+        def callback(user, module_name, permission_key, **kwargs) -> Optional[bool]
+        - Возвращает True если доступ разрешён
+        - Возвращает False если доступ запрещён
+        - Возвращает None если хук не применим (продолжить проверку)
+    """
+    if hook_name not in _permission_hooks:
+        _permission_hooks[hook_name] = []
+    
+    if callback not in _permission_hooks[hook_name]:
+        _permission_hooks[hook_name].append(callback)
+
+
+def unregister_permission_hook(hook_name: str, callback: Callable):
+    """Удалить хук из реестра."""
+    if hook_name in _permission_hooks and callback in _permission_hooks[hook_name]:
+        _permission_hooks[hook_name].remove(callback)
 
 
 class PermissionService:
     """
     Сервис для работы с правами доступа пользователей.
+    
+    Поддерживает расширение через хуки — модули могут регистрировать
+    свои обработчики для добавления контекстной логики проверки прав.
     """
     DEFAULT_ROLE_NAME = 'Пользователь'
     DEFAULT_ROLE_DESCRIPTION = 'Роль по умолчанию для всех пользователей'
@@ -169,6 +209,12 @@ class PermissionService:
         """
         Проверить доступ пользователя к URL.
         
+        Иерархия прав:
+        1. Администратор → полный доступ ко всему
+        2. Пользователь (базовая роль) → доступ разрешён по умолчанию
+        3. Ролевые группы → могут ограничивать (deny) или явно разрешать (allow) доступ
+        4. Политики применяются по приоритету (высший приоритет побеждает)
+        
         Args:
             user: Пользователь
             url_path: Путь URL для проверки
@@ -180,16 +226,16 @@ class PermissionService:
         if PermissionService.is_admin(user):
             return True
         
-        # Получаем роль пользователя
+        # Получаем роль пользователя (автоматически назначается "Пользователь" если нет)
         user_role = PermissionService.get_user_role(user)
         if not user_role:
-            # Если у пользователя нет роли, доступ запрещен
+            # Этого не должно происходить, т.к. get_user_role назначает роль по умолчанию
             return False
         
         # Собираем все политики для роли и групп пользователя
         policies = []
         
-        # Политики роли
+        # Политики базовой роли (например, "Пользователь")
         role_policies = Policy.objects.filter(
             role=user_role.role,
             policy_type='url',
@@ -197,7 +243,7 @@ class PermissionService:
         ).order_by('-priority')
         policies.extend(role_policies)
         
-        # Политики ролевых групп
+        # Политики ролевых групп (переопределяют базовые права)
         role_groups = user_role.role_groups.filter(is_active=True)
         for group in role_groups:
             group_policies = Policy.objects.filter(
@@ -207,13 +253,19 @@ class PermissionService:
             ).order_by('-priority')
             policies.extend(group_policies)
         
-        # Проверяем политики по приоритету
+        # Проверяем политики по приоритету (высший приоритет первый)
         for policy in sorted(policies, key=lambda p: p.priority, reverse=True):
             if PermissionService._match_url_pattern(url_path, policy.resource_path, policy.is_pattern):
-                # Найдено совпадение
+                # Найдено совпадение — возвращаем результат политики
                 return policy.action == 'allow'
         
-        # Если не найдено подходящих политик, доступ запрещен по умолчанию
+        # Если не найдено подходящих политик:
+        # Для роли "Пользователь" — разрешаем доступ по умолчанию (базовый просмотр)
+        # Это обеспечивает концепцию "пользователь видит всё, группы ограничивают"
+        if user_role.role.name == PermissionService.DEFAULT_ROLE_NAME:
+            return True
+        
+        # Для других ролей — запрещаем по умолчанию
         return False
     
     @staticmethod
@@ -316,14 +368,26 @@ class PermissionService:
         }
     
     @staticmethod
-    def check_module_permission(user: User, module_name: str, permission_key: str) -> bool:
+    def check_module_permission(
+        user: User, 
+        module_name: str, 
+        permission_key: str,
+        **kwargs
+    ) -> bool:
         """
         Проверить право доступа к функционалу модуля.
+        
+        Иерархия прав:
+        1. Администратор → полный доступ
+        2. Хуки модулей → контекстная проверка (например, права в организации)
+        3. Ролевые группы пользователя → явно настроенные права (is_granted=True)
+        4. Базовая роль "Пользователь" без групп → базовый просмотр (_view права)
         
         Args:
             user: Пользователь
             module_name: Название модуля
             permission_key: Ключ разрешения
+            **kwargs: Дополнительные параметры для хуков (например, organization_id)
             
         Returns:
             True если доступ разрешен
@@ -332,22 +396,45 @@ class PermissionService:
         if PermissionService.is_admin(user):
             return True
         
+        # Вызываем зарегистрированные хуки модулей
+        # Хуки могут добавлять контекстную логику (например, права в организации)
+        for hook in _permission_hooks.get('check_module_permission', []):
+            try:
+                result = hook(user, module_name, permission_key, **kwargs)
+                if result is not None:
+                    return result
+            except Exception:
+                # Игнорируем ошибки в хуках, продолжаем проверку
+                pass
+        
         user_role = PermissionService.get_user_role(user)
         if not user_role:
             return False
         
-        # Проверяем права в ролевых группах
+        # Проверяем права в глобальных ролевых группах пользователя
         role_groups = user_role.role_groups.filter(is_active=True)
         
-        for group in role_groups:
-            permission = ModulePermission.objects.filter(
-                role_group=group,
-                module_name=module_name,
-                permission_key=permission_key,
-                is_granted=True
-            ).first()
+        # Если есть ролевые группы — проверяем явно настроенные права
+        if role_groups.exists():
+            for group in role_groups:
+                permission = ModulePermission.objects.filter(
+                    role_group=group,
+                    module_name=module_name,
+                    permission_key=permission_key,
+                    is_granted=True
+                ).first()
+                
+                if permission:
+                    return True
             
-            if permission:
+            # Если в группах нет явного разрешения — запрещаем
+            return False
+        
+        # Если пользователь с базовой ролью без ролевых групп:
+        # Разрешаем базовый просмотр (права с суффиксом _view)
+        if user_role.role.name == PermissionService.DEFAULT_ROLE_NAME:
+            # Базовые права просмотра для роли "Пользователь"
+            if permission_key.endswith('_view'):
                 return True
         
         return False
