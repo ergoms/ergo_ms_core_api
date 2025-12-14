@@ -90,3 +90,41 @@ LLAMA_CPP_HOST = env.str('LLAMA_CPP_HOST', default='127.0.0.1')
 
 # Порт для llama.cpp сервера
 LLAMA_CPP_PORT = env.int('LLAMA_CPP_PORT', default=8080)
+
+# ============================================================================
+# Настройки RAG (Retrieval-Augmented Generation)
+# ============================================================================
+
+# Модель Ollama для генерации embeddings (векторных представлений текста)
+# Рекомендуемые модели:
+#   - embeddinggemma (по умолчанию, Google Gemma 2B)
+#   - qwen3-embedding (Alibaba Qwen, хорошее качество)
+#   - all-minilm (Microsoft, быстрая и легкая)
+# 
+# Установка модели: ollama pull <model_name>
+# Пример: ollama pull qwen3-embedding
+#
+# Настройка через переменную окружения:
+#   OLLAMA_EMBEDDINGS_MODEL=qwen3-embedding
+OLLAMA_EMBEDDINGS_MODEL = env.str('OLLAMA_EMBEDDINGS_MODEL', default='embeddinggemma')
+
+# Размер chunk при разбиении документов (в символах)
+# Рекомендуемые значения: 200-500 для более точного поиска, 1000 для больших контекстов
+# Меньший размер = больше chunks = более точный поиск, но больше embeddings для хранения
+RAG_CHUNK_SIZE = env.int('RAG_CHUNK_SIZE', default=300)
+
+# Перекрытие между chunks (в символах) для сохранения контекста
+# Обычно составляет 20-30% от chunk_size
+RAG_CHUNK_OVERLAP = env.int('RAG_CHUNK_OVERLAP', default=60)
+
+# Количество наиболее релевантных chunks для использования в контексте
+RAG_TOP_K = env.int('RAG_TOP_K', default=5)
+
+# Минимальный порог схожести для chunks (0.0 - 1.0)
+RAG_SIMILARITY_THRESHOLD = env.float('RAG_SIMILARITY_THRESHOLD', default=0.0)
+
+# Максимальная длина контекста из RAG для промпта (в символах)
+RAG_MAX_CONTEXT_LENGTH = env.int('RAG_MAX_CONTEXT_LENGTH', default=4000)
+
+# Включить RAG по умолчанию в чате
+RAG_ENABLED = env.bool('RAG_ENABLED', default=True)

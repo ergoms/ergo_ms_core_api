@@ -1,11 +1,14 @@
 from typing import Tuple, cast
+import logging
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
 from rest_framework.viewsets import ViewSet
+from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.shortcuts import get_object_or_404
-from django.http import StreamingHttpResponse
+from django.http import StreamingHttpResponse, FileResponse
 from django.utils import timezone
 import json
 import math
@@ -17,48 +20,38 @@ from .config import build_runtime_config
 from .llm_clients import build_llm_client, LLMClientError
 from src.core.bi_analysis.bi_charts.models import Chart
 from src.core.utils.mixins import SwaggerSafeMixin
-from .models import ChatSession, ChatMessage
-from .math_tools import MathToolsService
+from .models import ChatSession, ChatMessage, KnowledgeDocument, KnowledgeChunk
+from .skills import get_skills_manager
+from .skills.integration import build_skills_prompt, execute_skill_from_llm_response
+from .rag import (
+    OllamaEmbeddingsService,
+    RAGRetrievalService,
+    RAGRetrievalError,
+    RAGIndexingService,
+    RAGIndexingError,
+    DocumentParserService,
+    DocumentParseError,
+)
+from src.config.settings.ai_assistant import (
+    OLLAMA_BASE_URL,
+    OLLAMA_EMBEDDINGS_MODEL,
+    RAG_CHUNK_SIZE,
+    RAG_CHUNK_OVERLAP,
+    RAG_TOP_K,
+    RAG_SIMILARITY_THRESHOLD,
+    RAG_MAX_CONTEXT_LENGTH,
+    RAG_ENABLED,
+    AI_ASSISTANT_REQUEST_TIMEOUT,
+)
 import pandas as pd
 import numpy as np
 from scipy import signal, stats
 
+logger = logging.getLogger(__name__)
+
 # Глобальный экземпляр сервиса математики (ленивая инициализация)
-_math_service: MathToolsService | None = None
 
 
-def _get_math_service() -> MathToolsService:
-    """Получает или создаёт сервис математических вычислений."""
-    global _math_service
-    if _math_service is None:
-        _math_service = MathToolsService()
-    return _math_service
-
-
-def _process_math_query(message: str) -> tuple[bool, str | None, dict | None]:
-    """
-    Проверяет и обрабатывает математический запрос.
-    
-    Returns:
-        (is_math, result_text, metadata) - если is_math=True, result_text содержит результат
-    """
-    math_service = _get_math_service()
-    
-    if not math_service.is_math_query(message):
-        return False, None, None
-    
-    result = math_service.calculate(message)
-    if result.success:
-        formatted = math_service.format_result_for_chat(result)
-        metadata = {
-            'math_result': True,
-            'operation_type': result.operation_type,
-            'result': str(result.result),
-            'result_latex': result.result_latex,
-        }
-        return True, formatted, metadata
-    
-    return False, None, None
 
 
 def _sanitize_for_json(obj):
@@ -187,6 +180,101 @@ def _create_ollama_client(ollama_config=None):
         device_config=runtime_config.device_config,
     )
     return runtime_config, client
+
+
+# Глобальные экземпляры RAG сервисов (ленивая инициализация)
+_rag_embeddings_service: OllamaEmbeddingsService | None = None
+_rag_retrieval_service: RAGRetrievalService | None = None
+
+
+def _get_rag_services(ollama_config=None):
+    """
+    Получает или создает RAG сервисы (embeddings и retrieval)
+    
+    Args:
+        ollama_config: Настройки Ollama (опционально, берет из config если не указано)
+        
+    Returns:
+        Кортеж (embeddings_service, retrieval_service)
+    """
+    global _rag_embeddings_service, _rag_retrieval_service
+    
+    # Получаем настройки Ollama для embeddings
+    base_url = OLLAMA_BASE_URL
+    embeddings_model = OLLAMA_EMBEDDINGS_MODEL
+    
+    if ollama_config:
+        base_url = ollama_config.get('base_url', base_url)
+        embeddings_model = ollama_config.get('embeddings_model', embeddings_model)
+    
+    # Создаем или обновляем сервисы если настройки изменились
+    if (_rag_embeddings_service is None or 
+        _rag_embeddings_service._base_url != base_url or 
+        _rag_embeddings_service._model != embeddings_model):
+        _rag_embeddings_service = OllamaEmbeddingsService(
+            base_url=base_url,
+            model=embeddings_model,
+            request_timeout=AI_ASSISTANT_REQUEST_TIMEOUT,
+        )
+    
+    if _rag_retrieval_service is None:
+        _rag_retrieval_service = RAGRetrievalService(
+            embeddings_service=_rag_embeddings_service,
+            top_k=RAG_TOP_K,
+            similarity_threshold=RAG_SIMILARITY_THRESHOLD,
+        )
+    
+    return _rag_embeddings_service, _rag_retrieval_service
+
+
+def _get_rag_context(query: str, user, ollama_config=None, enabled=None, document_ids=None):
+    """
+    Получает контекст из базы знаний RAG для запроса пользователя
+    
+    Args:
+        query: Запрос пользователя
+        user: Пользователь (для фильтрации документов)
+        ollama_config: Настройки Ollama (опционально)
+        enabled: Переопределить глобальную настройку RAG_ENABLED
+        document_ids: Список ID документов для ограничения поиска (опционально)
+        
+    Returns:
+        Кортеж (context, chunks_metadata):
+        - context: Отформатированный контекст для промпта (пустая строка если RAG отключен или нет результатов)
+        - chunks_metadata: Список метаданных найденных chunks (пустой список если RAG отключен или нет результатов)
+    """
+    # Проверяем, включен ли RAG
+    if enabled is None:
+        enabled = RAG_ENABLED
+    
+    if not enabled:
+        return "", []
+    
+    try:
+        embeddings_service, retrieval_service = _get_rag_services(ollama_config)
+        
+        # Получаем релевантные chunks и формируем контекст
+        context, chunks = retrieval_service.retrieve_and_build_context(
+            query=query,
+            user=user,
+            max_context_length=RAG_MAX_CONTEXT_LENGTH,
+            document_ids=document_ids,
+        )
+        
+        return context, chunks
+        
+    except RAGRetrievalError as e:
+        # Логируем ошибку, но не прерываем работу чата
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Ошибка RAG retrieval: {e}")
+        return "", []
+    except Exception as e:
+        # Логируем неожиданные ошибки
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Неожиданная ошибка RAG retrieval: {e}", exc_info=True)
+        return "", []
 
 
 class BIQueryView(APIView):
@@ -538,6 +626,31 @@ class OllamaStatusView(APIView):
                 'available': False,
                 'message': f'Ошибка подключения к Ollama: {str(e)}'
             })
+
+
+class EmbeddingsStatusView(APIView):
+    """
+    GET /api/ai_assistant/embeddings_status/
+    Проверить доступность сервиса embeddings
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            embeddings_service, _ = _get_rag_services()
+            health = embeddings_service.check_health()
+            
+            return Response({
+                'success': True,
+                **health,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'available': False,
+                'error': str(e),
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ChartAnalysisView(APIView):
@@ -1100,12 +1213,27 @@ class ChatView(APIView):
             else:
                 session = None
             
+            # Получаем document_id из запроса (для модуля docs)
+            document_id = request.data.get('document_id')
+            
             if not session:
+                # Создаем новую сессию с metadata, если есть document_id
+                session_metadata = {}
+                if document_id:
+                    session_metadata['document_id'] = document_id
                 session = ChatSession.objects.create(
                     user=request.user,
                     module=module,
-                    title=message[:50] if message else 'Новый чат'
+                    title=message[:50] if message else 'Новый чат',
+                    metadata=session_metadata
                 )
+            else:
+                # Обновляем metadata сессии, если передан document_id
+                if document_id:
+                    if not session.metadata:
+                        session.metadata = {}
+                    session.metadata['document_id'] = document_id
+                    session.save(update_fields=['metadata'])
             
             # Сохраняем сообщение пользователя
             user_message = ChatMessage.objects.create(
@@ -1117,38 +1245,71 @@ class ChatView(APIView):
             
             # Засекаем время начала запроса
             request_started_at = timezone.now()
-            
-            # Проверяем математический запрос
-            is_math, math_result, math_metadata = _process_math_query(message)
-            
+
             runtime_config, client = _create_ollama_client(ollama_config)
             temperature = (ollama_config or {}).get('temperature', 0.3)
             max_tokens = (ollama_config or {}).get('max_tokens', 2048)
 
-            system_prompt = """Ты - полезный AI ассистент системы ERGO MS. 
+            # Получаем доступные навыки
+            skills_manager = get_skills_manager()
+            available_skills = skills_manager.get_function_definitions()
+            skills_prompt = build_skills_prompt(available_skills) if available_skills else ""
+
+            system_prompt = f"""Ты - полезный AI ассистент системы ERGO MS. 
 Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
-Ты умеешь выполнять математические вычисления: арифметика, алгебра, производные, интегралы, пределы, решение уравнений.
 Отвечай кратко, по делу и дружелюбно на русском языке.
-Если не знаешь ответа, честно скажи об этом."""
+Если не знаешь ответа, честно скажи об этом.{skills_prompt}"""
             
             # Загружаем контекст из истории чата
             previous_messages = session.messages.filter(
                 message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT
             ).order_by('-created_at')[:5]  # Последние 5 ответов для контекста
             
-            context = ""
+            chat_context = ""
             if previous_messages.exists():
                 context_parts = []
                 for msg in reversed(previous_messages):
                     context_parts.append(f"Предыдущий ответ: {msg.content[:200]}")
-                context = "\n".join(context_parts) + "\n\n"
+                chat_context = "\n".join(context_parts) + "\n\n"
             
-            # Если математический запрос - добавляем результат в контекст
-            if is_math and math_result:
-                math_context = f"\n\n[МАТЕМАТИЧЕСКИЙ РЕЗУЛЬТАТ]\n{math_result}\n[/МАТЕМАТИЧЕСКИЙ РЕЗУЛЬТАТ]\n\nПрокомментируй этот результат кратко, объясни что получилось."
-                full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}{math_context}"
-            else:
-                full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}"
+            # Получаем контекст из базы знаний RAG только для модуля docs
+            rag_context = ""
+            rag_chunks = []
+            
+            if module == 'docs':
+                # Получаем document_id из metadata сессии или из запроса
+                document_id = None
+                if session.metadata and 'document_id' in session.metadata:
+                    document_id = session.metadata['document_id']
+                elif request.data.get('document_id'):
+                    document_id = request.data.get('document_id')
+                
+                # Получаем контекст из базы знаний RAG только для модуля docs
+                document_ids = [document_id] if document_id else None
+                rag_context, rag_chunks = _get_rag_context(
+                    query=message,
+                    user=request.user,
+                    ollama_config=ollama_config,
+                    document_ids=document_ids,
+                )
+            
+            # Формируем полный промпт с контекстами
+            full_context_parts = []
+            
+            if chat_context:
+                full_context_parts.append(f"История предыдущих ответов:\n{chat_context}")
+            
+            if rag_context:
+                full_context_parts.append(
+                    f"\n[ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n{rag_context}\n[/ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n\n"
+                    "Используй эту информацию для ответа на вопрос пользователя. "
+                    "Если в базе знаний есть релевантная информация, обязательно используй её. "
+                    "Если информации нет, отвечай на основе своих знаний."
+                )
+            
+            full_context = "\n".join(full_context_parts)
+            
+            full_prompt = f"{system_prompt}\n\n{full_context}Вопрос пользователя: {message}"
             
             answer = client.complete(
                 full_prompt,
@@ -1157,9 +1318,24 @@ class ChatView(APIView):
                 stream=False,
             ).strip()
             
-            # Если был математический результат, добавляем его в начало ответа
-            if is_math and math_result:
-                answer = f"{math_result}\n\n{answer}"
+            # Проверяем, нужно ли выполнить навык из ответа LLM
+            skill_result, cleaned_answer = execute_skill_from_llm_response(
+                answer,
+                message,
+                context={'user': request.user, 'session': session, 'module': module}
+            )
+            
+            # Если навык был выполнен, добавляем результат в ответ
+            if skill_result and skill_result.success:
+                if cleaned_answer:
+                    answer = f"{skill_result.result}\n\n{cleaned_answer}"
+                else:
+                    answer = skill_result.result
+            elif skill_result and not skill_result.success:
+                answer = f"{cleaned_answer}\n\n⚠️ Ошибка выполнения навыка: {skill_result.error}"
+            else:
+                answer = cleaned_answer if cleaned_answer else answer
+            
             
             # Засекаем время получения ответа
             response_received_at = timezone.now()
@@ -1240,12 +1416,27 @@ class ChatStreamView(APIView):
         else:
             session = None
         
+        # Получаем document_id из запроса (для модуля docs)
+        document_id = request.data.get('document_id')
+        
         if not session:
+            # Создаем новую сессию с metadata, если есть document_id
+            session_metadata = {}
+            if document_id:
+                session_metadata['document_id'] = document_id
             session = ChatSession.objects.create(
                 user=request.user,
                 module=module,
-                title=message[:50] if message else 'Новый чат'
+                title=message[:50] if message else 'Новый чат',
+                metadata=session_metadata
             )
+        else:
+            # Обновляем metadata сессии, если передан document_id
+            if document_id:
+                if not session.metadata:
+                    session.metadata = {}
+                session.metadata['document_id'] = document_id
+                session.save(update_fields=['metadata'])
         
         # Сохраняем сообщение пользователя
         user_message = ChatMessage.objects.create(
@@ -1262,43 +1453,70 @@ class ChatStreamView(APIView):
                 # Засекаем время начала запроса
                 request_started_at = timezone.now()
                 
-                # Проверяем математический запрос
-                is_math, math_result, math_metadata = _process_math_query(message)
-                math_prefix = ""
-                
-                # Если математический запрос - сначала отправляем результат
-                if is_math and math_result:
-                    yield f"data: {_safe_json_dumps({'type': 'math_result', 'text': math_result}, ensure_ascii=False)}\n\n"
-                    math_prefix = f"{math_result}\n\n"
-                
                 runtime_config, client = _create_ollama_client(ollama_config)
                 temperature = (ollama_config or {}).get('temperature', 0.3)
                 max_tokens = (ollama_config or {}).get('max_tokens', 2048)
 
-                system_prompt = """Ты - полезный AI ассистент системы ERGO MS. 
+                # Получаем доступные навыки
+                skills_manager = get_skills_manager()
+                available_skills = skills_manager.get_function_definitions()
+                skills_prompt = build_skills_prompt(available_skills) if available_skills else ""
+
+                system_prompt = f"""Ты - полезный AI ассистент системы ERGO MS. 
 Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
-Ты умеешь выполнять математические вычисления: арифметика, алгебра, производные, интегралы, пределы, решение уравнений.
 Отвечай кратко, по делу и дружелюбно на русском языке.
-Если не знаешь ответа, честно скажи об этом."""
+Если не знаешь ответа, честно скажи об этом.{skills_prompt}"""
                 
                 # Загружаем контекст из истории чата
                 previous_messages = session.messages.filter(
                     message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT
                 ).order_by('-created_at')[:5]  # Последние 5 ответов для контекста
                 
-                context = ""
+                chat_context = ""
                 if previous_messages.exists():
                     context_parts = []
                     for msg in reversed(previous_messages):
                         context_parts.append(f"Предыдущий ответ: {msg.content[:200]}")
-                    context = "\n".join(context_parts) + "\n\n"
+                    chat_context = "\n".join(context_parts) + "\n\n"
                 
-                # Если математический запрос - добавляем результат в контекст
-                if is_math and math_result:
-                    math_context = f"\n\n[МАТЕМАТИЧЕСКИЙ РЕЗУЛЬТАТ]\n{math_result}\n[/МАТЕМАТИЧЕСКИЙ РЕЗУЛЬТАТ]\n\nПрокомментируй этот результат кратко, объясни что получилось."
-                    full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}{math_context}"
-                else:
-                    full_prompt = f"{system_prompt}\n\n{context}Вопрос пользователя: {message}"
+                # Получаем контекст из базы знаний RAG только для модуля docs
+                rag_context = ""
+                rag_chunks = []
+                
+                if module == 'docs':
+                    # Получаем document_id из metadata сессии или из запроса
+                    document_id = None
+                    if session.metadata and 'document_id' in session.metadata:
+                        document_id = session.metadata['document_id']
+                    elif request.data.get('document_id'):
+                        document_id = request.data.get('document_id')
+                    
+                    # Получаем контекст из базы знаний RAG только для модуля docs
+                    document_ids = [document_id] if document_id else None
+                    rag_context, rag_chunks = _get_rag_context(
+                        query=message,
+                        user=request.user,
+                        ollama_config=ollama_config,
+                        document_ids=document_ids,
+                    )
+                
+                # Формируем полный промпт с контекстами
+                full_context_parts = []
+                
+                if chat_context:
+                    full_context_parts.append(f"История предыдущих ответов:\n{chat_context}")
+                
+                if rag_context:
+                    full_context_parts.append(
+                        f"\n[ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n{rag_context}\n[/ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n\n"
+                        "Используй эту информацию для ответа на вопрос пользователя. "
+                        "Если в базе знаний есть релевантная информация, обязательно используй её. "
+                        "Если информации нет, отвечай на основе своих знаний."
+                    )
+                
+                full_context = "\n".join(full_context_parts)
+                
+                full_prompt = f"{system_prompt}\n\n{full_context}Вопрос пользователя: {message}"
                 
                 # Оптимизация: используем Queue вместо списка
                 from queue import Queue, Empty
@@ -1347,10 +1565,29 @@ class ChatStreamView(APIView):
                 
                 # Засекаем время получения ответа
                 response_received_at = timezone.now()
-                processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
                 
-                # Отправляем финальное событие
-                full_response = math_prefix + result_container.get('response', '')
+                # Получаем полный ответ
+                raw_response = result_container.get('response', '')
+                
+                # Проверяем, нужно ли выполнить навык из ответа LLM
+                skill_result, cleaned_response = execute_skill_from_llm_response(
+                    raw_response,
+                    message,
+                    context={'user': request.user, 'session': session, 'module': module}
+                )
+                
+                # Формируем финальный ответ
+                if skill_result and skill_result.success:
+                    if cleaned_response:
+                        full_response = f"{skill_result.result}\n\n{cleaned_response}"
+                    else:
+                        full_response = str(skill_result.result)
+                elif skill_result and not skill_result.success:
+                    full_response = f"{cleaned_response if cleaned_response else raw_response}\n\n⚠️ Ошибка выполнения навыка: {skill_result.error}"
+                else:
+                    full_response = cleaned_response if cleaned_response else raw_response
+                
+                processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
                 
                 # Сохраняем ответ ассистента
                 assistant_message = ChatMessage.objects.create(
@@ -1363,7 +1600,11 @@ class ChatStreamView(APIView):
                     metadata={
                         'ollama_config': ollama_config,
                         'model': runtime_config.model,
-                    } if ollama_config else {'model': runtime_config.model}
+                        'skill_used': skill_result is not None,
+                    } if ollama_config else {
+                        'model': runtime_config.model,
+                        'skill_used': skill_result is not None,
+                    }
                 )
                 
                 # Обновляем время сессии
@@ -1526,6 +1767,458 @@ class ChatSessionViewSet(ViewSet, SwaggerSafeMixin):
             return Response({
                 'success': False,
                 'error': 'Сессия не найдена'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
+class KnowledgeDocumentViewSet(ViewSet, SwaggerSafeMixin):
+    """
+    ViewSet для управления документами базы знаний RAG
+    
+    Поддерживает:
+    - Загрузку файлов (Word, PDF, TXT) через multipart/form-data
+    - Создание документов из текста через JSON
+    - Автоматическое извлечение текста из файлов при индексации
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    
+    def list(self, request):
+        """
+        GET /api/ai_assistant/knowledge_documents/
+        Получить список документов пользователя
+        """
+        user = self.get_safe_user()
+        queryset = KnowledgeDocument.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        documents = []
+        for doc in queryset.order_by('-created_at'):
+            # Определяем размер файла
+            file_size = None
+            file_url = None
+            if doc.file:
+                try:
+                    file_size = doc.file.size
+                    file_url = doc.file.url if hasattr(doc.file, 'url') else None
+                except Exception:
+                    pass
+            
+            documents.append({
+                'id': str(doc.id),
+                'title': doc.title,
+                'source': doc.source,
+                'has_file': bool(doc.file),
+                'file_type': doc.file_type,
+                'file_name': doc.file.name.split('/')[-1] if doc.file else None,
+                'file_size': file_size,
+                'file_url': file_url,
+                'content_preview': (doc.content[:200] + '...' if doc.content and len(doc.content) > 200 else doc.content) if doc.content else None,
+                'is_indexed': doc.is_indexed,
+                'chunks_count': doc.chunks_count,
+                'indexed_at': doc.indexed_at.isoformat() if doc.indexed_at else None,
+                'created_at': doc.created_at.isoformat(),
+                'updated_at': doc.updated_at.isoformat(),
+                'metadata': doc.metadata,
+            })
+        
+        return Response({
+            'success': True,
+            'documents': documents,
+            'count': len(documents),
+        }, status=status.HTTP_200_OK)
+    
+    def create(self, request):
+        """
+        POST /api/ai_assistant/knowledge_documents/
+        Создать новый документ
+        
+        Поддерживает два режима:
+        1. Загрузка файла (multipart/form-data):
+           - file: файл (Word, PDF, TXT)
+           - title: название документа
+           - source: источник (опционально)
+           - metadata: JSON метаданные (опционально)
+           - index_immediately: индексировать сразу (опционально, default: false)
+        
+        2. Создание из текста (JSON):
+           - title: название документа
+           - content: текстовое содержимое
+           - source: источник (опционально)
+           - metadata: метаданные (опционально)
+           - index_immediately: индексировать сразу (опционально)
+        
+        Если указан и файл, и content, приоритет у файла.
+        """
+        user = self.get_safe_user()
+        
+        title = request.data.get('title')
+        uploaded_file = request.FILES.get('file')
+        content = request.data.get('content')
+        source = request.data.get('source', '')
+        metadata = request.data.get('metadata', {})
+        index_immediately = request.data.get('index_immediately', False)
+        
+        # Обработка metadata если это строка JSON
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        
+        if not title:
+            return Response({
+                'success': False,
+                'error': 'Не указано обязательное поле: title'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not uploaded_file and not content:
+            return Response({
+                'success': False,
+                'error': 'Не указаны ни файл, ни текстовое содержимое. Укажите одно из: file или content'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            file_type = None
+            extracted_content = None
+            
+            # Если загружен файл - определяем его тип
+            if uploaded_file:
+                file_type = DocumentParserService.get_file_type(uploaded_file.name)
+                # Для файлов контент не обязателен, он извлечется при индексации
+                # Но можно попробовать извлечь сразу, если index_immediately
+                if index_immediately:
+                    try:
+                        from io import BytesIO
+                        file_obj = BytesIO(uploaded_file.read())
+                        extracted_content, detected_type = DocumentParserService.parse_document(
+                            file_obj=file_obj,
+                            filename=uploaded_file.name
+                        )
+                        file_type = detected_type
+                        file_obj.seek(0)  # Возвращаемся в начало для сохранения файла
+                        uploaded_file.seek(0)  # Возвращаемся в начало
+                    except DocumentParseError as e:
+                        # Если не удалось извлечь, продолжаем - извлечем при индексации
+                        logger.warning(f"Не удалось извлечь текст из файла сразу: {e}")
+            
+            # Используем извлеченный контент или переданный
+            final_content = extracted_content or content
+            
+            # Создаем документ
+            document = KnowledgeDocument.objects.create(
+                user=user,
+                title=title,
+                content=final_content,
+                source=source or (uploaded_file.name if uploaded_file else ''),
+                metadata=metadata,
+                file_type=file_type,
+            )
+            
+            # Сохраняем файл, если он был загружен
+            if uploaded_file:
+                document.file = uploaded_file
+                document.save(update_fields=['file'])
+            
+            # Индексируем документ, если запрошено
+            indexing_result = None
+            if index_immediately:
+                try:
+                    embeddings_service, _ = _get_rag_services()
+                    indexing_service = RAGIndexingService(
+                        embeddings_service=embeddings_service,
+                        chunk_size=RAG_CHUNK_SIZE,
+                        chunk_overlap=RAG_CHUNK_OVERLAP,
+                    )
+                    indexing_result = indexing_service.index_document(document)
+                    # Обновляем объект документа из БД, чтобы получить актуальный chunks_count
+                    document.refresh_from_db()
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Ошибка индексации документа {document.id}: {e}", exc_info=True)
+                    # Не прерываем создание документа, просто логируем ошибку
+            
+            return Response({
+                'success': True,
+                'document': {
+                    'id': str(document.id),
+                    'title': document.title,
+                    'source': document.source,
+                    'has_file': bool(document.file),
+                    'file_type': document.file_type,
+                    'file_name': document.file.name.split('/')[-1] if document.file else None,
+                    'is_indexed': document.is_indexed,
+                    'chunks_count': document.chunks_count,
+                    'indexed_at': document.indexed_at.isoformat() if document.indexed_at else None,
+                    'created_at': document.created_at.isoformat(),
+                    'metadata': document.metadata,
+                },
+                'indexing_result': indexing_result,
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Ошибка создания документа: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def retrieve(self, request, pk=None):
+        """
+        GET /api/ai_assistant/knowledge_documents/{id}/
+        Получить документ с chunks
+        """
+        user = self.get_safe_user()
+        queryset = KnowledgeDocument.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        try:
+            document = queryset.get(id=pk)
+            
+            chunks = []
+            for chunk in document.chunks.all().order_by('chunk_index'):
+                chunks.append({
+                    'id': str(chunk.id),
+                    'chunk_index': chunk.chunk_index,
+                    'content': chunk.content,
+                    'start_char': chunk.start_char,
+                    'end_char': chunk.end_char,
+                    'embedding_model': chunk.embedding_model,
+                    'has_embedding': bool(chunk.embedding),
+                    'metadata': chunk.metadata,
+                })
+            
+            # Информация о файле
+            file_info = None
+            if document.file:
+                try:
+                    file_info = {
+                        'name': document.file.name.split('/')[-1],
+                        'size': document.file.size,
+                        'url': document.file.url if hasattr(document.file, 'url') else None,
+                        'type': document.file_type,
+                    }
+                except Exception:
+                    pass
+            
+            return Response({
+                'success': True,
+                'document': {
+                    'id': str(document.id),
+                    'title': document.title,
+                    'content': document.content,
+                    'source': document.source,
+                    'file': file_info,
+                    'file_type': document.file_type,
+                    'is_indexed': document.is_indexed,
+                    'chunks_count': document.chunks_count,
+                    'indexed_at': document.indexed_at.isoformat() if document.indexed_at else None,
+                    'created_at': document.created_at.isoformat(),
+                    'updated_at': document.updated_at.isoformat(),
+                    'metadata': document.metadata,
+                    'chunks': chunks,
+                },
+            }, status=status.HTTP_200_OK)
+            
+        except KnowledgeDocument.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Документ не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    def update(self, request, pk=None):
+        """
+        PUT /api/ai_assistant/knowledge_documents/{id}/
+        Обновить документ
+        """
+        user = self.get_safe_user()
+        queryset = KnowledgeDocument.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        try:
+            document = queryset.get(id=pk)
+            
+            # Обновляем поля
+            if 'title' in request.data:
+                document.title = request.data['title']
+            if 'content' in request.data:
+                document.content = request.data['content']
+                # Если изменили содержимое, сбрасываем статус индексации
+                if document.is_indexed:
+                    document.is_indexed = False
+                    document.indexed_at = None
+            if 'source' in request.data:
+                document.source = request.data['source']
+            if 'metadata' in request.data:
+                document.metadata = request.data['metadata']
+            
+            document.save()
+            
+            return Response({
+                'success': True,
+                'document': {
+                    'id': str(document.id),
+                    'title': document.title,
+                    'is_indexed': document.is_indexed,
+                    'chunks_count': document.chunks_count,
+                },
+            }, status=status.HTTP_200_OK)
+            
+        except KnowledgeDocument.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Документ не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    def destroy(self, request, pk=None):
+        """
+        DELETE /api/ai_assistant/knowledge_documents/{id}/
+        Удалить документ (вместе с chunks)
+        """
+        user = self.get_safe_user()
+        queryset = KnowledgeDocument.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        try:
+            document = queryset.get(id=pk)
+            document.delete()  # Каскадное удаление chunks
+            return Response({
+                'success': True,
+                'message': 'Документ удален'
+            }, status=status.HTTP_200_OK)
+            
+        except KnowledgeDocument.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Документ не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'], url_path='index')
+    def index(self, request, pk=None):
+        """
+        POST /api/ai_assistant/knowledge_documents/{id}/index/
+        Индексировать или переиндексировать документ
+        """
+        user = self.get_safe_user()
+        queryset = KnowledgeDocument.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        force_reindex = request.data.get('force', False)
+        
+        try:
+            document = queryset.get(id=pk)
+            
+            embeddings_service, _ = _get_rag_services()
+            indexing_service = RAGIndexingService(
+                embeddings_service=embeddings_service,
+                chunk_size=RAG_CHUNK_SIZE,
+                chunk_overlap=RAG_CHUNK_OVERLAP,
+            )
+            
+            if force_reindex:
+                result = indexing_service.reindex_document(document)
+            else:
+                result = indexing_service.index_document(document)
+            
+            # Обновляем объект документа из БД, чтобы получить актуальный chunks_count
+            document.refresh_from_db()
+            
+            return Response({
+                'success': True,
+                'result': result,
+                'document': {
+                    'id': str(document.id),
+                    'title': document.title,
+                    'is_indexed': document.is_indexed,
+                    'chunks_count': document.chunks_count,
+                    'indexed_at': document.indexed_at.isoformat() if document.indexed_at else None,
+                },
+            }, status=status.HTTP_200_OK)
+            
+        except KnowledgeDocument.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Документ не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except RAGIndexingError as e:
+            return Response({
+                'success': False,
+                'error': f'Ошибка индексации: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'], url_path='unindex')
+    def unindex(self, request, pk=None):
+        """
+        POST /api/ai_assistant/knowledge_documents/{id}/unindex/
+        Деиндексировать документ (удалить chunks)
+        """
+        user = self.get_safe_user()
+        queryset = KnowledgeDocument.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        try:
+            document = queryset.get(id=pk)
+            
+            embeddings_service, _ = _get_rag_services()
+            indexing_service = RAGIndexingService(
+                embeddings_service=embeddings_service,
+                chunk_size=RAG_CHUNK_SIZE,
+                chunk_overlap=RAG_CHUNK_OVERLAP,
+            )
+            
+            indexing_service.delete_document_index(document)
+            
+            return Response({
+                'success': True,
+                'message': 'Документ деиндексирован',
+                'document': {
+                    'id': str(document.id),
+                    'title': document.title,
+                    'is_indexed': document.is_indexed,
+                    'chunks_count': document.chunks_count,
+                },
+            }, status=status.HTTP_200_OK)
+            
+        except KnowledgeDocument.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Документ не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['get'], url_path='download')
+    def download_file(self, request, pk=None):
+        """
+        GET /api/ai_assistant/knowledge_documents/{id}/download/
+        Скачать файл документа
+        """
+        user = self.get_safe_user()
+        queryset = KnowledgeDocument.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        try:
+            document = queryset.get(id=pk)
+            
+            if not document.file:
+                return Response({
+                    'success': False,
+                    'error': 'У документа нет файла'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            try:
+                file_handle = document.file.open('rb')
+                filename = document.file.name.split('/')[-1]
+                response = FileResponse(file_handle, as_attachment=True, filename=filename)
+                return response
+            except Exception as e:
+                logger.error(f"Ошибка открытия файла документа {document.id}: {e}")
+                return Response({
+                    'success': False,
+                    'error': f'Ошибка открытия файла: {str(e)}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        except KnowledgeDocument.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Документ не найден'
             }, status=status.HTTP_404_NOT_FOUND)
 
 
