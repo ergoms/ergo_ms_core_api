@@ -1550,6 +1550,21 @@ class ChatView(APIView):
             response_received_at = timezone.now()
             processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
             
+            # Формируем metadata с данными навыка
+            message_metadata = {
+                'model': runtime_config.model,
+                'skill_name': skill_display_name,
+                'skill_call': skill_call,
+            }
+            if ollama_config:
+                message_metadata['ollama_config'] = ollama_config
+            
+            # Добавляем данные навыка (например, конфигурацию графика)
+            if skill_result and skill_result.success and skill_result.metadata:
+                # Проверяем, это график?
+                if 'chart_config' in skill_result.metadata:
+                    message_metadata['chart_config'] = skill_result.metadata['chart_config']
+            
             # Сохраняем ответ ассистента
             assistant_message = ChatMessage.objects.create(
                 session=session,
@@ -1558,23 +1573,15 @@ class ChatView(APIView):
                 request_started_at=request_started_at,
                 response_received_at=response_received_at,
                 processing_time_ms=processing_time,
-                metadata={
-                    'ollama_config': ollama_config,
-                    'model': runtime_config.model,
-                    'skill_name': skill_display_name,
-                    'skill_call': skill_call,
-                } if ollama_config else {
-                    'model': runtime_config.model,
-                    'skill_name': skill_display_name,
-                    'skill_call': skill_call,
-                }
+                metadata=message_metadata
             )
             
             # Обновляем время сессии
             session.updated_at = timezone.now()
             session.save(update_fields=['updated_at'])
             
-            return Response({
+            # Формируем ответ
+            response_data = {
                 'success': True,
                 'response': answer,
                 'message': answer,  # Для совместимости
@@ -1584,7 +1591,12 @@ class ChatView(APIView):
                 'timestamp': assistant_message.created_at.isoformat(),
                 'skill_name': skill_display_name,
                 'skill_call': skill_call,
-            }, status=status.HTTP_200_OK)
+            }
+            # Добавляем конфигурацию графика, если есть
+            if 'chart_config' in message_metadata:
+                response_data['chart_config'] = message_metadata['chart_config']
+            
+            return Response(response_data, status=status.HTTP_200_OK)
         
         except Exception as e:
             return Response({
@@ -1806,6 +1818,21 @@ class ChatStreamView(APIView):
                 
                 processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
                 
+                # Формируем metadata с данными навыка
+                message_metadata = {
+                    'model': runtime_config.model,
+                    'skill_name': skill_display_name,
+                    'skill_call': skill_call,
+                }
+                if ollama_config:
+                    message_metadata['ollama_config'] = ollama_config
+                
+                # Добавляем данные навыка (например, конфигурацию графика)
+                if skill_result and skill_result.success and skill_result.metadata:
+                    # Проверяем, это график?
+                    if 'chart_config' in skill_result.metadata:
+                        message_metadata['chart_config'] = skill_result.metadata['chart_config']
+                
                 # Сохраняем ответ ассистента
                 assistant_message = ChatMessage.objects.create(
                     session=session,
@@ -1814,23 +1841,15 @@ class ChatStreamView(APIView):
                     request_started_at=request_started_at,
                     response_received_at=response_received_at,
                     processing_time_ms=processing_time,
-                    metadata={
-                        'ollama_config': ollama_config,
-                        'model': runtime_config.model,
-                        'skill_name': skill_display_name,
-                        'skill_call': skill_call,
-                    } if ollama_config else {
-                        'model': runtime_config.model,
-                        'skill_name': skill_display_name,
-                        'skill_call': skill_call,
-                    }
+                    metadata=message_metadata
                 )
                 
                 # Обновляем время сессии
                 session.updated_at = timezone.now()
                 session.save(update_fields=['updated_at'])
                 
-                yield f"data: {json.dumps({
+                # Формируем финальное событие
+                done_event = {
                     'type': 'done',
                     'full_response': full_response,
                     'session_id': str(session.id),
@@ -1839,7 +1858,12 @@ class ChatStreamView(APIView):
                     'timestamp': assistant_message.created_at.isoformat(),
                     'skill_name': skill_display_name,
                     'skill_call': skill_call,
-                }, ensure_ascii=False)}\n\n"
+                }
+                # Добавляем конфигурацию графика, если есть
+                if 'chart_config' in message_metadata:
+                    done_event['chart_config'] = message_metadata['chart_config']
+                
+                yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
                 
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
