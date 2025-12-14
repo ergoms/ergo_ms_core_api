@@ -357,12 +357,18 @@ class BIQueryView(APIView):
         
         # Если запрошен streaming режим
         if use_stream:
-            return self._streaming_response(file_upload, question, want_commentary, ollama_config, session, user_message)
+            return self._streaming_response(
+                file_upload, question, want_commentary, ollama_config, 
+                session, user_message, request.user
+            )
         
         # Обычный режим (без streaming)
-        return self._regular_response(file_upload, question, want_commentary, ollama_config, session, user_message)
+        return self._regular_response(
+            file_upload, question, want_commentary, ollama_config, 
+            session, user_message, request.user
+        )
     
-    def _streaming_response(self, file_upload, question, want_commentary, ollama_config=None, session=None, user_message=None):
+    def _streaming_response(self, file_upload, question, want_commentary, ollama_config=None, session=None, user_message=None, user=None):
         """Возвращает streaming ответ через Server-Sent Events."""
         def event_stream():
             service = None
@@ -453,9 +459,62 @@ class BIQueryView(APIView):
                     # Используем _safe_json_dumps для обработки NaN/Infinity в данных
                     yield f"data: {_safe_json_dumps(final_data, ensure_ascii=False)}\n\n"
                     
+                    # Проверяем через LLM нужно ли создать документ
+                    document_info = None
+                    skill_name = None
+                    skill_call = None
+                    
+                    # Спрашиваем у LLM нужно ли создать документ
+                    should_create_doc = self._check_document_intent(
+                        question=question,
+                        commentary=''.join(commentary_parts) if commentary_parts else result.get('comment', ''),
+                        ollama_config=ollama_config
+                    )
+                    
+                    if should_create_doc:
+                        yield f"data: {json.dumps({'type': 'stage', 'message': 'Создаю документ...'}, ensure_ascii=False)}\n\n"
+                        document_info = self._create_bi_document(
+                            file_name=file_upload.name,
+                            question=question,
+                            commentary=''.join(commentary_parts) if commentary_parts else result.get('comment', ''),
+                            data=result.get('data', []),
+                            columns=result.get('columns', []),
+                            request=self.request,
+                            sql=result.get('sql', ''),
+                            user=user
+                        )
+                        if document_info:
+                            skill_name = 'Документы'
+                            skill_call = {'tool': 'document_creation', 'parameters': {'title': document_info.get('title')}}
+                            yield f"data: {json.dumps({
+                                'type': 'document_created',
+                                'filename': document_info.get('filename'),
+                                'download_url': document_info.get('download_url'),
+                            }, ensure_ascii=False)}\n\n"
+                    
                     # Сохраняем ответ ассистента
                     if session and user_message:
                         commentary_text = ''.join(commentary_parts) if commentary_parts else result.get('comment', '')
+                        
+                        # Добавляем ссылку на документ в текст если он был создан
+                        if document_info:
+                            commentary_text += f"\n\n[{document_info.get('filename')}]({document_info.get('download_url')})"
+                        
+                        message_metadata = {
+                            'file_id': file_upload.id,
+                            'file_name': file_upload.name,
+                            'sql': result.get('sql'),
+                            'rows': result.get('rows'),
+                            'columns': result.get('columns'),
+                            'data': result.get('data'),
+                            'skill_name': skill_name,
+                            'skill_call': skill_call,
+                        }
+                        if ollama_config:
+                            message_metadata['ollama_config'] = ollama_config
+                        if document_info:
+                            message_metadata['document'] = document_info
+                        
                         assistant_message = ChatMessage.objects.create(
                             session=session,
                             message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
@@ -463,22 +522,7 @@ class BIQueryView(APIView):
                             request_started_at=request_started_at,
                             response_received_at=response_received_at,
                             processing_time_ms=processing_time,
-                            metadata={
-                                'file_id': file_upload.id,
-                                'file_name': file_upload.name,
-                                'sql': result.get('sql'),
-                                'rows': result.get('rows'),
-                                'columns': result.get('columns'),
-                                'data': result.get('data'),
-                                'ollama_config': ollama_config,
-                            } if ollama_config else {
-                                'file_id': file_upload.id,
-                                'file_name': file_upload.name,
-                                'sql': result.get('sql'),
-                                'rows': result.get('rows'),
-                                'columns': result.get('columns'),
-                                'data': result.get('data'),
-                            }
+                            metadata=message_metadata
                         )
                         
                         # Обновляем время сессии
@@ -491,6 +535,8 @@ class BIQueryView(APIView):
                             'session_id': str(session.id),
                             'message_id': str(assistant_message.id),
                             'processing_time_ms': processing_time,
+                            'skill_name': skill_name,
+                            'skill_call': skill_call,
                         }, ensure_ascii=False)}\n\n"
                 else:
                     yield f"data: {json.dumps({'type': 'error', 'message': result.get('error', 'Ошибка')})}\n\n"
@@ -511,7 +557,170 @@ class BIQueryView(APIView):
         response['X-Accel-Buffering'] = 'no'
         return response
     
-    def _regular_response(self, file_upload, question, want_commentary, ollama_config=None, session=None, user_message=None):
+    def _check_document_intent(self, question: str, commentary: str, ollama_config=None) -> bool:
+        """
+        Проверяет, хочет ли пользователь создать документ/отчёт.
+        Сначала проверяет ключевые слова, затем через LLM если неясно.
+        """
+        question_lower = question.lower()
+        
+        # Быстрая проверка очевидных случаев по ключевым словам
+        doc_keywords = [
+            'создай отчёт', 'создай отчет', 'сделай отчёт', 'сделай отчет',
+            'создай документ', 'сделай документ', 'сформируй отчёт', 'сформируй отчет',
+            'выгрузи отчёт', 'выгрузи отчет', 'экспортируй', 'создай word',
+            'создай pdf', 'сохрани как документ', 'сгенерируй отчёт', 'сгенерируй отчет',
+            'выгрузи в файл', 'сохрани в файл', 'скачать отчёт', 'скачать отчет',
+        ]
+        
+        # Если есть явное ключевое слово - сразу создаём документ
+        if any(keyword in question_lower for keyword in doc_keywords):
+            logger.info(f"Создание документа: найдено ключевое слово в вопросе '{question}'")
+            return True
+        
+        # Если вопрос короткий и содержит слово "отчёт" или "документ" - создаём
+        if len(question_lower.split()) <= 5 and ('отчёт' in question_lower or 'отчет' in question_lower or 'документ' in question_lower):
+            logger.info(f"Создание документа: короткий вопрос со словом отчёт/документ '{question}'")
+            return True
+        
+        # Для остальных случаев используем LLM
+        try:
+            runtime_config = build_runtime_config(ollama_config)
+            
+            model = runtime_config.model or 'mistral'
+            base_url = runtime_config.base_url or OLLAMA_BASE_URL
+            
+            client = build_llm_client(
+                provider=runtime_config.provider.value,
+                model=model,
+                base_url=base_url,
+                request_timeout=15.0,
+                stream_timeout=15.0,
+                concurrency_limit=runtime_config.concurrency_limit,
+                max_retries=1,
+                keep_alive=runtime_config.keep_alive,
+                provider_config=runtime_config.provider_config,
+                device_config=runtime_config.device_config,
+            )
+            
+            prompt = f"""Вопрос: "{question}"
+
+Пользователь хочет СОЗДАТЬ ФАЙЛ (документ/отчёт для скачивания)?
+Ответь ОДНИМ словом: ДА или НЕТ"""
+
+            response = client.complete(
+                prompt,
+                num_predict=5,
+                temperature=0.0,
+                stream=False,
+            ).strip().upper()
+            
+            logger.info(f"LLM проверка документа: вопрос='{question}', ответ='{response}'")
+            
+            result = 'ДА' in response or 'YES' in response or 'DA' in response
+            return result
+            
+        except Exception as e:
+            logger.warning(f"Ошибка проверки намерения создать документ: {e}")
+            return False
+    
+    def _create_bi_document(self, file_name, question, commentary, data, columns, sql, user=None, request=None):
+        """Создаёт документ с результатами BI анализа."""
+        from pathlib import Path
+        from django.conf import settings
+        from datetime import datetime
+        import uuid
+        
+        try:
+            # Импортируем генератор
+            from .skills.builtin.document.generators import WordGenerator
+            
+            title = f"Отчёт по {file_name}"
+            current_date = datetime.now().strftime('%d.%m.%Y %H:%M')
+            
+            # Генерируем путь для файла
+            base_dir = Path(settings.GENERATED_DOCUMENTS_DIR)
+            if user and hasattr(user, 'id'):
+                base_dir = base_dir / f'user_{user.id}'
+            base_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Создаём безопасное имя файла (ТОЛЬКО ASCII - латиница и цифры)
+            import re
+            # Транслитерация кириллицы
+            translit_map = {
+                'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+                'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+                'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+                'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '',
+                'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+            }
+            safe_title = ""
+            for c in file_name.lower():
+                if c in translit_map:
+                    safe_title += translit_map[c]
+                elif c.isascii() and (c.isalnum() or c in '-_'):
+                    safe_title += c
+            safe_title = safe_title[:30] or 'report'
+            unique_id = str(uuid.uuid4())[:8]
+            filename = f"Report_{safe_title}_{unique_id}.docx"
+            output_path = base_dir / filename
+            
+            # Генерируем Word документ напрямую из данных
+            generator = WordGenerator()
+            
+            try:
+                file_path = generator.generate_bi_report(
+                    output_path=output_path,
+                    title=title,
+                    date=current_date,
+                    file_name=file_name,
+                    question=question,
+                    commentary=commentary or '',
+                    data=data or [],
+                    columns=columns or [],
+                    sql=sql or ''
+                )
+                logger.info(f"Документ создан: {file_path}, размер: {file_path.stat().st_size} байт")
+            except Exception as gen_error:
+                logger.error(f"Ошибка генерации документа: {gen_error}", exc_info=True)
+                raise
+            
+            # Формируем URL для скачивания (используем forward slashes для URL)
+            from urllib.parse import quote
+            media_root = Path(settings.MEDIA_ROOT)
+            try:
+                relative_path = file_path.relative_to(media_root)
+                # Конвертируем путь в URL формат (forward slashes) и кодируем
+                url_path = str(relative_path).replace('\\', '/')
+                # Кодируем каждый сегмент пути отдельно
+                url_path_encoded = '/'.join(quote(segment, safe='') for segment in url_path.split('/'))
+                relative_download_url = f"/api/ai_assistant/documents/download/{url_path_encoded}"
+            except ValueError:
+                relative_download_url = f"/api/ai_assistant/documents/download/{quote(file_path.name, safe='')}"
+            
+            # Формируем абсолютный URL для скачивания (важно для dev-режима)
+            if request:
+                download_url = request.build_absolute_uri(relative_download_url)
+            else:
+                # Fallback: используем настройки API
+                api_host = getattr(settings, 'API_HOST', 'localhost')
+                api_port = getattr(settings, 'API_PORT', '8000')
+                download_url = f"http://{api_host}:{api_port}{relative_download_url}"
+            
+            logger.info(f"Download URL: {download_url}")
+            
+            return {
+                'title': title,
+                'filename': file_path.name,
+                'file_path': str(file_path),
+                'download_url': download_url,
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка создания BI документа: {e}", exc_info=True)
+            return None
+    
+    def _regular_response(self, file_upload, question, want_commentary, ollama_config=None, session=None, user_message=None, user=None):
         """Возвращает обычный (не streaming) ответ."""
         try:
             request_started_at = timezone.now()
@@ -2234,5 +2443,84 @@ class KnowledgeDocumentViewSet(ViewSet, SwaggerSafeMixin):
             }, status=status.HTTP_404_NOT_FOUND)
 
 
-
-
+class GeneratedDocumentDownloadView(APIView):
+    """
+    GET /api/ai_assistant/documents/download/<path:file_path>
+    Скачать сгенерированный документ
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, file_path):
+        from pathlib import Path
+        from django.conf import settings
+        from urllib.parse import unquote
+        import mimetypes
+        import os
+        
+        # Декодируем URL (убираем %D0%A1 и т.д.)
+        decoded_path = unquote(file_path)
+        
+        # Нормализуем путь (заменяем forward slashes на системные)
+        normalized_path = decoded_path.replace('/', os.sep)
+        
+        # Строим полный путь к файлу
+        media_root = Path(settings.MEDIA_ROOT)
+        full_path = media_root / normalized_path
+        
+        logger.info(f"Запрос скачивания: file_path={file_path}, full_path={full_path}")
+        
+        # Проверяем безопасность пути (чтобы не выйти за пределы media)
+        try:
+            full_path = full_path.resolve()
+            media_root = media_root.resolve()
+            
+            if not str(full_path).startswith(str(media_root)):
+                return Response({
+                    'success': False,
+                    'error': 'Недопустимый путь к файлу'
+                }, status=status.HTTP_403_FORBIDDEN)
+        except Exception:
+            return Response({
+                'success': False,
+                'error': 'Неверный путь к файлу'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Проверяем существование файла
+        if not full_path.exists() or not full_path.is_file():
+            logger.error(f"Файл не найден: {full_path}")
+            return Response({
+                'success': False,
+                'error': f'Файл не найден: {full_path}'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Проверяем размер файла
+        file_size = full_path.stat().st_size
+        logger.info(f"Размер файла: {file_size} байт")
+        
+        if file_size == 0:
+            logger.error(f"Файл пустой: {full_path}")
+            return Response({
+                'success': False,
+                'error': 'Файл пустой'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Определяем MIME тип
+        content_type, _ = mimetypes.guess_type(str(full_path))
+        if not content_type:
+            content_type = 'application/octet-stream'
+        
+        # Возвращаем файл
+        try:
+            response = FileResponse(
+                open(full_path, 'rb'),
+                content_type=content_type,
+                as_attachment=True,
+                filename=full_path.name
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Ошибка скачивания документа {full_path}: {e}")
+            return Response({
+                'success': False,
+                'error': f'Ошибка скачивания файла: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
