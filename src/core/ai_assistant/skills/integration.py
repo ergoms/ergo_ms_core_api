@@ -28,7 +28,13 @@ def build_skills_prompt(available_skills: List[Dict[str, Any]]) -> str:
     
     prompt_parts = [
         "\n\n[ДОСТУПНЫЕ НАВЫКИ]",
-        "У тебя есть доступ к следующим навыкам (tools), которые ты можешь использовать:",
+        "У тебя есть доступ к следующим навыкам (tools).",
+        "",
+        "Используй навыки ТОЛЬКО когда пользователь ЯВНО просит выполнить действие:",
+        "- Вычисления: 'посчитай', 'вычисли', 'сколько будет'",
+        "- Документы: 'создай документ', 'сделай файл'",
+        "",
+        "Для вопросов 'что такое?', 'расскажи', 'объясни' — просто отвечай без навыков.",
         ""
     ]
     
@@ -53,22 +59,31 @@ def build_skills_prompt(available_skills: List[Dict[str, Any]]) -> str:
         prompt_parts.append("")
     
     prompt_parts.extend([
-        "Чтобы использовать навык, ответь в формате JSON:",
-        '{"tool": "имя_навыка", "parameters": {"param1": "value1", "param2": "value2"}}',
+        "Чтобы ВЫПОЛНИТЬ навык, напиши ТОЧНО в таком формате:",
+        '[EXECUTE]{"tool": "имя_навыка", "parameters": {"param1": "value1"}}',
         "",
-        "Если навык не нужен, просто ответь обычным текстом.",
+        "ВАЖНО: Маркер [EXECUTE] обязателен! Без него навык не выполнится.",
+        "Если навык не нужен — просто отвечай без [EXECUTE] и JSON.",
         "[/ДОСТУПНЫЕ НАВЫКИ]"
     ])
     
     return "\n".join(prompt_parts)
 
 
+def _is_valid_tool_name(tool_name: str) -> bool:
+    """Проверяет, что имя инструмента валидно (не none, null и т.п.)."""
+    if not tool_name:
+        return False
+    invalid_names = {'none', 'null', 'n/a', 'na', '', 'нет', 'никакой'}
+    return tool_name.lower().strip() not in invalid_names
+
+
 def parse_skill_call_from_response(response: str) -> Optional[Dict[str, Any]]:
     """
     Парсит вызов навыка из ответа LLM.
     
-    Ищет JSON в формате:
-    {"tool": "skill_name", "parameters": {...}}
+    Ищет маркер [EXECUTE] с JSON в формате:
+    [EXECUTE]{"tool": "skill_name", "parameters": {...}}
     
     Args:
         response: Ответ от LLM
@@ -76,54 +91,46 @@ def parse_skill_call_from_response(response: str) -> Optional[Dict[str, Any]]:
     Returns:
         Словарь с именем навыка и параметрами, или None если вызов не найден
     """
-    # Ищем JSON блок в ответе
-    json_patterns = [
-        r'\{[^{}]*"tool"[^{}]*\}',  # Простой JSON
-        r'```json\s*(\{.*?\})\s*```',  # JSON в блоке кода
-        r'```\s*(\{.*?\})\s*```',  # JSON в блоке без указания языка
-    ]
+    import re
     
-    for pattern in json_patterns:
-        import re
-        matches = re.findall(pattern, response, re.DOTALL | re.IGNORECASE)
-        for match in matches:
-            json_str = match if isinstance(match, str) else match
-            try:
-                data = json.loads(json_str)
-                if 'tool' in data and 'parameters' in data:
-                    return {
-                        'tool': data['tool'],
-                        'parameters': data.get('parameters', {})
-                    }
-            except json.JSONDecodeError:
-                continue
+    # Ищем маркер [EXECUTE]
+    match = re.search(r'\[EXECUTE\]', response, re.IGNORECASE)
+    if not match:
+        return None
     
-    # Пытаемся найти JSON в любом месте ответа
+    # Находим JSON после [EXECUTE]
+    json_start = response.find('{', match.end())
+    if json_start == -1:
+        return None
+    
+    # Находим конец JSON (с учётом вложенных скобок)
+    brace_count = 0
+    json_end = json_start
+    for i in range(json_start, len(response)):
+        if response[i] == '{':
+            brace_count += 1
+        elif response[i] == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                json_end = i + 1
+                break
+    
+    if json_end <= json_start:
+        return None
+    
+    json_str = response[json_start:json_end]
+    
     try:
-        # Ищем первый валидный JSON объект
-        start_idx = response.find('{')
-        if start_idx != -1:
-            # Находим закрывающую скобку
-            brace_count = 0
-            end_idx = start_idx
-            for i in range(start_idx, len(response)):
-                if response[i] == '{':
-                    brace_count += 1
-                elif response[i] == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        end_idx = i + 1
-                        break
-            
-            if end_idx > start_idx:
-                json_str = response[start_idx:end_idx]
-                data = json.loads(json_str)
-                if 'tool' in data:
-                    return {
-                        'tool': data['tool'],
-                        'parameters': data.get('parameters', {})
-                    }
-    except (json.JSONDecodeError, ValueError):
+        data = json.loads(json_str)
+        
+        if 'tool' in data:
+            tool_name = data['tool']
+            if _is_valid_tool_name(tool_name):
+                return {
+                    'tool': tool_name,
+                    'parameters': data.get('parameters', {})
+                }
+    except json.JSONDecodeError:
         pass
     
     return None
@@ -133,7 +140,7 @@ def execute_skill_from_llm_response(
     response: str,
     original_query: str,
     context: Optional[Dict[str, Any]] = None
-) -> tuple[Optional[SkillResult], str]:
+) -> tuple[Optional[SkillResult], str, Optional[str], Optional[Dict[str, Any]]]:
     """
     Выполняет навык на основе ответа LLM.
     
@@ -143,34 +150,68 @@ def execute_skill_from_llm_response(
         context: Дополнительный контекст
     
     Returns:
-        Кортеж (SkillResult или None, очищенный ответ без JSON)
+        Кортеж (SkillResult или None, очищенный ответ без JSON, display_name навыка или None, skill_call или None)
     """
     skill_call = parse_skill_call_from_response(response)
     
     if not skill_call:
         # Нет вызова навыка, возвращаем исходный ответ
-        return None, response
+        return None, response, None, None
     
     skill_name = skill_call.get('tool')
     parameters = skill_call.get('parameters', {})
     
     if not skill_name:
-        return None, response
+        return None, response, None, None
     
     manager = get_skills_manager()
+    
+    # Получаем display_name навыка
+    skill = manager.get_skill(skill_name)
+    skill_display_name = skill.display_name if skill else None
+    
     skill_result = manager.execute_skill(skill_name, original_query, parameters, context)
     
-    # Удаляем JSON из ответа
-    cleaned_response = response
-    for pattern in [
-        r'\{[^{}]*"tool"[^{}]*\}',
-        r'```json\s*\{[^{}]*"tool"[^{}]*\}\s*```',
-        r'```\s*\{[^{}]*"tool"[^{}]*\}\s*```',
-    ]:
-        import re
-        cleaned_response = re.sub(pattern, '', cleaned_response, flags=re.DOTALL | re.IGNORECASE)
+    # Удаляем JSON из ответа (находим и удаляем весь JSON блок с вложенными скобками)
+    cleaned_response = _remove_json_from_response(response)
     
-    cleaned_response = cleaned_response.strip()
+    return skill_result, cleaned_response, skill_display_name, skill_call
+
+
+def _remove_json_from_response(response: str) -> str:
+    """
+    Удаляет [EXECUTE]{...} вызова навыка из ответа LLM.
+    """
+    import re
     
-    return skill_result, cleaned_response
+    # Находим [EXECUTE] (регистронезависимо)
+    match = re.search(r'\[EXECUTE\]', response, re.IGNORECASE)
+    if not match:
+        return response.strip()
+    
+    execute_start = match.start()
+    execute_end = match.end()
+    
+    # Находим JSON после [EXECUTE]
+    json_start = response.find('{', execute_end)
+    if json_start == -1:
+        # Удаляем только [EXECUTE]
+        cleaned = response[:execute_start] + response[execute_end:]
+        return cleaned.strip()
+    
+    # Находим конец JSON (с учётом вложенных скобок)
+    brace_count = 0
+    json_end = json_start
+    for i in range(json_start, len(response)):
+        if response[i] == '{':
+            brace_count += 1
+        elif response[i] == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                json_end = i + 1
+                break
+    
+    # Удаляем [EXECUTE] вместе с JSON
+    cleaned = response[:execute_start] + response[json_end:]
+    return cleaned.strip()
 

@@ -15,13 +15,14 @@ class DocumentSkill(BaseSkill):
         return "create_document"
     
     @property
+    def display_name(self) -> str:
+        return "Документы"
+    
+    @property
     def description(self) -> str:
         return """Создает документ Word (.docx) с указанным содержимым.
-Используй этот навык когда пользователь просит:
-- Создать документ
-- Создать Word документ
-- Сформировать документ с анализом
-- Создать файл с информацией"""
+Используй ТОЛЬКО когда пользователь ЯВНО просит: "создай документ", "сделай файл", "запиши в документ".
+НЕ используй для вопросов и объяснений."""
     
     @property
     def parameters(self) -> Dict[str, Any]:

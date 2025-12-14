@@ -44,6 +44,12 @@ class BaseSkill(ABC):
     
     @property
     @abstractmethod
+    def display_name(self) -> str:
+        """Отображаемое название навыка на русском (например: 'Калькулятор', 'Документы')."""
+        pass
+    
+    @property
+    @abstractmethod
     def description(self) -> str:
         """Описание навыка для LLM (что он делает, когда использовать)."""
         pass

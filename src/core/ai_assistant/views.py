@@ -1319,7 +1319,7 @@ class ChatView(APIView):
             ).strip()
             
             # Проверяем, нужно ли выполнить навык из ответа LLM
-            skill_result, cleaned_answer = execute_skill_from_llm_response(
+            skill_result, cleaned_answer, skill_display_name, skill_call = execute_skill_from_llm_response(
                 answer,
                 message,
                 context={'user': request.user, 'session': session, 'module': module}
@@ -1352,7 +1352,13 @@ class ChatView(APIView):
                 metadata={
                     'ollama_config': ollama_config,
                     'model': runtime_config.model,
-                } if ollama_config else {'model': runtime_config.model}
+                    'skill_name': skill_display_name,
+                    'skill_call': skill_call,
+                } if ollama_config else {
+                    'model': runtime_config.model,
+                    'skill_name': skill_display_name,
+                    'skill_call': skill_call,
+                }
             )
             
             # Обновляем время сессии
@@ -1367,6 +1373,8 @@ class ChatView(APIView):
                 'message_id': str(assistant_message.id),
                 'processing_time_ms': processing_time,
                 'timestamp': assistant_message.created_at.isoformat(),
+                'skill_name': skill_display_name,
+                'skill_call': skill_call,
             }, status=status.HTTP_200_OK)
         
         except Exception as e:
@@ -1570,7 +1578,7 @@ class ChatStreamView(APIView):
                 raw_response = result_container.get('response', '')
                 
                 # Проверяем, нужно ли выполнить навык из ответа LLM
-                skill_result, cleaned_response = execute_skill_from_llm_response(
+                skill_result, cleaned_response, skill_display_name, skill_call = execute_skill_from_llm_response(
                     raw_response,
                     message,
                     context={'user': request.user, 'session': session, 'module': module}
@@ -1600,10 +1608,12 @@ class ChatStreamView(APIView):
                     metadata={
                         'ollama_config': ollama_config,
                         'model': runtime_config.model,
-                        'skill_used': skill_result is not None,
+                        'skill_name': skill_display_name,
+                        'skill_call': skill_call,
                     } if ollama_config else {
                         'model': runtime_config.model,
-                        'skill_used': skill_result is not None,
+                        'skill_name': skill_display_name,
+                        'skill_call': skill_call,
                     }
                 )
                 
@@ -1618,6 +1628,8 @@ class ChatStreamView(APIView):
                     'message_id': str(assistant_message.id),
                     'processing_time_ms': processing_time,
                     'timestamp': assistant_message.created_at.isoformat(),
+                    'skill_name': skill_display_name,
+                    'skill_call': skill_call,
                 }, ensure_ascii=False)}\n\n"
                 
             except Exception as e:
