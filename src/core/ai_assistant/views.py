@@ -370,7 +370,12 @@ class BIQueryView(APIView):
     
     def _streaming_response(self, file_upload, question, want_commentary, ollama_config=None, session=None, user_message=None, user=None):
         """Возвращает streaming ответ через Server-Sent Events."""
+        chart_already_created = False
+        
         def event_stream():
+            nonlocal chart_already_created
+            # Используем локальную переменную для вопроса (можем изменить её)
+            current_question = question
             service = None
             assistant_message = None
             request_started_at = timezone.now()
@@ -381,6 +386,93 @@ class BIQueryView(APIView):
                 
                 # Отправляем начальное событие
                 yield f"data: {json.dumps({'type': 'start', 'message': 'Начинаю обработку...'})}\n\n"
+                
+                # Проверяем намерение создать график ДО обработки вопроса
+                should_create_chart = self._check_chart_intent(
+                    question=current_question,
+                    ollama_config=ollama_config
+                )
+                
+                # Если это запрос на график, проверяем есть ли данные в предыдущем сообщении
+                if should_create_chart and session:
+                    last_data_message = ChatMessage.objects.filter(
+                        session=session,
+                        message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
+                        metadata__isnull=False
+                    ).exclude(
+                        metadata__data__isnull=True
+                    ).order_by('-created_at').first()
+                    
+                    if last_data_message and last_data_message.metadata:
+                        bi_data = last_data_message.metadata.get("data", [])
+                        bi_columns = last_data_message.metadata.get("columns", [])
+                        
+                        if bi_data and bi_columns:
+                            # Есть данные - создаём график сразу
+                            logger.info(f"BI: Создание графика из предыдущих данных - строк: {len(bi_data)}, колонок: {len(bi_columns)}")
+                            yield f"data: {json.dumps({'type': 'stage', 'message': 'Создаю график...'}, ensure_ascii=False)}\n\n"
+                            chart_info = self._create_bi_chart(
+                                question=current_question,
+                                data=bi_data,
+                                columns=bi_columns,
+                                session=session
+                            )
+                            
+                            if chart_info:
+                                skill_name = 'Графики'
+                                skill_call = {'tool': 'create_chart', 'parameters': {'title': chart_info.get('title')}}
+                                
+                                # Сохраняем сообщение ассистента с графиком
+                                response_received_at = timezone.now()
+                                processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
+                                
+                                commentary_text = f"График '{chart_info.get('title')}' создан на основе данных из предыдущего ответа."
+                                
+                                assistant_message = ChatMessage.objects.create(
+                                    session=session,
+                                    message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
+                                    content=commentary_text,
+                                    request_started_at=request_started_at,
+                                    response_received_at=response_received_at,
+                                    processing_time_ms=processing_time,
+                                    metadata={
+                                        'file_id': file_upload.id,
+                                        'file_name': file_upload.name,
+                                        'skill_name': skill_name,
+                                        'skill_call': skill_call,
+                                        'chart_config': chart_info,
+                                    }
+                                )
+                                
+                                # Отправляем график
+                                yield f"data: {json.dumps({
+                                    'type': 'chart_created',
+                                    'chart_config': chart_info,
+                                }, ensure_ascii=False)}\n\n"
+                                
+                                # Отправляем информацию о сессии
+                                yield f"data: {json.dumps({
+                                    'type': 'session_info',
+                                    'session_id': str(session.id),
+                                    'message_id': str(assistant_message.id),
+                                    'processing_time_ms': processing_time,
+                                    'skill_name': skill_name,
+                                    'skill_call': skill_call,
+                                    'chart_config': chart_info,
+                                }, ensure_ascii=False)}\n\n"
+                                
+                                # Обновляем время сессии
+                                session.updated_at = timezone.now()
+                                session.save(update_fields=['updated_at'])
+                                
+                                chart_already_created = True
+                                return  # Выходим, не вызывая service.ask
+                    else:
+                        # Нет данных в предыдущем сообщении - если это просто "График", 
+                        # заменяем вопрос на запрос всех данных
+                        if current_question.lower().strip() in ['график', 'диаграмма', 'построй график', 'создай график']:
+                            logger.info(f"BI: Запрос на график без предыдущих данных, заменяю вопрос на 'Покажи все данные'")
+                            current_question = "Покажи все данные"
                 
                 # Загружаем файл
                 yield f"data: {json.dumps({'type': 'stage', 'message': 'Загружаю файл...'})}\n\n"
@@ -406,7 +498,7 @@ class BIQueryView(APIView):
                     try:
                         def immediate_callback(event):
                             streaming_events_queue.put(event)
-                        result_container['result'] = service.ask(question, want_commentary=want_commentary, stream_callback=immediate_callback)
+                        result_container['result'] = service.ask(current_question, want_commentary=want_commentary, stream_callback=immediate_callback)
                     except Exception as e:
                         exception_container['error'] = e
                     finally:
@@ -450,7 +542,7 @@ class BIQueryView(APIView):
                     final_data = {
                         'type': 'complete',
                         'file_name': file_upload.name,
-                        'question': question,
+                        'question': current_question,
                         'sql': result['sql'],
                         'data': result['data'],
                         'rows': result['rows'],
@@ -459,23 +551,52 @@ class BIQueryView(APIView):
                     # Используем _safe_json_dumps для обработки NaN/Infinity в данных
                     yield f"data: {_safe_json_dumps(final_data, ensure_ascii=False)}\n\n"
                     
-                    # Проверяем через LLM нужно ли создать документ
+                    # Проверяем через LLM нужно ли создать документ или график
                     document_info = None
+                    chart_info = None
                     skill_name = None
                     skill_call = None
                     
                     # Спрашиваем у LLM нужно ли создать документ
                     should_create_doc = self._check_document_intent(
-                        question=question,
+                        question=current_question,
                         commentary=''.join(commentary_parts) if commentary_parts else result.get('comment', ''),
                         ollama_config=ollama_config
                     )
+                    
+                    # Проверяем нужно ли создать график (если ещё не создан)
+                    if not chart_already_created:
+                        should_create_chart = self._check_chart_intent(
+                            question=current_question,
+                            ollama_config=ollama_config
+                        )
+                    else:
+                        should_create_chart = False
+                    
+                    logger.info(f"BI: Проверка графика - should_create_chart={should_create_chart}, data={bool(result.get('data'))}, columns={result.get('columns')}")
+                    
+                    if should_create_chart and result.get('data') and result.get('columns'):
+                        yield f"data: {json.dumps({'type': 'stage', 'message': 'Создаю график...'}, ensure_ascii=False)}\n\n"
+                        chart_info = self._create_bi_chart(
+                            question=current_question,
+                            data=result.get('data', []),
+                            columns=result.get('columns', []),
+                            session=session
+                        )
+                        logger.info(f"BI: Результат создания графика - chart_info={bool(chart_info)}")
+                        if chart_info:
+                            skill_name = 'Графики'
+                            skill_call = {'tool': 'create_chart', 'parameters': {'title': chart_info.get('title')}}
+                            yield f"data: {json.dumps({
+                                'type': 'chart_created',
+                                'chart_config': chart_info,
+                            }, ensure_ascii=False)}\n\n"
                     
                     if should_create_doc:
                         yield f"data: {json.dumps({'type': 'stage', 'message': 'Создаю документ...'}, ensure_ascii=False)}\n\n"
                         document_info = self._create_bi_document(
                             file_name=file_upload.name,
-                            question=question,
+                            question=current_question,
                             commentary=''.join(commentary_parts) if commentary_parts else result.get('comment', ''),
                             data=result.get('data', []),
                             columns=result.get('columns', []),
@@ -514,6 +635,8 @@ class BIQueryView(APIView):
                             message_metadata['ollama_config'] = ollama_config
                         if document_info:
                             message_metadata['document'] = document_info
+                        if chart_info:
+                            message_metadata['chart_config'] = chart_info
                         
                         assistant_message = ChatMessage.objects.create(
                             session=session,
@@ -530,14 +653,17 @@ class BIQueryView(APIView):
                         session.save(update_fields=['updated_at'])
                         
                         # Отправляем информацию о сессии
-                        yield f"data: {json.dumps({
+                        session_info_event = {
                             'type': 'session_info',
                             'session_id': str(session.id),
                             'message_id': str(assistant_message.id),
                             'processing_time_ms': processing_time,
                             'skill_name': skill_name,
                             'skill_call': skill_call,
-                        }, ensure_ascii=False)}\n\n"
+                        }
+                        if chart_info:
+                            session_info_event['chart_config'] = chart_info
+                        yield f"data: {json.dumps(session_info_event, ensure_ascii=False)}\n\n"
                 else:
                     yield f"data: {json.dumps({'type': 'error', 'message': result.get('error', 'Ошибка')})}\n\n"
                 
@@ -623,6 +749,224 @@ class BIQueryView(APIView):
         except Exception as e:
             logger.warning(f"Ошибка проверки намерения создать документ: {e}")
             return False
+    
+    def _check_chart_intent(self, question: str, ollama_config=None) -> bool:
+        """
+        Проверяет, хочет ли пользователь создать график.
+        Сначала проверяет ключевые слова, затем через LLM если неясно.
+        """
+        question_lower = question.lower().strip()
+        
+        # Простая проверка: если вопрос содержит слово "график" или "диаграмма" - создаём график
+        if 'график' in question_lower or 'диаграмм' in question_lower:
+            logger.info(f"Создание графика: найдено слово 'график' или 'диаграмма' в вопросе '{question}'")
+            return True
+        
+        # Быстрая проверка очевидных случаев по ключевым словам
+        chart_keywords = [
+            'построй график', 'создай график', 'покажи график', 'нарисуй график',
+            'визуализируй', 'визуализация', 'график по', 'график для',
+            'построй диаграмму', 'создай диаграмму', 'покажи диаграмму',
+        ]
+        
+        # Если есть явное ключевое слово - сразу создаём график
+        if any(keyword in question_lower for keyword in chart_keywords):
+            logger.info(f"Создание графика: найдено ключевое слово в вопросе '{question}'")
+            return True
+        
+        # Для остальных случаев используем LLM
+        try:
+            runtime_config = build_runtime_config(ollama_config)
+            
+            model = runtime_config.model or 'mistral'
+            base_url = runtime_config.base_url or OLLAMA_BASE_URL
+            
+            client = build_llm_client(
+                provider=runtime_config.provider.value,
+                model=model,
+                base_url=base_url,
+                request_timeout=15.0,
+                stream_timeout=15.0,
+                concurrency_limit=runtime_config.concurrency_limit,
+                max_retries=1,
+                keep_alive=runtime_config.keep_alive,
+                provider_config=runtime_config.provider_config,
+                device_config=runtime_config.device_config,
+            )
+            
+            prompt = f"""Вопрос: "{question}"
+
+Пользователь хочет СОЗДАТЬ ГРАФИК (визуализацию данных)?
+Ответь ОДНИМ словом: ДА или НЕТ"""
+
+            response = client.complete(
+                prompt,
+                num_predict=5,
+                temperature=0.0,
+                stream=False,
+            ).strip().upper()
+            
+            logger.info(f"LLM проверка графика: вопрос='{question}', ответ='{response}'")
+            
+            result = 'ДА' in response or 'YES' in response or 'DA' in response
+            return result
+            
+        except Exception as e:
+            logger.warning(f"Ошибка проверки намерения создать график: {e}")
+            return False
+    
+    def _create_bi_chart(self, question: str, data: list, columns: list, session=None):
+        """
+        Создаёт график на основе данных BI анализа.
+        Использует ChartSkill для генерации конфигурации.
+        """
+        logger.info(f"Создание графика: data_len={len(data) if data else 0}, columns={columns}")
+        
+        if not data or not columns:
+            logger.warning(f"Недостаточно данных для графика: data={bool(data)}, columns={bool(columns)}")
+            return None
+        
+        try:
+            from .skills import get_skills_manager
+            
+            skills_manager = get_skills_manager()
+            chart_skill = skills_manager.get_skill('create_chart')
+            
+            if not chart_skill:
+                logger.error("Навык create_chart не найден")
+                return None
+            
+            # Определяем тип графика на основе вопроса
+            question_lower = question.lower()
+            chart_type = "bar"  # По умолчанию
+            
+            if 'линейный' in question_lower or 'тренд' in question_lower or 'временной' in question_lower:
+                chart_type = "line"
+            elif 'круговой' in question_lower or 'pie' in question_lower or 'доля' in question_lower:
+                chart_type = "pie"
+            elif 'площадной' in question_lower or 'area' in question_lower:
+                chart_type = "area"
+            elif 'точечный' in question_lower or 'scatter' in question_lower or 'корреляция' in question_lower:
+                chart_type = "scatter"
+            
+            # Преобразуем данные BI в формат для графика
+            chart_data = []
+            if chart_type == "pie":
+                # Для pie используем первые две колонки
+                if len(columns) >= 2:
+                    label_col = columns[0]
+                    value_col = columns[1]
+                    for row in data[:20]:  # Ограничиваем до 20 элементов
+                        if isinstance(row, dict):
+                            label = str(row.get(label_col, ""))
+                            try:
+                                value = float(row.get(value_col, 0))
+                            except (ValueError, TypeError):
+                                value = 0
+                            if label and value:
+                                chart_data.append({"label": label, "value": value})
+            else:
+                # Для остальных типов выбираем колонки для X и Y
+                # Ищем числовую колонку для Y (предпочтительно не первая, если первая это id)
+                x_col_idx = 0
+                y_col_idx = 1
+                
+                # Если первая колонка называется 'id', используем вторую как X, третью как Y (если есть)
+                if len(columns) > 0 and columns[0].lower() == 'id':
+                    if len(columns) >= 3:
+                        x_col_idx = 1
+                        y_col_idx = 2
+                    elif len(columns) >= 2:
+                        # Если только 2 колонки (id и значение), используем id как X, значение как Y
+                        x_col_idx = 0
+                        y_col_idx = 1
+                
+                # Ищем первую числовую колонку для Y (начиная с y_col_idx)
+                if len(columns) > y_col_idx:
+                    # Проверяем, есть ли числовые значения в колонке Y
+                    test_y_col = columns[y_col_idx]
+                    has_numeric = False
+                    for row in data[:10]:  # Проверяем первые 10 строк
+                        if isinstance(row, dict):
+                            try:
+                                val = row.get(test_y_col)
+                                float(val)
+                                has_numeric = True
+                                break
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    # Если в выбранной колонке нет чисел, ищем другую
+                    if not has_numeric and len(columns) > 2:
+                        for idx in range(1, len(columns)):
+                            if idx == x_col_idx:
+                                continue
+                            test_col = columns[idx]
+                            for row in data[:10]:
+                                if isinstance(row, dict):
+                                    try:
+                                        val = row.get(test_col)
+                                        float(val)
+                                        y_col_idx = idx
+                                        has_numeric = True
+                                        break
+                                    except (ValueError, TypeError):
+                                        pass
+                            if has_numeric:
+                                break
+                
+                if len(columns) >= (y_col_idx + 1):
+                    x_col = columns[x_col_idx]
+                    y_col = columns[y_col_idx]
+                    
+                    logger.info(f"Используем колонки для графика: X={x_col} (idx={x_col_idx}), Y={y_col} (idx={y_col_idx})")
+                    
+                    for row in data[:100]:  # Ограничиваем до 100 элементов
+                        if isinstance(row, dict):
+                            x = row.get(x_col, "")
+                            try:
+                                y_val = row.get(y_col)
+                                y = float(y_val) if y_val is not None else 0
+                            except (ValueError, TypeError):
+                                y = 0
+                            if x is not None and x != "":
+                                chart_data.append({"x": str(x), "y": y})
+                    
+                    logger.info(f"Преобразовано {len(chart_data)} точек данных для графика")
+            
+            if not chart_data:
+                logger.warning(f"Не удалось преобразовать данные BI в формат для графика. Данные: {data[:3] if data else []}, Колонки: {columns}")
+                return None
+            
+            logger.info(f"Создан график: тип={chart_type}, точек={len(chart_data)}")
+            
+            # Формируем заголовок
+            title = f"График по {columns[0] if columns else 'данным'}"
+            if len(columns) >= 2:
+                title = f"График: {columns[0]} vs {columns[1]}"
+            
+            # Вызываем навык
+            skill_result = chart_skill.execute(
+                query=question,
+                parameters={
+                    "chart_type": chart_type,
+                    "title": title,
+                    "data": chart_data,
+                    "x_axis_label": columns[0] if len(columns) > 0 else "",
+                    "y_axis_label": columns[1] if len(columns) > 1 else "",
+                    "series_name": columns[1] if len(columns) > 1 else "Данные",
+                },
+                context={'session': session, 'module': 'bi'}
+            )
+            
+            if skill_result and skill_result.success and skill_result.metadata:
+                return skill_result.metadata.get('chart_config')
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка создания графика: {e}", exc_info=True)
+            return None
     
     def _create_bi_document(self, file_name, question, commentary, data, columns, sql, user=None, request=None):
         """Создаёт документ с результатами BI анализа."""

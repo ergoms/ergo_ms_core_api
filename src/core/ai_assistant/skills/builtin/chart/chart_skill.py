@@ -24,6 +24,9 @@ class ChartSkill(BaseSkill):
 Используй ТОЛЬКО когда пользователь ЯВНО просит: "построй график", "создай график", "покажи график", "визуализируй данные", "нарисуй график".
 НЕ используй для простых ответов текстом.
 
+ВАЖНО: Если пользователь просит построить график в модуле BI и в предыдущих сообщениях есть данные (таблица), 
+используй эти данные для графика. Параметр "data" можно не указывать - данные будут взяты автоматически из последнего ответа с данными.
+
 Поддерживаемые типы графиков:
 - line: линейный график (для временных рядов, трендов)
 - bar: столбчатая диаграмма (для сравнения категорий)
@@ -48,7 +51,7 @@ class ChartSkill(BaseSkill):
                 },
                 "data": {
                     "type": "array",
-                    "description": "Массив данных для графика. Для line/bar/area/scatter: массив объектов {x: значение, y: значение}. Для pie: массив объектов {label: название, value: значение}",
+                    "description": "Массив данных для графика. Для line/bar/area/scatter: массив объектов {x: значение, y: значение}. Для pie: массив объектов {label: название, value: значение}. Если не указано и есть данные в контексте BI, будут использованы они",
                     "items": {
                         "type": "object"
                     }
@@ -84,7 +87,7 @@ class ChartSkill(BaseSkill):
                     "default": 400
                 }
             },
-            "required": ["chart_type", "title", "data"]
+            "required": ["chart_type", "title"]
         }
     
     def execute(
@@ -97,17 +100,43 @@ class ChartSkill(BaseSkill):
         if not parameters:
             return SkillResult(
                 success=False,
-                message="Не указаны параметры для создания графика"
+                error="Не указаны параметры для создания графика"
             )
         
         chart_type = parameters.get("chart_type", "line")
         title = parameters.get("title", "График")
         data = parameters.get("data", [])
         
+        # Если данных нет в параметрах, пытаемся взять из контекста BI
+        if not data and context:
+            session = context.get("session")
+            if session:
+                # Получаем последнее сообщение с данными из этой сессии
+                from src.core.ai_assistant.models import ChatMessage
+                last_data_message = ChatMessage.objects.filter(
+                    session=session,
+                    message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
+                    metadata__isnull=False
+                ).exclude(
+                    metadata__data__isnull=True
+                ).order_by('-created_at').first()
+                
+                if last_data_message and last_data_message.metadata:
+                    bi_data = last_data_message.metadata.get("data", [])
+                    bi_columns = last_data_message.metadata.get("columns", [])
+                    
+                    if bi_data and bi_columns:
+                        # Преобразуем данные BI в формат для графика
+                        data = self._convert_bi_data_to_chart_data(
+                            bi_data, 
+                            bi_columns, 
+                            chart_type
+                        )
+        
         if not data:
             return SkillResult(
                 success=False,
-                message="Не указаны данные для графика"
+                error="Не указаны данные для графика и нет данных в контексте BI"
             )
         
         # Валидация данных
@@ -139,7 +168,7 @@ class ChartSkill(BaseSkill):
         if not validated_data:
             return SkillResult(
                 success=False,
-                message="Не удалось обработать данные для графика"
+                error="Не удалось обработать данные для графика"
             )
         
         # Формируем конфигурацию графика
@@ -160,4 +189,64 @@ class ChartSkill(BaseSkill):
             result=f"График '{title}' создан",
             metadata={'chart_config': chart_config}
         )
+    
+    def _convert_bi_data_to_chart_data(
+        self, 
+        bi_data: list, 
+        columns: list, 
+        chart_type: str
+    ) -> list:
+        """
+        Преобразует данные BI (список словарей) в формат для графика.
+        
+        Args:
+            bi_data: Список словарей с данными из BI
+            columns: Список названий колонок
+            chart_type: Тип графика
+        
+        Returns:
+            Список данных в формате для графика
+        """
+        if not bi_data or not columns:
+            return []
+        
+        # Для pie графика используем первые две колонки (label, value)
+        if chart_type == "pie":
+            if len(columns) < 2:
+                return []
+            
+            label_col = columns[0]
+            value_col = columns[1]
+            
+            result = []
+            for row in bi_data[:20]:  # Ограничиваем до 20 элементов для pie
+                if isinstance(row, dict):
+                    label = str(row.get(label_col, ""))
+                    try:
+                        value = float(row.get(value_col, 0))
+                    except (ValueError, TypeError):
+                        value = 0
+                    if label and value:
+                        result.append({"label": label, "value": value})
+            return result
+        
+        # Для остальных типов используем первую колонку как X, вторую как Y
+        else:
+            if len(columns) < 2:
+                return []
+            
+            x_col = columns[0]
+            y_col = columns[1]
+            
+            result = []
+            for row in bi_data[:100]:  # Ограничиваем до 100 элементов
+                if isinstance(row, dict):
+                    x = row.get(x_col, "")
+                    try:
+                        y = float(row.get(y_col, 0))
+                    except (ValueError, TypeError):
+                        y = 0
+                    if x is not None:
+                        result.append({"x": str(x), "y": y})
+            return result
 
