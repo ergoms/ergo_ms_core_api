@@ -52,6 +52,9 @@ MEDIA_URL = '/media/'
 # Корневая директория для медиа файлов.
 MEDIA_ROOT = os.path.join(SYSTEM_DIR, 'media')
 
+# Корневая директория для сгенерированных документов.
+GENERATED_DOCUMENTS_DIR = Path(MEDIA_ROOT) / 'generated_docs'
+
 # URL для доступа к логам.
 LOGS_URL = '/logs/'
 
