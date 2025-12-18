@@ -408,6 +408,8 @@ class DatasetPreviewView(APIView):
             # Асинхронная обработка нужна только для сложных случаев (JOIN'ы, поиск, очень большие файлы)
             if use_fast_path:
                 # Быстрый путь: прямое чтение файла через polars, как в upload эндпоинте
+                # ВАЖНО: учитываем поля датасета (dataset.fields) для выбора и порядка колонок,
+                # чтобы предпросмотр соответствовал настроенным полям, а не всем колонкам файла.
                 try:
                     from src.core.bi_analysis.services.services import read_file_to_dataframe, count_file_rows
                     
@@ -428,7 +430,24 @@ class DatasetPreviewView(APIView):
                         sheet_name=getattr(main_table, 'sheet_name', None),
                         row_limit=limit
                     )
-                    
+
+                    # Если в датасете определены поля, используем их для выбора и порядка колонок.
+                    # Это делает быстрый путь семантически эквивалентным SQL-пути, который
+                    # строится через build_dataset_query и использует dataset.fields.order_by('order').
+                    dataset_fields_qs = dataset.fields.all().order_by('order')
+                    if dataset_fields_qs.exists():
+                        # Сначала пытаемся выбрать колонки исходя из source_column (если заданы),
+                        # при отсутствии — по имени поля (name). Отсутствующие в файле колонки пропускаем.
+                        selected_columns = []
+                        for f in dataset_fields_qs:
+                            src_col = f.source_column or f.name
+                            if src_col and src_col in table_data.columns:
+                                selected_columns.append(src_col)
+
+                        if selected_columns:
+                            # Фильтруем и переупорядочиваем колонки в соответствии с полями датасета
+                            table_data = table_data.select(selected_columns)
+
                     # Конвертируем в формат ответа
                     columns = table_data.columns
                     rows = table_data.rows

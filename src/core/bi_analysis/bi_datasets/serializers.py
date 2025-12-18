@@ -118,14 +118,57 @@ class DatasetUpdateSerializer(serializers.ModelSerializer):
                 })
             instance.set_params_items(items)
         fields_data = self.initial_data.get('fields', [])
-        if fields_data:
-            for field_data in fields_data:
-                field_obj = instance.fields.filter(id=field_data.get('id')).first()
-                if field_obj:
-                    for attr in ['name', 'aggregation', 'type', 'description']:
-                        if attr in field_data:
-                            setattr(field_obj, attr, field_data[attr])
-                    field_obj.save(update_fields=['name', 'aggregation', 'type', 'description'])
+        if fields_data is not None:  # Явно передан список полей (может быть пустым)
+            # Получаем ID полей из запроса
+            field_ids_in_request = {field_data.get('id') for field_data in fields_data if field_data.get('id')}
+            
+            # Удаляем поля, которых нет в запросе
+            fields_to_delete = instance.fields.exclude(id__in=field_ids_in_request)
+            if fields_to_delete.exists():
+                fields_to_delete.delete()
+            
+            # Обновляем существующие поля и создаем новые
+            for idx, field_data in enumerate(fields_data):
+                field_id = field_data.get('id')
+                if field_id:
+                    # Обновляем существующее поле
+                    field_obj = instance.fields.filter(id=field_id).first()
+                    if field_obj:
+                        update_fields = []
+                        # Обновляем только изменяемые поля (source_table и source_column не изменяем для существующих полей)
+                        for attr in ['name', 'aggregation', 'type', 'description']:
+                            if attr in field_data:
+                                setattr(field_obj, attr, field_data[attr])
+                                update_fields.append(attr)
+                        
+                        if 'order' in field_data:
+                            field_obj.order = field_data['order']
+                            update_fields.append('order')
+                        if update_fields:
+                            field_obj.save(update_fields=update_fields)
+                else:
+                    # Создаем новое поле, если его нет
+                    # Для создания нового поля нужны обязательные поля: name, source_table
+                    if field_data.get('name') and field_data.get('source_table'):
+                        # Извлекаем ID source_table
+                        source_table_data = field_data.get('source_table')
+                        source_table_id = None
+                        if isinstance(source_table_data, int):
+                            source_table_id = source_table_data
+                        elif isinstance(source_table_data, dict) and 'id' in source_table_data:
+                            source_table_id = source_table_data['id']
+                        
+                        if source_table_id:
+                            DataSetField.objects.create(
+                                dataset=instance,
+                                name=field_data.get('name'),
+                                aggregation=field_data.get('aggregation', 'none'),
+                                type=field_data.get('type', 'string'),
+                                description=field_data.get('description', ''),
+                                source_column=field_data.get('source_column'),
+                                source_table_id=source_table_id,
+                                order=field_data.get('order', idx)
+                            )
         return instance
     
 class DatasetDetailSerializer(serializers.ModelSerializer):
