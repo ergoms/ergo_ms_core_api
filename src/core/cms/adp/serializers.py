@@ -5,6 +5,7 @@ from rest_framework.serializers import (
     ValidationError,
     Serializer,
     ListField,
+    SerializerMethodField,
 )
 
 from django.contrib.auth.models import User
@@ -112,11 +113,39 @@ class CMSUserProfileSerializer(ModelSerializer):
 
 class CMSUserSerializer(ModelSerializer):
     adp_profile = CMSUserProfileSerializer(read_only=True)
+    full_name = SerializerMethodField(read_only=True)
+    initials_name = SerializerMethodField(read_only=True)
     
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'middle_name', 'is_active', 'date_joined', 'adp_profile']
-        read_only_fields = ['id', 'date_joined']
+        fields = [
+            'id',
+            'username',
+            'email',
+            'first_name',
+            'last_name',
+            'middle_name',
+            'full_name',
+            'initials_name',
+            'is_active',
+            'date_joined',
+            'adp_profile',
+        ]
+        read_only_fields = ['id', 'date_joined', 'full_name', 'initials_name']
+
+    def get_full_name(self, obj):
+        """
+        Возвращаем полное имя пользователя через метод Django User.get_full_name().
+        """
+        full_name = obj.get_full_name()
+        return full_name if isinstance(full_name, str) else str(full_name or '')
+
+    def get_initials_name(self, obj):
+        """
+        Возвращаем инициалы пользователя через метод кастомного User.get_initials_name().
+        """
+        initials = obj.get_initials_name()
+        return initials if isinstance(initials, str) else str(initials or '')
 
 
 class UpdateUserProfileSerializer(ModelSerializer):
