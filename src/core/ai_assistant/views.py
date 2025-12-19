@@ -18,7 +18,7 @@ from src.core.bi_analysis.bi_datasets.models import FileUpload, Dataset
 from .fast_bi_service import FastBIService, DEFAULT_MODEL, OLLAMA_BASE_URL
 from .config import build_runtime_config
 from .llm_clients import build_llm_client, LLMClientError
-from .intent_detector import IntentDetector, UserIntent, detect_intent
+from .intent_detector import IntentDetector, UserIntent, detect_intent, select_chart_columns
 from src.core.bi_analysis.bi_charts.models import Chart
 from src.core.utils.mixins import SwaggerSafeMixin
 from .models import ChatSession, ChatMessage, KnowledgeDocument, KnowledgeChunk
@@ -860,101 +860,55 @@ class BIQueryView(APIView):
                 elif 'точечный' in question_lower or 'scatter' in question_lower or 'корреляция' in question_lower:
                     chart_type = "scatter"
             
+            # Используем интеллектуальный выбор колонок на основе вопроса
+            x_col, y_col, title = select_chart_columns(question, columns, data)
+            
+            if not x_col or not y_col:
+                logger.warning(f"Не удалось выбрать колонки для графика: x={x_col}, y={y_col}")
+                return None
+            
+            logger.info(f"Интеллектуальный выбор колонок: X={x_col}, Y={y_col}, title={title}")
+            
             # Преобразуем данные BI в формат для графика
             chart_data = []
             if chart_type == "pie":
-                # Для pie используем первые две колонки
-                if len(columns) >= 2:
-                    label_col = columns[0]
-                    value_col = columns[1]
-                    for row in data[:20]:  # Ограничиваем до 20 элементов
-                        if isinstance(row, dict):
-                            label = str(row.get(label_col, ""))
-                            try:
-                                value = float(row.get(value_col, 0))
-                            except (ValueError, TypeError):
+                # Для pie используем выбранные колонки
+                for row in data[:20]:  # Ограничиваем до 20 элементов
+                    if isinstance(row, dict):
+                        label = str(row.get(x_col, ""))
+                        try:
+                            value = row.get(y_col)
+                            if value is None or value == '' or value == '—':
                                 value = 0
-                            if label and value:
-                                chart_data.append({"label": label, "value": value})
+                            else:
+                                value = float(value)
+                        except (ValueError, TypeError):
+                            value = 0
+                        if label and value:
+                            chart_data.append({"label": label, "value": value})
             else:
-                # Для остальных типов выбираем колонки для X и Y
-                # Ищем числовую колонку для Y (предпочтительно не первая, если первая это id)
-                x_col_idx = 0
-                y_col_idx = 1
-                
-                # Если первая колонка называется 'id', используем вторую как X, третью как Y (если есть)
-                if len(columns) > 0 and columns[0].lower() == 'id':
-                    if len(columns) >= 3:
-                        x_col_idx = 1
-                        y_col_idx = 2
-                    elif len(columns) >= 2:
-                        # Если только 2 колонки (id и значение), используем id как X, значение как Y
-                        x_col_idx = 0
-                        y_col_idx = 1
-                
-                # Ищем первую числовую колонку для Y (начиная с y_col_idx)
-                if len(columns) > y_col_idx:
-                    # Проверяем, есть ли числовые значения в колонке Y
-                    test_y_col = columns[y_col_idx]
-                    has_numeric = False
-                    for row in data[:10]:  # Проверяем первые 10 строк
-                        if isinstance(row, dict):
-                            try:
-                                val = row.get(test_y_col)
-                                float(val)
-                                has_numeric = True
-                                break
-                            except (ValueError, TypeError):
-                                pass
-                    
-                    # Если в выбранной колонке нет чисел, ищем другую
-                    if not has_numeric and len(columns) > 2:
-                        for idx in range(1, len(columns)):
-                            if idx == x_col_idx:
-                                continue
-                            test_col = columns[idx]
-                            for row in data[:10]:
-                                if isinstance(row, dict):
-                                    try:
-                                        val = row.get(test_col)
-                                        float(val)
-                                        y_col_idx = idx
-                                        has_numeric = True
-                                        break
-                                    except (ValueError, TypeError):
-                                        pass
-                            if has_numeric:
-                                break
-                
-                if len(columns) >= (y_col_idx + 1):
-                    x_col = columns[x_col_idx]
-                    y_col = columns[y_col_idx]
-                    
-                    logger.info(f"Используем колонки для графика: X={x_col} (idx={x_col_idx}), Y={y_col} (idx={y_col_idx})")
-                    
-                    for row in data[:100]:  # Ограничиваем до 100 элементов
-                        if isinstance(row, dict):
-                            x = row.get(x_col, "")
-                            try:
-                                y_val = row.get(y_col)
-                                y = float(y_val) if y_val is not None else 0
-                            except (ValueError, TypeError):
+                # Для остальных типов используем выбранные колонки
+                for row in data[:100]:  # Ограничиваем до 100 элементов
+                    if isinstance(row, dict):
+                        x = row.get(x_col, "")
+                        try:
+                            y_val = row.get(y_col)
+                            if y_val is None or y_val == '' or y_val == '—':
                                 y = 0
-                            if x is not None and x != "":
-                                chart_data.append({"x": str(x), "y": y})
-                    
-                    logger.info(f"Преобразовано {len(chart_data)} точек данных для графика")
+                            else:
+                                y = float(y_val)
+                        except (ValueError, TypeError):
+                            y = 0
+                        if x is not None and x != "":
+                            chart_data.append({"x": str(x), "y": y})
+                
+                logger.info(f"Преобразовано {len(chart_data)} точек данных для графика")
             
             if not chart_data:
-                logger.warning(f"Не удалось преобразовать данные BI в формат для графика. Данные: {data[:3] if data else []}, Колонки: {columns}")
+                logger.warning(f"Не удалось преобразовать данные BI в формат для графика. X={x_col}, Y={y_col}")
                 return None
             
             logger.info(f"Создан график: тип={chart_type}, точек={len(chart_data)}")
-            
-            # Формируем заголовок
-            title = f"График по {columns[0] if columns else 'данным'}"
-            if len(columns) >= 2:
-                title = f"График: {columns[0]} vs {columns[1]}"
             
             # Вызываем навык
             skill_result = chart_skill.execute(
@@ -963,9 +917,9 @@ class BIQueryView(APIView):
                     "chart_type": chart_type,
                     "title": title,
                     "data": chart_data,
-                    "x_axis_label": columns[0] if len(columns) > 0 else "",
-                    "y_axis_label": columns[1] if len(columns) > 1 else "",
-                    "series_name": columns[1] if len(columns) > 1 else "Данные",
+                    "x_axis_label": x_col or "",
+                    "y_axis_label": y_col or "",
+                    "series_name": y_col or "Данные",
                 },
                 context={'session': session, 'module': 'bi'}
             )

@@ -357,3 +357,334 @@ def detect_intent(question: str, chat_context: Optional[List[Dict[str, Any]]] = 
     
     return result
 
+
+class ChartColumnSelector:
+    """
+    Интеллектуальный выбор колонок для графика на основе вопроса.
+    """
+    
+    # Ключевые слова для группировки (X-ось)
+    GROUP_KEYWORDS = {
+        'группа': ['группа', 'группы', 'группам', 'группе'],
+        'категория': ['категория', 'категории', 'категориям'],
+        'дисциплина': ['дисциплина', 'дисциплины', 'дисциплинам', 'предмет', 'предметы'],
+        'кафедра': ['кафедра', 'кафедры', 'кафедрам', 'кафедре'],
+        'факультет': ['факультет', 'факультеты', 'факультетам'],
+        'преподаватель': ['преподаватель', 'преподаватели', 'преподавателям', 'препод'],
+        'курс': ['курс', 'курсы', 'курсам'],
+        'семестр': ['семестр', 'семестры', 'семестрам'],
+        'год': ['год', 'года', 'годам', 'годы'],
+        'месяц': ['месяц', 'месяцы', 'месяцам'],
+        'форма': ['форма', 'формы', 'формам'],
+        'уровень': ['уровень', 'уровни', 'уровням'],
+        'блок': ['блок', 'блоки', 'блокам'],
+        'вид': ['вид', 'виды', 'видам', 'тип', 'типы'],
+    }
+    
+    # Ключевые слова для значений (Y-ось)
+    VALUE_KEYWORDS = {
+        'нагрузка': ['нагрузка', 'нагрузки', 'нагрузке', 'нагрузку'],
+        'часы': ['час', 'часы', 'часов', 'часам'],
+        'количество': ['количество', 'количества', 'кол-во', 'число'],
+        'студенты': ['студент', 'студенты', 'студентов', 'обучающихся'],
+        'сумма': ['сумма', 'суммы', 'сумм', 'итого', 'всего'],
+        'среднее': ['среднее', 'средняя', 'средний', 'avg'],
+        'зет': ['зет', 'кредит', 'кредиты', 'кредитов'],
+        'оценка': ['оценка', 'оценки', 'балл', 'баллы', 'рейтинг'],
+    }
+    
+    # Колонки которые обычно содержат числовые значения
+    NUMERIC_COLUMN_PATTERNS = [
+        'час', 'кол', 'количество', 'число', 'сумма', 'итого', 'всего',
+        'зет', 'балл', 'оценка', 'рейтинг', 'недел', 'аудитор',
+        'студент', 'сам', 'экзамен', 'консульт',
+    ]
+    
+    # Колонки для исключения из X-оси (обычно ID или технические)
+    EXCLUDE_X_PATTERNS = [
+        'id', 'номер', 'столбец', 'index', 'idx',
+    ]
+    
+    @classmethod
+    def select_columns(
+        cls,
+        question: str,
+        columns: List[str],
+        data: List[Dict[str, Any]]
+    ) -> Tuple[Optional[str], Optional[str], str]:
+        """
+        Выбирает колонки для графика на основе вопроса.
+        
+        Args:
+            question: Вопрос пользователя
+            columns: Список колонок
+            data: Данные для анализа
+            
+        Returns:
+            Tuple (x_column, y_column, title)
+        """
+        if not columns or len(columns) < 2:
+            return None, None, "График"
+        
+        question_lower = question.lower()
+        
+        # Анализируем вопрос для X-оси (группировка)
+        x_column = cls._find_group_column(question_lower, columns)
+        
+        # Анализируем вопрос для Y-оси (значения)
+        y_column = cls._find_value_column(question_lower, columns, data, x_column)
+        
+        # Если не нашли через вопрос, используем эвристику
+        if not x_column:
+            x_column = cls._find_best_x_column(columns, data)
+        
+        if not y_column:
+            y_column = cls._find_best_y_column(columns, data, x_column)
+        
+        # Формируем заголовок на основе колонок
+        title = cls._generate_title(question_lower, x_column, y_column)
+        
+        logger.info(
+            f"ChartColumnSelector:\n"
+            f"  Вопрос: {question}\n"
+            f"  Колонки: {columns[:10]}{'...' if len(columns) > 10 else ''}\n"
+            f"  Выбрано: X={x_column}, Y={y_column}\n"
+            f"  Заголовок: {title}"
+        )
+        
+        return x_column, y_column, title
+    
+    @classmethod
+    def _find_group_column(cls, question_lower: str, columns: List[str]) -> Optional[str]:
+        """Ищет колонку для группировки на основе вопроса."""
+        
+        # Ищем ключевые слова группировки в вопросе
+        for keyword_group, keywords in cls.GROUP_KEYWORDS.items():
+            for keyword in keywords:
+                if keyword in question_lower:
+                    # Ищем колонку соответствующую ключевому слову
+                    for col in columns:
+                        col_lower = col.lower()
+                        if keyword_group in col_lower or any(k in col_lower for k in keywords):
+                            return col
+        
+        return None
+    
+    @classmethod
+    def _find_value_column(
+        cls,
+        question_lower: str,
+        columns: List[str],
+        data: List[Dict[str, Any]],
+        exclude_column: Optional[str]
+    ) -> Optional[str]:
+        """Ищет колонку для значений на основе вопроса."""
+        
+        # Ищем ключевые слова значений в вопросе
+        for keyword_group, keywords in cls.VALUE_KEYWORDS.items():
+            for keyword in keywords:
+                if keyword in question_lower:
+                    # Ищем числовую колонку соответствующую ключевому слову
+                    for col in columns:
+                        if col == exclude_column:
+                            continue
+                        col_lower = col.lower()
+                        if keyword_group in col_lower or any(k in col_lower for k in keywords):
+                            # Проверяем что колонка числовая
+                            if cls._is_numeric_column(col, data):
+                                return col
+        
+        return None
+    
+    @classmethod
+    def _find_best_x_column(cls, columns: List[str], data: List[Dict[str, Any]]) -> str:
+        """Эвристика для выбора лучшей X-колонки."""
+        
+        # Приоритет: категориальные колонки с небольшим числом уникальных значений
+        best_col = None
+        best_score = -1
+        
+        for col in columns:
+            col_lower = col.lower()
+            
+            # Исключаем технические колонки
+            if any(pattern in col_lower for pattern in cls.EXCLUDE_X_PATTERNS):
+                continue
+            
+            # Подсчитываем уникальные значения
+            unique_values = set()
+            for row in data[:100]:
+                if isinstance(row, dict):
+                    val = row.get(col)
+                    if val is not None:
+                        unique_values.add(str(val))
+            
+            # Предпочитаем колонки с 2-20 уникальными значениями
+            num_unique = len(unique_values)
+            if 2 <= num_unique <= 20:
+                score = 100 - num_unique  # Меньше уникальных - лучше для группировки
+                
+                # Бонус за ключевые слова в названии
+                for keywords in cls.GROUP_KEYWORDS.values():
+                    if any(k in col_lower for k in keywords):
+                        score += 50
+                        break
+                
+                if score > best_score:
+                    best_score = score
+                    best_col = col
+        
+        # Если не нашли хорошую колонку, берём первую не-числовую
+        if not best_col:
+            for col in columns:
+                col_lower = col.lower()
+                if any(pattern in col_lower for pattern in cls.EXCLUDE_X_PATTERNS):
+                    continue
+                if not cls._is_numeric_column(col, data):
+                    return col
+            # Если всё числовое, берём первую колонку
+            return columns[0]
+        
+        return best_col
+    
+    @classmethod
+    def _find_best_y_column(
+        cls,
+        columns: List[str],
+        data: List[Dict[str, Any]],
+        exclude_column: Optional[str]
+    ) -> str:
+        """Эвристика для выбора лучшей Y-колонки."""
+        
+        best_col = None
+        best_score = -1
+        
+        for col in columns:
+            if col == exclude_column:
+                continue
+            
+            col_lower = col.lower()
+            
+            # Проверяем что колонка числовая
+            if not cls._is_numeric_column(col, data):
+                continue
+            
+            score = 10  # Базовый скор для числовой колонки
+            
+            # Бонус за ключевые слова в названии
+            for pattern in cls.NUMERIC_COLUMN_PATTERNS:
+                if pattern in col_lower:
+                    score += 30
+                    break
+            
+            # Бонус за слова "итого", "всего", "сумма"
+            if 'итого' in col_lower or 'всего' in col_lower or 'сумма' in col_lower:
+                score += 20
+            
+            if score > best_score:
+                best_score = score
+                best_col = col
+        
+        # Если не нашли числовую колонку, берём вторую
+        if not best_col and len(columns) >= 2:
+            for i, col in enumerate(columns):
+                if col != exclude_column:
+                    return col
+        
+        return best_col or (columns[1] if len(columns) > 1 else columns[0])
+    
+    @classmethod
+    def _is_numeric_column(cls, column: str, data: List[Dict[str, Any]]) -> bool:
+        """Проверяет, является ли колонка числовой."""
+        
+        numeric_count = 0
+        total_count = 0
+        
+        for row in data[:20]:  # Проверяем первые 20 строк
+            if isinstance(row, dict):
+                val = row.get(column)
+                if val is not None and val != '' and val != '—':
+                    total_count += 1
+                    try:
+                        float(val)
+                        numeric_count += 1
+                    except (ValueError, TypeError):
+                        pass
+        
+        # Считаем числовой если >60% значений числовые
+        return total_count > 0 and (numeric_count / total_count) > 0.6
+    
+    @classmethod
+    def _generate_title(
+        cls,
+        question_lower: str,
+        x_column: Optional[str],
+        y_column: Optional[str]
+    ) -> str:
+        """Генерирует заголовок графика."""
+        
+        # Извлекаем суть из вопроса
+        title_parts = []
+        
+        # Ищем что анализируем
+        for keyword_group, keywords in cls.VALUE_KEYWORDS.items():
+            for keyword in keywords:
+                if keyword in question_lower:
+                    if keyword_group == 'нагрузка':
+                        title_parts.append('Нагрузка')
+                    elif keyword_group == 'часы':
+                        title_parts.append('Часы')
+                    elif keyword_group == 'количество':
+                        title_parts.append('Количество')
+                    elif keyword_group == 'студенты':
+                        title_parts.append('Студенты')
+                    break
+            if title_parts:
+                break
+        
+        # Ищем по чему группируем
+        for keyword_group, keywords in cls.GROUP_KEYWORDS.items():
+            for keyword in keywords:
+                if keyword in question_lower:
+                    if keyword_group == 'группа':
+                        title_parts.append('по группам')
+                    elif keyword_group == 'дисциплина':
+                        title_parts.append('по дисциплинам')
+                    elif keyword_group == 'кафедра':
+                        title_parts.append('по кафедрам')
+                    elif keyword_group == 'преподаватель':
+                        title_parts.append('по преподавателям')
+                    elif keyword_group == 'факультет':
+                        title_parts.append('по факультетам')
+                    break
+            if len(title_parts) > 1:
+                break
+        
+        if title_parts:
+            return ' '.join(title_parts)
+        
+        # Если не нашли, используем колонки
+        if x_column and y_column:
+            return f"{y_column} по {x_column}"
+        
+        return "График данных"
+
+
+def select_chart_columns(
+    question: str,
+    columns: List[str],
+    data: List[Dict[str, Any]]
+) -> Tuple[Optional[str], Optional[str], str]:
+    """
+    Удобная функция для выбора колонок графика.
+    
+    Args:
+        question: Вопрос пользователя
+        columns: Список колонок
+        data: Данные
+        
+    Returns:
+        Tuple (x_column, y_column, title)
+    """
+    return ChartColumnSelector.select_columns(question, columns, data)
+
