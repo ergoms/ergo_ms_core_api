@@ -18,6 +18,7 @@ from src.core.bi_analysis.bi_datasets.models import FileUpload, Dataset
 from .fast_bi_service import FastBIService, DEFAULT_MODEL, OLLAMA_BASE_URL
 from .config import build_runtime_config
 from .llm_clients import build_llm_client, LLMClientError
+from .intent_detector import IntentDetector, UserIntent, detect_intent
 from src.core.bi_analysis.bi_charts.models import Chart
 from src.core.utils.mixins import SwaggerSafeMixin
 from .models import ChatSession, ChatMessage, KnowledgeDocument, KnowledgeChunk
@@ -381,20 +382,39 @@ class BIQueryView(APIView):
             request_started_at = timezone.now()
             
             try:
-                # Инициализируем сервис с настройками модуля
-                service = FastBIService(ollama_config=ollama_config)
+                # Получаем контекст из последних 10 сообщений сессии
+                chat_context = []
+                if session:
+                    last_messages = ChatMessage.objects.filter(
+                        session=session
+                    ).order_by('-created_at')[:10]
+                    
+                    # Преобразуем в формат для FastBIService (в обратном порядке - от старых к новым)
+                    for msg in reversed(last_messages):
+                        chat_context.append({
+                            'type': msg.message_type,
+                            'content': msg.content,
+                            'metadata': msg.metadata or {}
+                        })
+                
+                # Инициализируем сервис с настройками модуля и контекстом
+                service = FastBIService(
+                    ollama_config=ollama_config,
+                    chat_context=chat_context
+                )
                 
                 # Отправляем начальное событие
                 yield f"data: {json.dumps({'type': 'start', 'message': 'Начинаю обработку...'})}\n\n"
                 
-                # Проверяем намерение создать график ДО обработки вопроса
-                should_create_chart = self._check_chart_intent(
-                    question=current_question,
-                    ollama_config=ollama_config
-                )
+                # Определяем намерение пользователя через контекстный анализ
+                intent_result = self._detect_user_intent(current_question, chat_context)
+                should_create_chart = intent_result.intent == UserIntent.CHART and intent_result.confidence >= 0.5
+                
+                # Отправляем debug-информацию о намерении
+                yield f"data: {json.dumps({'type': 'debug', 'text': f'Intent: {intent_result.intent.value}, confidence: {intent_result.confidence:.2f}, reason: {intent_result.reason}'}, ensure_ascii=False)}\n\n"
                 
                 # Если это запрос на график, проверяем есть ли данные в предыдущем сообщении
-                if should_create_chart and session:
+                if should_create_chart and (session or intent_result.use_previous_data):
                     last_data_message = ChatMessage.objects.filter(
                         session=session,
                         message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
@@ -409,13 +429,14 @@ class BIQueryView(APIView):
                         
                         if bi_data and bi_columns:
                             # Есть данные - создаём график сразу
-                            logger.info(f"BI: Создание графика из предыдущих данных - строк: {len(bi_data)}, колонок: {len(bi_columns)}")
+                            logger.info(f"BI: Создание графика из предыдущих данных - строк: {len(bi_data)}, колонок: {len(bi_columns)}, chart_type={intent_result.chart_type}")
                             yield f"data: {json.dumps({'type': 'stage', 'message': 'Создаю график...'}, ensure_ascii=False)}\n\n"
                             chart_info = self._create_bi_chart(
                                 question=current_question,
                                 data=bi_data,
                                 columns=bi_columns,
-                                session=session
+                                session=session,
+                                chart_type=intent_result.chart_type
                             )
                             
                             if chart_info:
@@ -565,15 +586,13 @@ class BIQueryView(APIView):
                     )
                     
                     # Проверяем нужно ли создать график (если ещё не создан)
+                    # Используем уже определённое намерение из intent_result
                     if not chart_already_created:
-                        should_create_chart = self._check_chart_intent(
-                            question=current_question,
-                            ollama_config=ollama_config
-                        )
+                        should_create_chart = intent_result.intent == UserIntent.CHART and intent_result.confidence >= 0.5
                     else:
                         should_create_chart = False
                     
-                    logger.info(f"BI: Проверка графика - should_create_chart={should_create_chart}, data={bool(result.get('data'))}, columns={result.get('columns')}")
+                    logger.info(f"BI: Проверка графика - should_create_chart={should_create_chart}, intent={intent_result.intent.value}, confidence={intent_result.confidence:.2f}, data={bool(result.get('data'))}")
                     
                     if should_create_chart and result.get('data') and result.get('columns'):
                         yield f"data: {json.dumps({'type': 'stage', 'message': 'Создаю график...'}, ensure_ascii=False)}\n\n"
@@ -581,7 +600,8 @@ class BIQueryView(APIView):
                             question=current_question,
                             data=result.get('data', []),
                             columns=result.get('columns', []),
-                            session=session
+                            session=session,
+                            chart_type=intent_result.chart_type
                         )
                         logger.info(f"BI: Результат создания графика - chart_info={bool(chart_info)}")
                         if chart_info:
@@ -750,77 +770,67 @@ class BIQueryView(APIView):
             logger.warning(f"Ошибка проверки намерения создать документ: {e}")
             return False
     
-    def _check_chart_intent(self, question: str, ollama_config=None) -> bool:
+    def _detect_user_intent(self, question: str, chat_context: list | None = None):
+        """
+        Определяет намерение пользователя на основе контекста.
+        Использует модульный IntentDetector без LLM-вызовов.
+        
+        Args:
+            question: Вопрос пользователя
+            chat_context: Контекст чата
+            
+        Returns:
+            IntentResult с определённым намерением
+        """
+        return detect_intent(question, chat_context or [])
+    
+    def _check_chart_intent(self, question: str, ollama_config=None, session=None, chat_context: list | None = None) -> bool:
         """
         Проверяет, хочет ли пользователь создать график.
-        Сначала проверяет ключевые слова, затем через LLM если неясно.
+        Использует контекстный анализ без LLM-вызовов.
+        
+        Args:
+            question: Вопрос пользователя
+            ollama_config: Конфиг Ollama (не используется, для совместимости)
+            session: Сессия чата (для получения контекста если chat_context не передан)
+            chat_context: Контекст чата
+            
+        Returns:
+            True если нужно создать график
         """
-        question_lower = question.lower().strip()
+        # Если контекст не передан, получаем из сессии
+        if chat_context is None and session:
+            chat_context = []
+            last_messages = ChatMessage.objects.filter(
+                session=session
+            ).order_by('-created_at')[:10]
+            
+            for msg in reversed(last_messages):
+                chat_context.append({
+                    'type': msg.message_type,
+                    'content': msg.content,
+                    'metadata': msg.metadata or {}
+                })
         
-        # Простая проверка: если вопрос содержит слово "график" или "диаграмма" - создаём график
-        if 'график' in question_lower or 'диаграмм' in question_lower:
-            logger.info(f"Создание графика: найдено слово 'график' или 'диаграмма' в вопросе '{question}'")
-            return True
+        # Используем IntentDetector
+        intent_result = detect_intent(question, chat_context)
         
-        # Быстрая проверка очевидных случаев по ключевым словам
-        chart_keywords = [
-            'построй график', 'создай график', 'покажи график', 'нарисуй график',
-            'визуализируй', 'визуализация', 'график по', 'график для',
-            'построй диаграмму', 'создай диаграмму', 'покажи диаграмму',
-        ]
-        
-        # Если есть явное ключевое слово - сразу создаём график
-        if any(keyword in question_lower for keyword in chart_keywords):
-            logger.info(f"Создание графика: найдено ключевое слово в вопросе '{question}'")
-            return True
-        
-        # Для остальных случаев используем LLM
-        try:
-            runtime_config = build_runtime_config(ollama_config)
-            
-            model = runtime_config.model or 'mistral'
-            base_url = runtime_config.base_url or OLLAMA_BASE_URL
-            
-            client = build_llm_client(
-                provider=runtime_config.provider.value,
-                model=model,
-                base_url=base_url,
-                request_timeout=15.0,
-                stream_timeout=15.0,
-                concurrency_limit=runtime_config.concurrency_limit,
-                max_retries=1,
-                keep_alive=runtime_config.keep_alive,
-                provider_config=runtime_config.provider_config,
-                device_config=runtime_config.device_config,
-            )
-            
-            prompt = f"""Вопрос: "{question}"
-
-Пользователь хочет СОЗДАТЬ ГРАФИК (визуализацию данных)?
-Ответь ОДНИМ словом: ДА или НЕТ"""
-
-            response = client.complete(
-                prompt,
-                num_predict=5,
-                temperature=0.0,
-                stream=False,
-            ).strip().upper()
-            
-            logger.info(f"LLM проверка графика: вопрос='{question}', ответ='{response}'")
-            
-            result = 'ДА' in response or 'YES' in response or 'DA' in response
-            return result
-            
-        except Exception as e:
-            logger.warning(f"Ошибка проверки намерения создать график: {e}")
-            return False
+        # Возвращаем True если намерение - график с достаточной уверенностью
+        return intent_result.intent == UserIntent.CHART and intent_result.confidence >= 0.5
     
-    def _create_bi_chart(self, question: str, data: list, columns: list, session=None):
+    def _create_bi_chart(self, question: str, data: list, columns: list, session=None, chart_type: str | None = None):
         """
         Создаёт график на основе данных BI анализа.
         Использует ChartSkill для генерации конфигурации.
+        
+        Args:
+            question: Вопрос пользователя
+            data: Данные для графика
+            columns: Колонки данных
+            session: Сессия чата
+            chart_type: Тип графика (bar, line, pie, area, scatter). Если None - определяется автоматически.
         """
-        logger.info(f"Создание графика: data_len={len(data) if data else 0}, columns={columns}")
+        logger.info(f"Создание графика: data_len={len(data) if data else 0}, columns={columns}, chart_type={chart_type}")
         
         if not data or not columns:
             logger.warning(f"Недостаточно данных для графика: data={bool(data)}, columns={bool(columns)}")
@@ -836,18 +846,19 @@ class BIQueryView(APIView):
                 logger.error("Навык create_chart не найден")
                 return None
             
-            # Определяем тип графика на основе вопроса
-            question_lower = question.lower()
-            chart_type = "bar"  # По умолчанию
-            
-            if 'линейный' in question_lower or 'тренд' in question_lower or 'временной' in question_lower:
-                chart_type = "line"
-            elif 'круговой' in question_lower or 'pie' in question_lower or 'доля' in question_lower:
-                chart_type = "pie"
-            elif 'площадной' in question_lower or 'area' in question_lower:
-                chart_type = "area"
-            elif 'точечный' in question_lower or 'scatter' in question_lower or 'корреляция' in question_lower:
-                chart_type = "scatter"
+            # Используем переданный тип графика или определяем автоматически
+            if not chart_type:
+                question_lower = question.lower()
+                chart_type = "bar"  # По умолчанию
+                
+                if 'линейный' in question_lower or 'тренд' in question_lower or 'временной' in question_lower:
+                    chart_type = "line"
+                elif 'круговой' in question_lower or 'pie' in question_lower or 'доля' in question_lower:
+                    chart_type = "pie"
+                elif 'площадной' in question_lower or 'area' in question_lower:
+                    chart_type = "area"
+                elif 'точечный' in question_lower or 'scatter' in question_lower or 'корреляция' in question_lower:
+                    chart_type = "scatter"
             
             # Преобразуем данные BI в формат для графика
             chart_data = []
@@ -1069,8 +1080,26 @@ class BIQueryView(APIView):
         try:
             request_started_at = timezone.now()
             
-            # Инициализируем сервис с настройками модуля
-            service = FastBIService(ollama_config=ollama_config)
+            # Получаем контекст из последних 10 сообщений сессии
+            chat_context = []
+            if session:
+                last_messages = ChatMessage.objects.filter(
+                    session=session
+                ).order_by('-created_at')[:10]
+                
+                # Преобразуем в формат для FastBIService (в обратном порядке - от старых к новым)
+                for msg in reversed(last_messages):
+                    chat_context.append({
+                        'type': msg.message_type,
+                        'content': msg.content,
+                        'metadata': msg.metadata or {}
+                    })
+            
+            # Инициализируем сервис с настройками модуля и контекстом
+            service = FastBIService(
+                ollama_config=ollama_config,
+                chat_context=chat_context
+            )
             
             load_result = service.load_file(
                 file_path=file_upload.file.path,

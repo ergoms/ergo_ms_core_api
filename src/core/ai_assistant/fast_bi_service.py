@@ -16,7 +16,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import polars as pl
 import pandas as pd
@@ -147,12 +147,14 @@ class FastBIService:
         model: Optional[str] = None,
         keep_alive: str = "5m",
         ollama_config: Optional[Dict[str, Any]] = None,
+        chat_context: Optional[List[Dict[str, Any]]] = None,
     ):
         """
         Args:
             model: Название модели LLM (переопределяет конфиг)
             keep_alive: TTL модели в памяти (используется Ollama)
             ollama_config: Переопределения из module-config / frontend
+            chat_context: Контекст предыдущих сообщений чата
         """
         overrides = dict(ollama_config or {})
         if model:
@@ -188,6 +190,7 @@ class FastBIService:
         self.df: Optional[pl.DataFrame] = None
         self.table_name: Optional[str] = None
         self.meta: Optional[Dict[str, Any]] = None
+        self.chat_context: Optional[List[Dict[str, Any]]] = chat_context or []
 
     def load_file(self, file_path: str, table_name: str = "t") -> Dict[str, Any]:
         """
@@ -477,6 +480,55 @@ class FastBIService:
         )
         return prompt
     
+    def _format_chat_context(self, max_messages: int = 5, max_length_per_message: int = 200) -> str:
+        """
+        Форматирует контекст чата для включения в промпт.
+        
+        Args:
+            max_messages: Максимальное количество сообщений для включения
+            max_length_per_message: Максимальная длина каждого сообщения в символах
+        
+        Returns:
+            Отформатированная строка контекста
+        """
+        if not self.chat_context:
+            return ""
+        
+        # Фильтруем только user и assistant сообщения
+        filtered_context = [
+            msg for msg in self.chat_context
+            if msg.get('type') in ('user', 'assistant')
+        ]
+        
+        # Берем последние max_messages сообщений
+        recent_messages = filtered_context[-max_messages:] if len(filtered_context) > max_messages else filtered_context
+        
+        if not recent_messages:
+            return ""
+        
+        context_lines = ["Контекст предыдущих сообщений:"]
+        for msg in recent_messages:
+            msg_type = msg.get('type', 'unknown')
+            content = msg.get('content', '')
+            
+            # Ограничиваем длину сообщения
+            if len(content) > max_length_per_message:
+                content = content[:max_length_per_message] + "..."
+            
+            # Определяем роль
+            role = "Пользователь" if msg_type == "user" else "Ассистент"
+            
+            # Добавляем информацию о данных, если они есть
+            metadata = msg.get('metadata', {})
+            if metadata.get('data') and msg_type == 'assistant':
+                rows = len(metadata.get('data', []))
+                columns = metadata.get('columns', [])
+                context_lines.append(f"{role}: {content} [Есть данные: {rows} строк, колонки: {', '.join(columns[:3])}{'...' if len(columns) > 3 else ''}]")
+            else:
+                context_lines.append(f"{role}: {content}")
+        
+        return "\n".join(context_lines) + "\n"
+    
     def _build_sql_prompt(self, question: str) -> str:
         """Строит оптимизированный промпт для генерации SQL."""
         assert self.meta is not None, "Метаданные не подготовлены"
@@ -522,12 +574,22 @@ class FastBIService:
         # Табличный формат: заголовок + строки
         sample_table = header + "\n" + "\n".join(data_lines)
         
+        # Форматируем контекст чата (последние 5 сообщений, до 200 символов каждое)
+        context_text = self._format_chat_context(max_messages=5, max_length_per_message=200)
+        
         # Компактный промпт для уменьшения размера
         prompt = (
             f"SQL для таблицы 'df':\n"
             f"Схема: {schema_compact}\n"
             f"Строк: {self.meta['rows']}\n"
             f"Пример:\n{sample_table}\n"
+        )
+        
+        # Добавляем контекст перед вопросом, если он есть
+        if context_text:
+            prompt += f"\n{context_text}\n"
+        
+        prompt += (
             f"Правила:\n"
             f"- SELECT только, таблица df\n"
             f"- Для вывода всех данных используй SELECT * (НЕ перечисляй колонки!)\n"
@@ -577,6 +639,16 @@ class FastBIService:
             logger.error(f"Промпт был длиной {len(prompt)} символов")
             raise RuntimeError(f"Ошибка генерации SQL: {exc}") from exc
 
+        # Выводим полный ответ LLM для debug режима
+        if stream_callback:
+            debug_info = (
+                f"=== DEBUG: Полный ответ LLM для SQL ===\n"
+                f"Промпт:\n{prompt}\n\n"
+                f"Полный ответ LLM:\n{resp_text}\n"
+                f"========================================\n\n"
+            )
+            stream_callback({"type": "debug", "text": debug_info})
+        
         sql_raw = _extract_sql_from_text(resp_text)
         sql = _only_select(sql_raw)
         
@@ -770,6 +842,9 @@ class FastBIService:
             "rows_returned": len(df),
         }
 
+        # Форматируем контекст чата (последние 3 сообщения, до 150 символов каждое)
+        context_text = self._format_chat_context(max_messages=3, max_length_per_message=150)
+
         prompt = (
             "Дай КРАТКИЙ вывод (максимум 2-3 предложения) по данным. Только ключевые находки.\n"
             "СТРОГИЕ ПРАВИЛА:\n"
@@ -778,8 +853,13 @@ class FastBIService:
             "- НЕ додумывай контекст (откуда данные, для чего они)\n"
             "- Если в данных нет названия организации - НЕ называй её\n"
             "- Используй только имена колонок и значения из данных\n"
-            f"Данные:\n{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
+        
+        # Добавляем контекст перед данными, если он есть
+        if context_text:
+            prompt += f"\n{context_text}\n"
+        
+        prompt += f"Данные:\n{json.dumps(payload, ensure_ascii=False, default=str)}"
 
         stream = bool(stream_callback)
 
@@ -797,6 +877,16 @@ class FastBIService:
             )
         except LLMClientError as exc:
             raise RuntimeError(f"Ошибка генерации комментария: {exc}") from exc
+
+        # Выводим полный ответ LLM для debug режима
+        if stream_callback:
+            debug_info = (
+                f"=== DEBUG: Полный ответ LLM для комментария ===\n"
+                f"Промпт:\n{prompt}\n\n"
+                f"Полный ответ LLM:\n{resp_text}\n"
+                f"==============================================\n\n"
+            )
+            stream_callback({"type": "debug", "text": debug_info})
 
         return resp_text.strip()
 
@@ -853,7 +943,15 @@ class FastBIService:
                     stream_callback=on_chunk if stream else None,
                 ).strip()
                 
+                # Выводим полный ответ LLM для debug режима
                 if stream_callback:
+                    debug_info = (
+                        f"=== DEBUG: Полный ответ LLM для прямого ответа (без SQL) ===\n"
+                        f"Промпт:\n{prompt}\n\n"
+                        f"Полный ответ LLM:\n{answer}\n"
+                        f"================================================================\n\n"
+                    )
+                    stream_callback({"type": "debug", "text": debug_info})
                     stream_callback({"type": "stage", "text": "✅ Анализ завершен"})
                 
                 return {
