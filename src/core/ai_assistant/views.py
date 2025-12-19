@@ -861,13 +861,18 @@ class BIQueryView(APIView):
                     chart_type = "scatter"
             
             # Используем интеллектуальный выбор колонок на основе вопроса
+            logger.info(f"=== DEBUG: Выбор колонок для графика ===")
+            logger.info(f"Вопрос: {question}")
+            logger.info(f"Колонки (первые 15): {columns[:15]}")
+            
             x_col, y_col, title = select_chart_columns(question, columns, data)
+            
+            logger.info(f"Результат выбора: X={x_col}, Y={y_col}, title={title}")
+            logger.info(f"=" * 50)
             
             if not x_col or not y_col:
                 logger.warning(f"Не удалось выбрать колонки для графика: x={x_col}, y={y_col}")
                 return None
-            
-            logger.info(f"Интеллектуальный выбор колонок: X={x_col}, Y={y_col}, title={title}")
             
             # Преобразуем данные BI в формат для графика
             chart_data = []
