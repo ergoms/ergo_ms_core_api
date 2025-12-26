@@ -107,21 +107,58 @@ class Command(BaseCommand):
 
         # Подсчитываем таблицы приложения в БД
         connection = connections[database]
-        app_models = app_config.get_models()
         table_names = []
         
         with connection.cursor() as cursor:
+            # Получаем список таблиц через introspection
             existing_tables = connection.introspection.table_names(cursor)
-            converter = connection.introspection.identifier_converter
             
-            for model in app_models:
-                table_name = converter(model._meta.db_table)
+            # Для PostgreSQL также используем прямой SQL запрос для надежности
+            if connection.vendor == 'postgresql':
+                cursor.execute("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_type = 'BASE TABLE'
+                    AND table_name LIKE %s
+                    ORDER BY table_name;
+                """, [f'{app_label}_%'])
+                sql_tables = [row[0] for row in cursor.fetchall()]
+                # Объединяем результаты, убирая дубликаты
+                all_tables = list(set(existing_tables + sql_tables))
+            else:
+                all_tables = existing_tables
+            
+            # Префикс приложения для поиска таблиц
+            app_prefix = f'{app_label}_'
+            
+            # Нормализуем префикс для сравнения
+            if connection.features.ignores_table_name_case:
+                app_prefix_normalized = app_prefix.lower()
+            else:
+                app_prefix_normalized = app_prefix
+            
+            # Собираем все таблицы приложения по префиксу
+            # Это самый надежный способ найти все таблицы, включая промежуточные many-to-many
+            for table in all_tables:
+                # Нормализуем имя таблицы для сравнения
                 if connection.features.ignores_table_name_case:
-                    table_name = table_name.lower()
-                    existing_tables = [t.lower() for t in existing_tables]
+                    table_normalized = table.lower()
+                else:
+                    table_normalized = table
                 
-                if table_name in existing_tables:
-                    table_names.append(model._meta.db_table)
+                # Проверяем, начинается ли таблица с префикса приложения
+                if table_normalized.startswith(app_prefix_normalized):
+                    # Используем оригинальное имя таблицы из БД
+                    if table not in table_names:
+                        table_names.append(table)
+            
+            # Сортируем для консистентности
+            table_names.sort()
+        
+        logger.debug(f'Найдено таблиц для приложения {app_label}: {len(table_names)}')
+        if table_names:
+            logger.debug(f'Список таблиц: {table_names}')
 
         # Подсчитываем записи о миграциях в БД
         recorder = MigrationRecorder(connection)
@@ -132,24 +169,31 @@ class Command(BaseCommand):
 
         # Показываем информацию о том, что будет удалено
         if verbosity >= 1:
+            self.stdout.write('')
             self.stdout.write(
                 self.style.WARNING(
-                    f'\nБудет удалено:\n'
+                    f'Будет удалено:\n'
                     f'  - Файлов миграций: {len(migration_files)}\n'
                     f'  - Таблиц в БД: {len(table_names)}\n'
-                    f'  - Записей о миграциях в django_migrations: {migration_records_count}\n'
+                    f'  - Записей о миграциях в django_migrations: {migration_records_count}'
                 )
             )
+            
+            # Выводим список таблиц отдельно, без стиля
+            self.stdout.write('')
+            self.stdout.write(self.style.NOTICE('Найденные таблицы в БД:'))
+            if table_names:
+                sorted_tables = sorted(table_names)
+                for index, table in enumerate(sorted_tables, start=1):
+                    self.stdout.write(f'  {index:2d}. {table}')
+            else:
+                self.stdout.write(self.style.WARNING('  (таблицы не найдены)'))
+            self.stdout.write('')
             
             if migration_files and verbosity >= 2:
                 self.stdout.write('Файлы миграций:')
                 for f in sorted(migration_files):
                     self.stdout.write(f'  - {f.name}')
-            
-            if table_names and verbosity >= 2:
-                self.stdout.write('Таблицы в БД:')
-                for table in sorted(table_names):
-                    self.stdout.write(f'  - {table}')
 
         # Запрашиваем подтверждение
         if interactive:
@@ -184,38 +228,39 @@ class Command(BaseCommand):
             # Удаляем таблицы из БД
             deleted_tables = []
             if table_names:
-                with connection.schema_editor() as schema_editor:
-                    # Отключаем проверку ограничений для более быстрого удаления
-                    connection.disable_constraint_checking()
-                    
-                    for model in app_models:
+                # Используем прямой SQL для удаления таблиц
+                # Это более надежно, чем schema_editor.delete_model()
+                with connection.cursor() as cursor:
+                    # Удаляем каждую таблицу
+                    # table_names уже содержит правильные имена таблиц из БД
+                    for table_name in table_names:
                         try:
-                            table_name = model._meta.db_table
-                            # Проверяем, существует ли таблица
-                            with connection.cursor() as cursor:
-                                existing_tables = connection.introspection.table_names(cursor)
-                                converter = connection.introspection.identifier_converter
-                                db_table_name = converter(table_name)
-                                
-                                if connection.features.ignores_table_name_case:
-                                    db_table_name = db_table_name.lower()
-                                    existing_tables = [t.lower() for t in existing_tables]
-                                
-                                if db_table_name in existing_tables:
-                                    schema_editor.delete_model(model)
-                                    deleted_tables.append(table_name)
-                                    if verbosity >= 2:
-                                        self.stdout.write(f'Удалена таблица: {table_name}')
+                            # Формируем SQL для удаления таблицы
+                            # Используем CASCADE для автоматического удаления зависимостей
+                            quoted_table = connection.ops.quote_name(table_name)
+                            
+                            if connection.vendor == 'postgresql':
+                                cursor.execute(f'DROP TABLE IF EXISTS {quoted_table} CASCADE;')
+                            elif connection.vendor == 'mysql':
+                                cursor.execute(f'DROP TABLE IF EXISTS {quoted_table};')
+                            elif connection.vendor == 'sqlite':
+                                cursor.execute(f'DROP TABLE IF EXISTS {quoted_table};')
+                            else:
+                                # Для других БД используем стандартный SQL
+                                cursor.execute(f'DROP TABLE IF EXISTS {quoted_table} CASCADE;')
+                            
+                            deleted_tables.append(table_name)
+                            if verbosity >= 2:
+                                self.stdout.write(f'Удалена таблица: {table_name}')
+                            elif verbosity >= 1:
+                                logger.debug(f'Удалена таблица: {table_name}')
                         except Exception as e:
-                            logger.error(f'Ошибка при удалении таблицы {model._meta.db_table}: {e}')
-                            self.stdout.write(
-                                self.style.ERROR(
-                                    f'Ошибка при удалении таблицы {model._meta.db_table}: {e}'
-                                )
-                            )
+                            error_msg = f'Ошибка при удалении таблицы {table_name}: {e}'
+                            logger.error(error_msg, exc_info=True)
+                            self.stdout.write(self.style.ERROR(error_msg))
                     
-                    # Включаем проверку ограничений обратно
-                    connection.enable_constraint_checking()
+                    # Коммитим изменения
+                    connection.commit()
 
             # Удаляем записи о миграциях из django_migrations
             deleted_migration_records = 0
