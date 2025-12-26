@@ -1,8 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
 
-from src.core.settings.models import Category, Tag
-
 class CmsShortcodeCategory(models.Model):
     name = models.CharField(max_length=100)
 
@@ -38,48 +36,14 @@ class CmsPage(models.Model):
     date_of_creation = models.DateTimeField(auto_now_add=True)
     last_update = models.DateTimeField(auto_now=True)
     
-    # Добавляем категорию
-    category = models.ForeignKey(
-        Category,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='pages',
-        verbose_name="Категория страницы"
-    )
-    category_index = models.BooleanField(
-        default=False,
-        help_text='Если True — страница открывается по URL самой категории'
-    )
-
-    # Добавляем теги
-    tags = models.ManyToManyField(
-        Tag,
-        blank=True,
-        related_name="pages",
-        verbose_name="Теги страницы"
-    )
-
     is_homepage = models.BooleanField(
         default=False,
         verbose_name="Главная страница",
         help_text="Является ли эта страница главной"
     )
     def get_full_url(self):
-        """
-        /electronics/           ← страница-индекс категории «electronics»
-        /electronics/tv-samsung ← обычная страница с slug-ом
-        """
-        parts = []
-        cat = self.category
-        while cat:
-            parts.insert(0, cat.slug)
-            cat = cat.parent
-
-        if not self.category_index:
-            parts.append(self.slug)
-
-        return '/' + '/'.join(parts)
+        """Возвращает URL страницы по slug"""
+        return f'/{self.slug}' if self.slug else '/'
     
     full_url = property(get_full_url)
 
@@ -95,15 +59,6 @@ class CmsPage(models.Model):
     def __str__(self):
         return self.name
     
-    class Meta:
-        # страница-индекс должна быть уникальна в рамках категории
-        constraints = [
-            models.UniqueConstraint(
-                fields=['category'],
-                condition=models.Q(category_index=True),
-                name='unique_category_index'
-            )
-        ]
     
 class CmsShortcodeInstance(models.Model):
     page = models.ForeignKey(CmsPage, on_delete=models.CASCADE, related_name='instances', db_index=True)
