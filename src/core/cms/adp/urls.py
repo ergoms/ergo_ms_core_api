@@ -14,6 +14,7 @@ from src.core.cms.adp.views import (
     UserDevicesView,
     UserDeviceDetailView,
     UserProfileView,
+    UserMenuView,
     UserSecuritySettingsView,
 )
 
@@ -52,6 +53,7 @@ urlpatterns = [
     
     # Profile endpoints
     path('profile/', UserProfileView.as_view(), name='user_profile'),
+    path('user-menu-data/', UserMenuView.as_view(), name='user_menu_data'),
     path('security-settings/', UserSecuritySettingsView.as_view(), name='user_security_settings'),
     
     # Role and Policy Management endpoints

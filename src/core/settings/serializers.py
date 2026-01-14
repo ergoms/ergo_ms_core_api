@@ -152,6 +152,12 @@ class UserAvatarSerializer(serializers.ModelSerializer):
         model = UserAvatar
         fields = ['id', 'user', 'image', 'uploaded_at']
 
+class UserAvatarListSerializer(serializers.ModelSerializer):
+    """Легковесный сериализатор для списка аватаров (только URL изображения)"""
+    class Meta:
+        model = UserAvatar
+        fields = ['image']
+
 class AuditLogSerializer(serializers.ModelSerializer):
     content_type = serializers.SlugRelatedField(
         read_only=True,

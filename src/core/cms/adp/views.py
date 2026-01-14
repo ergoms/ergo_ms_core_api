@@ -23,6 +23,7 @@ from src.core.cms.adp.serializers import (
     UserDeviceSerializer,
     CMSUserSerializer,
     CMSUserBasicSerializer,
+    CMSUserMenuSerializer,
     CMSUserProfileSerializer,
     UpdateUserProfileSerializer,
 )
@@ -475,6 +476,47 @@ class UserAuthorizationView(BaseAPIView):
                 'desktop': 'Desktop'
             }
             return device_names.get(device_type, 'Unknown Device')
+
+class UserMenuView(BaseAPIViewAuthMixin):
+    """
+    Легковесный endpoint для получения минимальных данных пользователя для меню.
+    Возвращает только username, email, full_name, initials_name.
+    """
+    @swagger_auto_schema(
+        operation_description="Получение минимальных данных пользователя для отображения в меню.",
+        responses={
+            200: openapi.Response(
+                description="Минимальные данные пользователя для меню.",
+                schema=CMSUserMenuSerializer()
+            ),
+        },
+        security=[{'Bearer': []}]
+    )
+    def get(self, request):
+        # Обновляем последнюю активность текущего устройства
+        self._update_device_activity(request)
+        
+        serializer = CMSUserMenuSerializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def _update_device_activity(self, request):
+        """Обновляет последнюю активность устройства пользователя"""
+        try:
+            ip_address = self._get_client_ip(request)
+            device = UserDevice.objects.get(user=request.user, ip_address=ip_address, is_active=True)
+            device.save()  # Обновит last_activity благодаря auto_now=True
+        except UserDevice.DoesNotExist:
+            pass  # Устройство будет создано при следующем входе
+    
+    def _get_client_ip(self, request):
+        """Получает IP адрес клиента"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
 
 class ProtectedView(BaseAPIViewAuthMixin):
     @swagger_auto_schema(

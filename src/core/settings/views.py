@@ -232,6 +232,13 @@ class UserAvatarViewSet(viewsets.ModelViewSet):
     serializer_class = UserAvatarSerializer
     permission_classes = [IsAuthenticated]
     
+    def get_serializer_class(self):
+        """Используем легковесный сериализатор для списка"""
+        if self.action == 'list':
+            from .serializers import UserAvatarListSerializer
+            return UserAvatarListSerializer
+        return UserAvatarSerializer
+    
     def get_queryset(self):
         # Обходим проблему с генерацией swagger схемы для анонимных пользователей
         if getattr(self, 'swagger_fake_view', False):
@@ -247,6 +254,24 @@ class UserAvatarViewSet(viewsets.ModelViewSet):
         if self.request.user.is_authenticated:
             UserAvatar.objects.filter(user=self.request.user).delete()
             serializer.save(user=self.request.user)
+    
+    @action(detail=False, methods=['delete'], url_path='current')
+    def delete_current(self, request):
+        """Удалить аватар текущего пользователя"""
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Пользователь не аутентифицирован'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        avatar = UserAvatar.objects.filter(user=request.user).first()
+        if avatar:
+            avatar.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(
+            {'detail': 'Аватар не найден'},
+            status=status.HTTP_404_NOT_FOUND
+        )
 
 class AuditLogViewSet(ReadOnlyModelViewSet):
     queryset = AuditLog.objects.all()

@@ -98,23 +98,29 @@ class UserDeviceSerializer(ModelSerializer):
 
 
 class CMSUserProfileSerializer(ModelSerializer):
-    full_name = CharField(read_only=True)
+    """
+    Сериализатор профиля пользователя.
+    Не включает full_name, так как он уже есть в корне объекта пользователя.
+    Не включает avatar, так как аватары загружаются через отдельный API (userAvatars).
+    Не включает updated_at, так как это метаданное не используется в UI.
+    Не включает настройки безопасности и уведомлений, так как они используются в отдельных разделах.
+    """
     
     class Meta:
         model = UserProfile
         fields = [
-            'avatar', 'phone', 'website', 'bio', 'country', 'city', 
-            'language', 'timezone', 'email_notifications', 'push_notifications', 
-            'sms_notifications', 'profile_visibility', 'two_factor_enabled',
-            'full_name', 'created_at', 'updated_at'
+            'phone', 'website', 'bio', 'country', 'city', 
+            'language', 'timezone', 'created_at'
         ]
-        read_only_fields = ['created_at', 'updated_at', 'full_name']
+        read_only_fields = ['created_at']
 
 
-class CMSUserBasicSerializer(ModelSerializer):
+class CMSUserMenuSerializer(ModelSerializer):
     """
-    Легковесный сериализатор пользователя без профиля.
-    Используется для быстрой проверки токена и базовой инициализации.
+    Минимальный сериализатор пользователя для меню.
+    Возвращает только необходимые данные для отображения в боковом меню:
+    username, email, full_name, initials_name.
+    Используется в эндпоинте /api/cms/adp/user-menu-data/
     """
     full_name = SerializerMethodField(read_only=True)
     initials_name = SerializerMethodField(read_only=True)
@@ -122,18 +128,12 @@ class CMSUserBasicSerializer(ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id',
             'username',
             'email',
-            'first_name',
-            'last_name',
-            'middle_name',
             'full_name',
             'initials_name',
-            'is_active',
-            'date_joined',
         ]
-        read_only_fields = ['id', 'date_joined', 'full_name', 'initials_name']
+        read_only_fields = ['full_name', 'initials_name']
 
     def get_full_name(self, obj):
         """
@@ -148,6 +148,28 @@ class CMSUserBasicSerializer(ModelSerializer):
         """
         initials = obj.get_initials_name()
         return initials if isinstance(initials, str) else str(initials or '')
+
+
+class CMSUserBasicSerializer(ModelSerializer):
+    """
+    Легковесный сериализатор пользователя без профиля.
+    Используется для быстрой проверки токена и базовой инициализации.
+    Не включает full_name и initials_name, так как они используются только в меню через отдельный эндпоинт.
+    Не включает id, так как он доступен через userStore.user.id (загружается через меню).
+    """
+    
+    class Meta:
+        model = User
+        fields = [
+            'username',
+            'email',
+            'first_name',
+            'last_name',
+            'middle_name',
+            'is_active',
+            'date_joined',
+        ]
+        read_only_fields = ['date_joined']
 
 
 class CMSUserSerializer(CMSUserBasicSerializer):
@@ -171,8 +193,7 @@ class UpdateUserProfileSerializer(ModelSerializer):
         model = UserProfile
         fields = [
             'first_name', 'last_name', 'middle_name', 'email', 'phone', 'website', 'bio', 
-            'country', 'city', 'language', 'timezone', 'email_notifications', 
-            'push_notifications', 'sms_notifications', 'profile_visibility'
+            'country', 'city', 'language', 'timezone'
         ]
     
     def update(self, instance, validated_data):
