@@ -12,9 +12,8 @@ from .serializers import (
 from .views import (
     UserMenuView, MenuItemListView, MenuItemDetailView,
     MenuItemReorderView, MenuSeparatorListView, MenuSeparatorDetailView,
-    MenuSyncView, MenuAccessLogView, AvailableRoutesView, AvailableIconsView
+    MenuAccessLogView, AvailableIconsView
 )
-from .services import MenuSyncService
 
 __all__ = [
     # Models
@@ -26,8 +25,6 @@ __all__ = [
     # Views
     'UserMenuView', 'MenuItemListView', 'MenuItemDetailView',
     'MenuItemReorderView', 'MenuSeparatorListView', 'MenuSeparatorDetailView',
-    'MenuSyncView', 'MenuAccessLogView', 'AvailableRoutesView', 'AvailableIconsView',
-    # Services
-    'MenuSyncService'
+    'MenuAccessLogView', 'AvailableIconsView'
 ]
 

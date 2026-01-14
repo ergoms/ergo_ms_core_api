@@ -511,46 +511,6 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class MenuSyncView(BaseMenuAPIView):
-    """
-    Синхронизация меню с конфигурацией модулей.
-    Загружает элементы из menu-config.json модулей в БД.
-    """
-    
-    @swagger_auto_schema(
-        operation_description="Синхронизировать меню с конфигурацией модулей",
-        responses={
-            200: openapi.Response(
-                description="Результат синхронизации",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        'created': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'updated': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'skipped': openapi.Schema(type=openapi.TYPE_INTEGER)
-                    }
-                )
-            ),
-            401: "Не авторизован",
-            403: "Нет доступа"
-        },
-        tags=['Menu Admin']
-    )
-    def post(self, request):
-        if not self.is_admin(request.user):
-            return Response(
-                {'error': 'Доступ запрещён'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        from .services import MenuSyncService
-        
-        service = MenuSyncService()
-        result = service.sync_from_configs()
-        
-        return Response(result)
-
-
 class MenuAccessLogView(BaseMenuAPIView):
     """
     Логирование доступа к элементам меню.
@@ -596,49 +556,6 @@ class MenuAccessLogView(BaseMenuAPIView):
         )
         
         return Response({'message': 'Лог записан'}, status=status.HTTP_201_CREATED)
-
-
-class AvailableRoutesView(BaseMenuAPIView):
-    """
-    Получение списка доступных маршрутов Vue.
-    Для автодополнения при создании элементов меню.
-    """
-    
-    @swagger_auto_schema(
-        operation_description="Получить список доступных маршрутов",
-        responses={
-            200: openapi.Response(
-                description="Список маршрутов",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(
-                        type=openapi.TYPE_OBJECT,
-                        properties={
-                            'name': openapi.Schema(type=openapi.TYPE_STRING),
-                            'path': openapi.Schema(type=openapi.TYPE_STRING),
-                            'module': openapi.Schema(type=openapi.TYPE_STRING)
-                        }
-                    )
-                )
-            ),
-            401: "Не авторизован",
-            403: "Нет доступа"
-        },
-        tags=['Menu Admin']
-    )
-    def get(self, request):
-        if not self.is_admin(request.user):
-            return Response(
-                {'error': 'Доступ запрещён'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        from .services import MenuSyncService
-        
-        service = MenuSyncService()
-        routes = service.get_available_routes()
-        
-        return Response(routes)
 
 
 class AvailableIconsView(BaseMenuAPIView):
@@ -690,4 +607,3 @@ class AvailableIconsView(BaseMenuAPIView):
         ]
         
         return Response(icons)
-
