@@ -111,8 +111,11 @@ class CMSUserProfileSerializer(ModelSerializer):
         read_only_fields = ['created_at', 'updated_at', 'full_name']
 
 
-class CMSUserSerializer(ModelSerializer):
-    adp_profile = CMSUserProfileSerializer(read_only=True)
+class CMSUserBasicSerializer(ModelSerializer):
+    """
+    Легковесный сериализатор пользователя без профиля.
+    Используется для быстрой проверки токена и базовой инициализации.
+    """
     full_name = SerializerMethodField(read_only=True)
     initials_name = SerializerMethodField(read_only=True)
     
@@ -129,7 +132,6 @@ class CMSUserSerializer(ModelSerializer):
             'initials_name',
             'is_active',
             'date_joined',
-            'adp_profile',
         ]
         read_only_fields = ['id', 'date_joined', 'full_name', 'initials_name']
 
@@ -146,6 +148,17 @@ class CMSUserSerializer(ModelSerializer):
         """
         initials = obj.get_initials_name()
         return initials if isinstance(initials, str) else str(initials or '')
+
+
+class CMSUserSerializer(CMSUserBasicSerializer):
+    """
+    Полный сериализатор пользователя с профилем.
+    Используется для получения полных данных пользователя.
+    """
+    adp_profile = CMSUserProfileSerializer(read_only=True)
+    
+    class Meta(CMSUserBasicSerializer.Meta):
+        fields = CMSUserBasicSerializer.Meta.fields + ['adp_profile']
 
 
 class UpdateUserProfileSerializer(ModelSerializer):

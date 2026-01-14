@@ -22,6 +22,7 @@ from src.core.cms.adp.serializers import (
     ChangePasswordSerializer,
     UserDeviceSerializer,
     CMSUserSerializer,
+    CMSUserBasicSerializer,
     CMSUserProfileSerializer,
     UpdateUserProfileSerializer,
 )
@@ -477,11 +478,14 @@ class UserAuthorizationView(BaseAPIView):
 
 class ProtectedView(BaseAPIViewAuthMixin):
     @swagger_auto_schema(
-        operation_description="Защищенное представление.",
+        operation_description="Защищенное представление. Проверяет валидность токена. Возвращает пустой ответ при успешной авторизации. Полные данные загружаются через /profile/.",
         responses={
             200: openapi.Response(
-                description="Данные авторизованного пользователя.",
-                schema=CMSUserSerializer()
+                description="Токен валиден, пользователь авторизован.",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={}
+                )
             ),
             401: "Неавторизованный доступ."
         },
@@ -494,8 +498,9 @@ class ProtectedView(BaseAPIViewAuthMixin):
         # Создаем профиль если его нет
         profile, created = UserProfile.objects.get_or_create(user=request.user)
         
-        serializer = CMSUserSerializer(request.user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        # Возвращаем пустой ответ - успешный статус 200 означает валидный токен
+        # Все данные пользователя загружаются через /profile/
+        return Response({}, status=status.HTTP_200_OK)
     
     def _update_device_activity(self, request):
         """Обновляет последнюю активность устройства пользователя"""
