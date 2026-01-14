@@ -45,6 +45,30 @@ class GeneralSettingsSerializer(serializers.ModelSerializer):
         model = GeneralSettings
         fields = '__all__'
 
+class GeneralSettingsReadSerializer(serializers.ModelSerializer):
+    """Сериализатор для чтения настроек (без лишних полей)"""
+    class Meta:
+        model = GeneralSettings
+        fields = [
+            'id',
+            'site_name',
+            'site_tagline',
+            'site_url',
+            'admin_email',
+            'homepage_type',
+            'posts_per_page',
+            'discourage_search_engines',
+            'privacy_policy',
+        ]
+        read_only_fields = fields
+
+class GeneralSettingsSiteNameSerializer(serializers.ModelSerializer):
+    """Сериализатор только для названия сайта (для меню)"""
+    class Meta:
+        model = GeneralSettings
+        fields = ['site_name']
+        read_only_fields = fields
+
 class AppearanceSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = AppearanceSettings

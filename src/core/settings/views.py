@@ -39,9 +39,20 @@ class GeneralSettingsViewSet(viewsets.ModelViewSet):
     def get_last_settings(self, request):
         last_settings = self.queryset.order_by('-id').first()
         if last_settings:
-            serializer = self.get_serializer(last_settings)
+            from .serializers import GeneralSettingsReadSerializer
+            serializer = GeneralSettingsReadSerializer(last_settings)
             return Response(serializer.data)
         return Response({'detail': 'Нет ни одной записи настроек.'}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['get'], url_path='site-name')
+    def get_site_name(self, request):
+        """Легковесный endpoint для получения только названия сайта (для меню)"""
+        last_settings = self.queryset.order_by('-id').first()
+        if last_settings:
+            from .serializers import GeneralSettingsSiteNameSerializer
+            serializer = GeneralSettingsSiteNameSerializer(last_settings)
+            return Response(serializer.data)
+        return Response({'site_name': 'ERGO MS'}, status=status.HTTP_200_OK)
     
     def perform_update(self, serializer):
         old_obj = self.get_object()
