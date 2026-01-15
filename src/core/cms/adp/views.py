@@ -337,19 +337,18 @@ class UserAuthorizationView(BaseAPIView):
             },
             required=['username', 'password'],
         ),
-        responses={
-            200: openapi.Response(
-                description="Пользователь успешно авторизован.",
-                examples={
-                    "application/json": {
-                        "refresh": "your_refresh_token",
-                        "access": "your_access_token",
-                        "user_id": 1
+            responses={
+                200: openapi.Response(
+                    description="Пользователь успешно авторизован.",
+                    examples={
+                        "application/json": {
+                            "refresh": "your_refresh_token",
+                            "access": "your_access_token"
+                        }
                     }
-                }
-            ),
-            400: "Авторизация не успешна."
-        },
+                ),
+                400: "Авторизация не успешна."
+            },
     )
     def post(self, request):
         serializer = UserLoginSerializer(data=request.data)
@@ -380,8 +379,7 @@ class UserAuthorizationView(BaseAPIView):
                 return Response(
                     {
                         'refresh': str(refresh),
-                        'access': str(access_token),
-                        'user_id': user.id
+                        'access': str(access_token)
                     },
                     status=status.HTTP_200_OK
                 )
