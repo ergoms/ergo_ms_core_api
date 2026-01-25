@@ -9,11 +9,13 @@ from drf_yasg import openapi
 
 from django.contrib.auth.models import User
 
+from src.core.settings.models import UserAvatar
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
 from src.core.cms.adp.serializers import (
     RoleSerializer,
     RoleGroupSerializer,
+    RoleGroupMinimalSerializer,
     PolicySerializer,
     UserRoleSerializer,
     ModulePermissionSerializer,
@@ -173,7 +175,7 @@ class RoleGroupListView(BaseAPIViewAuthMixin, BaseAPIView):
     permission_classes = [IsAuthenticated]
     
     @swagger_auto_schema(
-        operation_description="Получить список всех ролевых групп",
+        operation_description="Получить список всех ролевых групп. ?minimal=1 — только id, name, parent_role_name.",
         responses={200: RoleGroupSerializer(many=True)}
     )
     def get(self, request):
@@ -183,9 +185,11 @@ class RoleGroupListView(BaseAPIViewAuthMixin, BaseAPIView):
                 {'error': 'Доступ запрещен. Требуются права администратора.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        groups = RoleGroup.objects.all()
-        serializer = RoleGroupSerializer(groups, many=True)
+
+        minimal = request.query_params.get('minimal') in ('1', 'true', 'yes')
+        groups = RoleGroup.objects.select_related('parent_role').all()
+        serializer_class = RoleGroupMinimalSerializer if minimal else RoleGroupSerializer
+        serializer = serializer_class(groups, many=True)
         return Response(serializer.data)
     
     @swagger_auto_schema(
@@ -714,32 +718,37 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        users = User.objects.select_related('adp_profile').all().order_by('username')
+        users = User.objects.select_related('adp_profile', 'avatar').all().order_by('last_name', 'first_name', 'middle_name', 'username')
         result = []
-        
+
         for user in users:
             user_role = PermissionService.get_user_role(user)
             role = user_role.role if user_role else None
             role_groups = user_role.role_groups.all() if user_role else RoleGroup.objects.none()
-            
-            profile = getattr(user, 'adp_profile', None)
-            if profile and profile.full_name:
-                full_name = profile.full_name
-            else:
-                # Формируем полное имя с отчеством
-                name_parts = [user.first_name]
-                if user.middle_name:
-                    name_parts.append(user.middle_name)
-                name_parts.append(user.last_name)
-                full_name = " ".join(part for part in name_parts if part and part.strip()) or user.username
-            
+
+            # Формат: Фамилия Имя Отчество
+            name_parts = [user.last_name, user.first_name]
+            if user.middle_name:
+                name_parts.append(user.middle_name)
+            full_name = " ".join(part for part in name_parts if part and part.strip()) or user.username
+
+            try:
+                avatar = user.avatar
+            except UserAvatar.DoesNotExist:
+                avatar = None
+            avatar_url = None
+            if avatar and avatar.image:
+                avatar_url = request.build_absolute_uri(avatar.image.url)
+
             serializer = AdminUserRoleInfoSerializer(instance={
                 'user_id': user.id,
                 'username': user.username,
-                'email': user.email,
+                'email': user.email or '',
                 'full_name': full_name,
+                'date_joined': user.date_joined,
                 'role': role,
-                'role_groups': list(role_groups)
+                'role_groups': list(role_groups),
+                'avatar_url': avatar_url,
             })
             result.append(serializer.data)
         

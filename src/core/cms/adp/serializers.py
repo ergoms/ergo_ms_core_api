@@ -6,6 +6,7 @@ from rest_framework.serializers import (
     Serializer,
     ListField,
     SerializerMethodField,
+    DateTimeField,
 )
 
 from django.contrib.auth.models import User
@@ -242,7 +243,7 @@ class RoleSerializer(ModelSerializer):
 class RoleGroupSerializer(ModelSerializer):
     """Сериализатор для ролевых групп"""
     parent_role_name = CharField(source='parent_role.name', read_only=True)
-    
+
     class Meta:
         model = RoleGroup
         fields = [
@@ -250,6 +251,15 @@ class RoleGroupSerializer(ModelSerializer):
             'description', 'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class RoleGroupMinimalSerializer(ModelSerializer):
+    """Минимальный сериализатор для выбора ролевой группы (id, name, parent_role_name)."""
+    parent_role_name = CharField(source='parent_role.name', read_only=True)
+
+    class Meta:
+        model = RoleGroup
+        fields = ['id', 'name', 'parent_role_name']
 
 
 class PolicySerializer(ModelSerializer):
@@ -331,5 +341,7 @@ class AdminUserRoleInfoSerializer(Serializer):
     username = CharField()
     email = CharField(allow_blank=True)
     full_name = CharField(allow_blank=True)
+    date_joined = DateTimeField(allow_null=True, required=False)
     role = RoleSerializer(allow_null=True)
     role_groups = RoleGroupSerializer(many=True)
+    avatar_url = CharField(allow_blank=True, allow_null=True, required=False)

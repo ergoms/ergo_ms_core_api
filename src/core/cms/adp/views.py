@@ -30,9 +30,12 @@ from src.core.cms.adp.serializers import (
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
 
 from django.contrib.auth.models import User
+import logging
 
 from src.core.utils.database.main import OrderedDictQueryExecutor
 from src.config.settings.auth import get_token_lifetime
+
+logger = logging.getLogger(__name__)
 
 class UserRegistrationValidationView(BaseAPIView):
     @swagger_auto_schema(
@@ -852,3 +855,244 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
         profile.save()
         
         return Response({"message": "Настройки безопасности обновлены."}, status=status.HTTP_200_OK)
+
+
+class ImportUsersView(BaseAPIViewAuthMixin):
+    """
+    Импорт пользователей из Excel или CSV файла.
+    Ожидаемые столбцы: Фамилия, Имя, Отчество, Логин, E-mail.
+    Пароль по умолчанию: "1".
+    Проверка дубликатов по ФИО.
+    """
+    
+    @swagger_auto_schema(
+        operation_description="Импорт пользователей из Excel (.xlsx, .xls) или CSV файла.",
+        manual_parameters=[
+            openapi.Parameter(
+                'file',
+                openapi.IN_FORM,
+                type=openapi.TYPE_FILE,
+                description='Файл Excel или CSV с пользователями'
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                description="Импорт завершен успешно.",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                        'created': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'skipped': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'errors': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
+                        'logs': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)),
+                    }
+                )
+            ),
+            400: "Ошибка валидации или импорта."
+        },
+        security=[{'Bearer': []}]
+    )
+    def post(self, request):
+        import pandas as pd
+        from django.db import transaction
+        
+        logger.warning(f'Начало импорта пользователей. Пользователь: {request.user.username} (ID: {request.user.id})')
+        
+        if 'file' not in request.FILES:
+            logger.warning('Попытка импорта без файла')
+            return Response(
+                {'error': 'Файл не найден'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        file = request.FILES['file']
+        file_name = file.name.lower()
+        
+        logger.warning(f'Получен файл для импорта: {file.name}, размер: {file.size} байт')
+        
+        # Проверяем тип файла
+        if not file_name.endswith(('.xlsx', '.xls', '.csv')):
+            logger.warning(f'Неподдерживаемый формат файла: {file.name}')
+            return Response(
+                {'error': 'Поддерживаются только файлы Excel (.xlsx, .xls) и CSV (.csv)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Читаем файл
+            if file_name.endswith('.csv'):
+                # Пробуем разные кодировки для CSV
+                try:
+                    df = pd.read_csv(file, encoding='utf-8')
+                except UnicodeDecodeError:
+                    file.seek(0)
+                    df = pd.read_csv(file, encoding='cp1251')
+            else:
+                df = pd.read_excel(file, header=0)
+            
+            # Нормализуем названия колонок (убираем пробелы, приводим к нижнему регистру)
+            df.columns = [str(col).strip().lower() for col in df.columns]
+            
+            # Маппинг возможных названий колонок
+            column_mapping = {
+                'фамилия': ['фамилия', 'last_name', 'lastname', 'surname'],
+                'имя': ['имя', 'first_name', 'firstname', 'name'],
+                'отчество': ['отчество', 'middle_name', 'middlename', 'patronymic'],
+                'логин': ['логин', 'login', 'username', 'user'],
+                'email': ['email', 'e-mail', 'почта', 'электронная почта', 'mail']
+            }
+            
+            # Находим реальные названия колонок
+            found_columns = {}
+            for target, variants in column_mapping.items():
+                for col in df.columns:
+                    if col in variants:
+                        found_columns[target] = col
+                        break
+            
+            # Проверяем наличие обязательных колонок
+            required = ['фамилия', 'имя', 'логин']
+            missing = [col for col in required if col not in found_columns]
+            if missing:
+                logger.error(f'Отсутствуют обязательные колонки: {", ".join(missing)}. Найденные колонки: {", ".join(df.columns.tolist())}')
+                return Response(
+                    {'error': f'Отсутствуют обязательные колонки: {", ".join(missing)}. '
+                              f'Найденные колонки: {", ".join(df.columns.tolist())}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            results = {
+                'created': 0,
+                'skipped': 0,
+                'errors': [],
+                'logs': []
+            }
+            
+            total_rows = len(df)
+            logger.warning(f'Файл успешно прочитан. Всего строк для обработки: {total_rows}')
+            results['logs'].append({
+                'level': 'info',
+                'message': f'Начало импорта. Всего строк для обработки: {total_rows}'
+            })
+            results['total'] = total_rows
+            results['processed'] = 0
+            
+            # Обрабатываем каждую строку отдельно (без общей транзакции)
+            for index, row in df.iterrows():
+                results['processed'] = index + 1
+                
+                try:
+                    # Извлекаем данные
+                    last_name = str(row.get(found_columns['фамилия'], '')).strip()
+                    first_name = str(row.get(found_columns['имя'], '')).strip()
+                    middle_name = ''
+                    if 'отчество' in found_columns:
+                        middle_name = str(row.get(found_columns['отчество'], '')).strip()
+                        if pd.isna(row.get(found_columns['отчество'])):
+                            middle_name = ''
+                    
+                    username = str(row.get(found_columns['логин'], '')).strip()
+                    email = ''
+                    if 'email' in found_columns:
+                        email = str(row.get(found_columns['email'], '')).strip()
+                        if pd.isna(row.get(found_columns['email'])):
+                            email = ''
+                    
+                    # Проверяем обязательные поля
+                    if not last_name or not first_name or not username:
+                        error_msg = f'Строка {index + 2}: пропущена - пустые обязательные поля'
+                        logger.warning(f'Строка {index + 2}: пропущена - пустые обязательные поля (Фамилия: "{last_name}", Имя: "{first_name}", Логин: "{username}")')
+                        results['errors'].append(error_msg)
+                        results['logs'].append({'level': 'warn', 'message': error_msg})
+                        results['skipped'] += 1
+                        continue
+                    
+                    # Очищаем от NaN
+                    if pd.isna(last_name) or last_name == 'nan':
+                        last_name = ''
+                    if pd.isna(first_name) or first_name == 'nan':
+                        first_name = ''
+                    if pd.isna(middle_name) or middle_name == 'nan':
+                        middle_name = ''
+                    if pd.isna(username) or username == 'nan':
+                        username = ''
+                    if pd.isna(email) or email == 'nan':
+                        email = ''
+                    
+                    # Проверяем, существует ли пользователь с таким ФИО
+                    existing_by_fio = User.objects.filter(
+                        last_name__iexact=last_name,
+                        first_name__iexact=first_name,
+                        middle_name__iexact=middle_name if middle_name else ''
+                    ).first()
+                    
+                    if existing_by_fio:
+                        skip_msg = f'Строка {index + 2}: пользователь "{last_name} {first_name} {middle_name}" уже существует (по ФИО)'
+                        logger.warning(f'Строка {index + 2}: пропущен дубликат по ФИО - "{last_name} {first_name} {middle_name}" (существующий ID: {existing_by_fio.id})')
+                        results['logs'].append({'level': 'warn', 'message': skip_msg})
+                        results['skipped'] += 1
+                        continue
+                    
+                    # Проверяем, существует ли пользователь с таким логином
+                    if User.objects.filter(username__iexact=username).exists():
+                        skip_msg = f'Строка {index + 2}: логин "{username}" уже занят'
+                        logger.warning(f'Строка {index + 2}: пропущен - логин "{username}" уже занят')
+                        results['logs'].append({'level': 'warn', 'message': skip_msg})
+                        results['skipped'] += 1
+                        continue
+                    
+                    # Проверяем email если указан
+                    if email and User.objects.filter(email__iexact=email).exists():
+                        skip_msg = f'Строка {index + 2}: email "{email}" уже используется'
+                        logger.warning(f'Строка {index + 2}: пропущен - email "{email}" уже используется')
+                        results['logs'].append({'level': 'warn', 'message': skip_msg})
+                        results['skipped'] += 1
+                        continue
+                    
+                    # Создаём пользователя в отдельной транзакции
+                    with transaction.atomic():
+                        user = User.objects.create_user(
+                            username=username,
+                            first_name=first_name,
+                            last_name=last_name,
+                            middle_name=middle_name if middle_name else '',
+                            email=email if email else '',
+                            password='1'  # Пароль по умолчанию
+                        )
+                    
+                    results['created'] += 1
+                    success_msg = f'Строка {index + 2}: создан пользователь "{last_name} {first_name} {middle_name}" (логин: {username})'
+                    logger.warning(f'Строка {index + 2}: создан пользователь ID={user.id}, ФИО="{last_name} {first_name} {middle_name}", логин="{username}", email="{email}"')
+                    results['logs'].append({'level': 'success', 'message': success_msg})
+                    
+                except Exception as e:
+                    error_msg = f'Строка {index + 2}: ошибка - {str(e)}'
+                    logger.error(f'Строка {index + 2}: ошибка при создании пользователя - {str(e)}', exc_info=True)
+                    results['errors'].append(error_msg)
+                    results['logs'].append({'level': 'error', 'message': error_msg})
+            
+            # Финальная статистика
+            final_msg = f'Импорт завершен! Создано: {results["created"]}, пропущено: {results["skipped"]}, ошибок: {len(results["errors"])}'
+            logger.warning(f'Импорт пользователей завершен. Создано: {results["created"]}, пропущено: {results["skipped"]}, ошибок: {len(results["errors"])}. Пользователь: {request.user.username}')
+            results['logs'].append({'level': 'success', 'message': final_msg})
+            
+            return Response({
+                'message': 'Импорт завершен успешно',
+                'created': results['created'],
+                'skipped': results['skipped'],
+                'total': results['total'],
+                'processed': results['processed'],
+                'errors': results['errors'],
+                'logs': results['logs']
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f'Критическая ошибка при импорте пользователей: {str(e)}', exc_info=True)
+            return Response({
+                'error': f'Ошибка при обработке файла: {str(e)}',
+                'created': 0,
+                'skipped': 0,
+                'errors': [str(e)],
+                'logs': [{'level': 'error', 'message': f'Ошибка: {str(e)}'}]
+            }, status=status.HTTP_400_BAD_REQUEST)

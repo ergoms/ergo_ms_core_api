@@ -16,6 +16,7 @@ from src.core.cms.adp.views import (
     UserProfileView,
     UserMenuView,
     UserSecuritySettingsView,
+    ImportUsersView,
 )
 
 from src.core.cms.adp.views_roles import (
@@ -69,6 +70,7 @@ urlpatterns = [
     path('module-permissions/', ModulePermissionListView.as_view(), name='module_permissions'),
     path('module-permissions/<int:permission_id>/', ModulePermissionDetailView.as_view(), name='module_permission_detail'),
     path('admin-users/', AdminUserRoleListView.as_view(), name='admin_users'),
+    path('import-users/', ImportUsersView.as_view(), name='import_users'),
     
     # Menu Management endpoints (подключаем подмодуль menu)
     path('menu/', include('src.core.cms.adp.menu.urls')),
