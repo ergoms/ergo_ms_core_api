@@ -859,35 +859,31 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
 
 class ImportUsersView(BaseAPIViewAuthMixin):
     """
-    Импорт пользователей из Excel или CSV файла.
+    Импорт пользователей из Excel или CSV файла с real-time прогрессом через SSE.
     Ожидаемые столбцы: Фамилия, Имя, Отчество, Логин, E-mail.
     Пароль по умолчанию: "1".
     Проверка дубликатов по ФИО.
     """
     
     @swagger_auto_schema(
-        operation_description="Импорт пользователей из Excel (.xlsx, .xls) или CSV файла.",
+        operation_description="Импорт пользователей из Excel (.xlsx, .xls) или CSV файла с real-time прогрессом.",
         manual_parameters=[
             openapi.Parameter(
                 'file',
                 openapi.IN_FORM,
                 type=openapi.TYPE_FILE,
                 description='Файл Excel или CSV с пользователями'
+            ),
+            openapi.Parameter(
+                'skip_welcome_emails',
+                openapi.IN_FORM,
+                type=openapi.TYPE_BOOLEAN,
+                description='Не отправлять приветственные письма пользователям (по умолчанию: false)'
             )
         ],
         responses={
             200: openapi.Response(
-                description="Импорт завершен успешно.",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        'message': openapi.Schema(type=openapi.TYPE_STRING),
-                        'created': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'skipped': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'errors': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING)),
-                        'logs': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)),
-                    }
-                )
+                description="SSE поток с прогрессом импорта.",
             ),
             400: "Ошибка валидации или импорта."
         },
@@ -895,9 +891,16 @@ class ImportUsersView(BaseAPIViewAuthMixin):
     )
     def post(self, request):
         import pandas as pd
+        import json
         from django.db import transaction
+        from django.db.models.signals import post_save
+        from django.contrib.auth.models import User
+        from django.http import StreamingHttpResponse
         
-        logger.warning(f'Начало импорта пользователей. Пользователь: {request.user.username} (ID: {request.user.id})')
+        # Проверяем флаг отключения приветственных писем
+        skip_welcome_emails = request.POST.get('skip_welcome_emails', 'false').lower() in ('true', '1', 'yes')
+        
+        logger.warning(f'Начало импорта пользователей. Пользователь: {request.user.username} (ID: {request.user.id}), skip_welcome_emails: {skip_welcome_emails}')
         
         if 'file' not in request.FILES:
             logger.warning('Попытка импорта без файла')
@@ -962,6 +965,21 @@ class ImportUsersView(BaseAPIViewAuthMixin):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            total_rows = len(df)
+            logger.warning(f'Файл успешно прочитан. Всего строк для обработки: {total_rows}')
+            
+        except Exception as e:
+            logger.error(f'Ошибка при чтении файла: {str(e)}', exc_info=True)
+            return Response({
+                'error': f'Ошибка при чтении файла: {str(e)}',
+                'created': 0,
+                'skipped': 0,
+                'errors': [str(e)],
+                'logs': [{'level': 'error', 'message': f'Ошибка: {str(e)}'}]
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        def event_stream():
+            """Генератор SSE событий для streaming прогресса"""
             results = {
                 'created': 0,
                 'skipped': 0,
@@ -969,18 +987,18 @@ class ImportUsersView(BaseAPIViewAuthMixin):
                 'logs': []
             }
             
-            total_rows = len(df)
-            logger.warning(f'Файл успешно прочитан. Всего строк для обработки: {total_rows}')
+            # Отправляем начальное событие
+            yield f"data: {json.dumps({'type': 'start', 'total': total_rows, 'processed': 0, 'created': 0, 'skipped': 0})}\n\n"
+            
             results['logs'].append({
                 'level': 'info',
                 'message': f'Начало импорта. Всего строк для обработки: {total_rows}'
             })
-            results['total'] = total_rows
-            results['processed'] = 0
             
-            # Обрабатываем каждую строку отдельно (без общей транзакции)
+            # Обрабатываем каждую строку
             for index, row in df.iterrows():
-                results['processed'] = index + 1
+                processed = index + 1
+                log_entry = None
                 
                 try:
                     # Извлекаем данные
@@ -999,15 +1017,6 @@ class ImportUsersView(BaseAPIViewAuthMixin):
                         if pd.isna(row.get(found_columns['email'])):
                             email = ''
                     
-                    # Проверяем обязательные поля
-                    if not last_name or not first_name or not username:
-                        error_msg = f'Строка {index + 2}: пропущена - пустые обязательные поля'
-                        logger.warning(f'Строка {index + 2}: пропущена - пустые обязательные поля (Фамилия: "{last_name}", Имя: "{first_name}", Логин: "{username}")')
-                        results['errors'].append(error_msg)
-                        results['logs'].append({'level': 'warn', 'message': error_msg})
-                        results['skipped'] += 1
-                        continue
-                    
                     # Очищаем от NaN
                     if pd.isna(last_name) or last_name == 'nan':
                         last_name = ''
@@ -1020,79 +1029,115 @@ class ImportUsersView(BaseAPIViewAuthMixin):
                     if pd.isna(email) or email == 'nan':
                         email = ''
                     
-                    # Проверяем, существует ли пользователь с таким ФИО
-                    existing_by_fio = User.objects.filter(
+                    # Проверяем обязательные поля
+                    if not last_name or not first_name or not username:
+                        error_msg = f'Строка {index + 2}: пропущена - пустые обязательные поля'
+                        logger.warning(f'Строка {index + 2}: пропущена - пустые обязательные поля')
+                        results['errors'].append(error_msg)
+                        log_entry = {'level': 'warn', 'message': error_msg}
+                        results['logs'].append(log_entry)
+                        results['skipped'] += 1
+                    
+                    # Проверяем дубликат по ФИО
+                    elif User.objects.filter(
                         last_name__iexact=last_name,
                         first_name__iexact=first_name,
                         middle_name__iexact=middle_name if middle_name else ''
-                    ).first()
-                    
-                    if existing_by_fio:
-                        skip_msg = f'Строка {index + 2}: пользователь "{last_name} {first_name} {middle_name}" уже существует (по ФИО)'
-                        logger.warning(f'Строка {index + 2}: пропущен дубликат по ФИО - "{last_name} {first_name} {middle_name}" (существующий ID: {existing_by_fio.id})')
-                        results['logs'].append({'level': 'warn', 'message': skip_msg})
+                    ).exists():
+                        skip_msg = f'Строка {index + 2}: пользователь "{last_name} {first_name}" уже существует'
+                        logger.warning(f'Строка {index + 2}: пропущен дубликат по ФИО')
+                        log_entry = {'level': 'warn', 'message': skip_msg}
+                        results['logs'].append(log_entry)
                         results['skipped'] += 1
-                        continue
                     
-                    # Проверяем, существует ли пользователь с таким логином
-                    if User.objects.filter(username__iexact=username).exists():
+                    # Проверяем дубликат логина
+                    elif User.objects.filter(username__iexact=username).exists():
                         skip_msg = f'Строка {index + 2}: логин "{username}" уже занят'
-                        logger.warning(f'Строка {index + 2}: пропущен - логин "{username}" уже занят')
-                        results['logs'].append({'level': 'warn', 'message': skip_msg})
+                        logger.warning(f'Строка {index + 2}: пропущен - логин уже занят')
+                        log_entry = {'level': 'warn', 'message': skip_msg}
+                        results['logs'].append(log_entry)
                         results['skipped'] += 1
-                        continue
                     
-                    # Проверяем email если указан
-                    if email and User.objects.filter(email__iexact=email).exists():
+                    # Проверяем дубликат email
+                    elif email and User.objects.filter(email__iexact=email).exists():
                         skip_msg = f'Строка {index + 2}: email "{email}" уже используется'
-                        logger.warning(f'Строка {index + 2}: пропущен - email "{email}" уже используется')
-                        results['logs'].append({'level': 'warn', 'message': skip_msg})
+                        logger.warning(f'Строка {index + 2}: пропущен - email уже используется')
+                        log_entry = {'level': 'warn', 'message': skip_msg}
+                        results['logs'].append(log_entry)
                         results['skipped'] += 1
-                        continue
                     
-                    # Создаём пользователя в отдельной транзакции
-                    with transaction.atomic():
-                        user = User.objects.create_user(
-                            username=username,
-                            first_name=first_name,
-                            last_name=last_name,
-                            middle_name=middle_name if middle_name else '',
-                            email=email if email else '',
-                            password='1'  # Пароль по умолчанию
-                        )
-                    
-                    results['created'] += 1
-                    success_msg = f'Строка {index + 2}: создан пользователь "{last_name} {first_name} {middle_name}" (логин: {username})'
-                    logger.warning(f'Строка {index + 2}: создан пользователь ID={user.id}, ФИО="{last_name} {first_name} {middle_name}", логин="{username}", email="{email}"')
-                    results['logs'].append({'level': 'success', 'message': success_msg})
+                    else:
+                        # Создаём пользователя
+                        with transaction.atomic():
+                            # Временно отключаем сигнал для пропуска приветственных писем
+                            if skip_welcome_emails:
+                                try:
+                                    from modules.lms.api.signals import create_user_profile
+                                    post_save.disconnect(create_user_profile, sender=User)
+                                except ImportError:
+                                    pass
+                            
+                            try:
+                                user = User.objects.create_user(
+                                    username=username,
+                                    first_name=first_name,
+                                    last_name=last_name,
+                                    middle_name=middle_name if middle_name else '',
+                                    email=email if email else '',
+                                    password='1'
+                                )
+                            finally:
+                                if skip_welcome_emails:
+                                    try:
+                                        from modules.lms.api.signals import create_user_profile
+                                        post_save.connect(create_user_profile, sender=User)
+                                    except ImportError:
+                                        pass
+                        
+                        results['created'] += 1
+                        success_msg = f'Строка {index + 2}: создан "{last_name} {first_name}" ({username})'
+                        logger.warning(f'Строка {index + 2}: создан пользователь ID={user.id}')
+                        log_entry = {'level': 'success', 'message': success_msg}
+                        results['logs'].append(log_entry)
                     
                 except Exception as e:
                     error_msg = f'Строка {index + 2}: ошибка - {str(e)}'
-                    logger.error(f'Строка {index + 2}: ошибка при создании пользователя - {str(e)}', exc_info=True)
+                    logger.error(f'Строка {index + 2}: ошибка - {str(e)}', exc_info=True)
                     results['errors'].append(error_msg)
-                    results['logs'].append({'level': 'error', 'message': error_msg})
+                    log_entry = {'level': 'error', 'message': error_msg}
+                    results['logs'].append(log_entry)
+                
+                # Отправляем событие прогресса
+                progress_percent = int((processed / total_rows) * 100)
+                progress_event = {
+                    'type': 'progress',
+                    'total': total_rows,
+                    'processed': processed,
+                    'created': results['created'],
+                    'skipped': results['skipped'],
+                    'progress': progress_percent,
+                    'log': log_entry
+                }
+                yield f"data: {json.dumps(progress_event, ensure_ascii=False)}\n\n"
             
-            # Финальная статистика
-            final_msg = f'Импорт завершен! Создано: {results["created"]}, пропущено: {results["skipped"]}, ошибок: {len(results["errors"])}'
-            logger.warning(f'Импорт пользователей завершен. Создано: {results["created"]}, пропущено: {results["skipped"]}, ошибок: {len(results["errors"])}. Пользователь: {request.user.username}')
+            # Отправляем финальное событие
+            final_msg = f'Импорт завершен! Создано: {results["created"]}, пропущено: {results["skipped"]}'
+            logger.warning(f'Импорт пользователей завершен. Создано: {results["created"]}, пропущено: {results["skipped"]}')
             results['logs'].append({'level': 'success', 'message': final_msg})
             
-            return Response({
-                'message': 'Импорт завершен успешно',
+            done_event = {
+                'type': 'done',
+                'total': total_rows,
+                'processed': total_rows,
                 'created': results['created'],
                 'skipped': results['skipped'],
-                'total': results['total'],
-                'processed': results['processed'],
                 'errors': results['errors'],
-                'logs': results['logs']
-            }, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            logger.error(f'Критическая ошибка при импорте пользователей: {str(e)}', exc_info=True)
-            return Response({
-                'error': f'Ошибка при обработке файла: {str(e)}',
-                'created': 0,
-                'skipped': 0,
-                'errors': [str(e)],
-                'logs': [{'level': 'error', 'message': f'Ошибка: {str(e)}'}]
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'logs': results['logs'],
+                'success': len(results['errors']) == 0 or results['created'] > 0
+            }
+            yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
+        
+        response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        return response
