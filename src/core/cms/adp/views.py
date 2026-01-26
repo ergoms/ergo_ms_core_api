@@ -859,14 +859,14 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
 
 class ImportUsersView(BaseAPIViewAuthMixin):
     """
-    Импорт пользователей из Excel или CSV файла с real-time прогрессом через SSE.
+    Импорт пользователей из Excel или CSV файла через Celery с real-time прогрессом.
     Ожидаемые столбцы: Фамилия, Имя, Отчество, Логин, E-mail.
     Пароль по умолчанию: "1".
     Проверка дубликатов по ФИО.
     """
     
     @swagger_auto_schema(
-        operation_description="Импорт пользователей из Excel (.xlsx, .xls) или CSV файла с real-time прогрессом.",
+        operation_description="Импорт пользователей из Excel (.xlsx, .xls) или CSV файла через Celery.",
         manual_parameters=[
             openapi.Parameter(
                 'file',
@@ -883,24 +883,26 @@ class ImportUsersView(BaseAPIViewAuthMixin):
         ],
         responses={
             200: openapi.Response(
-                description="SSE поток с прогрессом импорта.",
+                description="Task ID для отслеживания прогресса.",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'task_id': openapi.Schema(type=openapi.TYPE_STRING),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                )
             ),
-            400: "Ошибка валидации или импорта."
+            400: "Ошибка валидации."
         },
         security=[{'Bearer': []}]
     )
     def post(self, request):
-        import pandas as pd
-        import json
-        from django.db import transaction
-        from django.db.models.signals import post_save
-        from django.contrib.auth.models import User
-        from django.http import StreamingHttpResponse
+        from src.core.cms.adp.tasks import import_users_task
         
         # Проверяем флаг отключения приветственных писем
         skip_welcome_emails = request.POST.get('skip_welcome_emails', 'false').lower() in ('true', '1', 'yes')
         
-        logger.warning(f'Начало импорта пользователей. Пользователь: {request.user.username} (ID: {request.user.id}), skip_welcome_emails: {skip_welcome_emails}')
+        logger.warning(f'Запуск импорта пользователей через Celery. Пользователь: {request.user.username} (ID: {request.user.id}), skip_welcome_emails: {skip_welcome_emails}')
         
         if 'file' not in request.FILES:
             logger.warning('Попытка импорта без файла')
@@ -923,221 +925,137 @@ class ImportUsersView(BaseAPIViewAuthMixin):
             )
         
         try:
-            # Читаем файл
-            if file_name.endswith('.csv'):
-                # Пробуем разные кодировки для CSV
-                try:
-                    df = pd.read_csv(file, encoding='utf-8')
-                except UnicodeDecodeError:
-                    file.seek(0)
-                    df = pd.read_csv(file, encoding='cp1251')
-            else:
-                df = pd.read_excel(file, header=0)
+            # Читаем содержимое файла в память
+            file_content = file.read()
             
-            # Нормализуем названия колонок (убираем пробелы, приводим к нижнему регистру)
-            df.columns = [str(col).strip().lower() for col in df.columns]
+            # Запускаем Celery задачу
+            task = import_users_task.delay(
+                file_content=file_content,
+                file_name=file.name,
+                skip_welcome_emails=skip_welcome_emails
+            )
             
-            # Маппинг возможных названий колонок
-            column_mapping = {
-                'фамилия': ['фамилия', 'last_name', 'lastname', 'surname'],
-                'имя': ['имя', 'first_name', 'firstname', 'name'],
-                'отчество': ['отчество', 'middle_name', 'middlename', 'patronymic'],
-                'логин': ['логин', 'login', 'username', 'user'],
-                'email': ['email', 'e-mail', 'почта', 'электронная почта', 'mail']
-            }
+            logger.warning(f'Celery задача запущена: task_id={task.id}')
             
-            # Находим реальные названия колонок
-            found_columns = {}
-            for target, variants in column_mapping.items():
-                for col in df.columns:
-                    if col in variants:
-                        found_columns[target] = col
-                        break
-            
-            # Проверяем наличие обязательных колонок
-            required = ['фамилия', 'имя', 'логин']
-            missing = [col for col in required if col not in found_columns]
-            if missing:
-                logger.error(f'Отсутствуют обязательные колонки: {", ".join(missing)}. Найденные колонки: {", ".join(df.columns.tolist())}')
-                return Response(
-                    {'error': f'Отсутствуют обязательные колонки: {", ".join(missing)}. '
-                              f'Найденные колонки: {", ".join(df.columns.tolist())}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            total_rows = len(df)
-            logger.warning(f'Файл успешно прочитан. Всего строк для обработки: {total_rows}')
+            return Response({
+                'task_id': task.id,
+                'message': 'Импорт запущен. Используйте task_id для отслеживания прогресса.'
+            }, status=status.HTTP_200_OK)
             
         except Exception as e:
-            logger.error(f'Ошибка при чтении файла: {str(e)}', exc_info=True)
+            logger.error(f'Ошибка при запуске задачи: {str(e)}', exc_info=True)
             return Response({
-                'error': f'Ошибка при чтении файла: {str(e)}',
-                'created': 0,
-                'skipped': 0,
-                'errors': [str(e)],
-                'logs': [{'level': 'error', 'message': f'Ошибка: {str(e)}'}]
+                'error': f'Ошибка при запуске импорта: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
+    """
+    Получение статуса Celery задачи импорта пользователей
+    """
+    
+    @swagger_auto_schema(
+        operation_description="Получить статус задачи импорта пользователей",
+        manual_parameters=[
+            openapi.Parameter(
+                'task_id',
+                openapi.IN_PATH,
+                type=openapi.TYPE_STRING,
+                description='ID Celery задачи'
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                description="Статус задачи",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'state': openapi.Schema(type=openapi.TYPE_STRING),
+                        'current': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'total': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'created': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'skipped': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'progress': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'result': openapi.Schema(type=openapi.TYPE_OBJECT),
+                    }
+                )
+            )
+        },
+        security=[{'Bearer': []}]
+    )
+    def get(self, request, task_id):
+        from celery.result import AsyncResult
         
-        def event_stream():
-            """Генератор SSE событий для streaming прогресса"""
-            results = {
+        task = AsyncResult(task_id)
+        
+        # Получаем индекс последнего лога для накопления
+        last_log_index = int(request.query_params.get('last_log_index', 0))
+        
+        if task.state == 'PENDING':
+            response = {
+                'state': task.state,
+                'current': 0,
+                'total': 0,
                 'created': 0,
                 'skipped': 0,
-                'errors': [],
-                'logs': []
+                'progress': 0,
+                'new_logs': [],
+                'status': 'Задача в очереди...'
             }
+        elif task.state == 'PROGRESS':
+            # Получаем накопленные логи начиная с last_log_index
+            all_logs = task.info.get('logs', [])
+            new_logs = all_logs[last_log_index:] if last_log_index < len(all_logs) else []
             
-            # Отправляем начальное событие
-            yield f"data: {json.dumps({'type': 'start', 'total': total_rows, 'processed': 0, 'created': 0, 'skipped': 0})}\n\n"
+            # Если нет накопленных логов, отдаём last_log
+            if not new_logs and task.info.get('last_log'):
+                # Проверяем, не отправляли ли мы уже этот лог
+                if last_log_index == 0 or (all_logs and last_log_index < len(all_logs)):
+                    new_logs = [task.info.get('last_log')]
             
-            results['logs'].append({
-                'level': 'info',
-                'message': f'Начало импорта. Всего строк для обработки: {total_rows}'
-            })
-            
-            # Обрабатываем каждую строку
-            for index, row in df.iterrows():
-                processed = index + 1
-                log_entry = None
-                
-                try:
-                    # Извлекаем данные
-                    last_name = str(row.get(found_columns['фамилия'], '')).strip()
-                    first_name = str(row.get(found_columns['имя'], '')).strip()
-                    middle_name = ''
-                    if 'отчество' in found_columns:
-                        middle_name = str(row.get(found_columns['отчество'], '')).strip()
-                        if pd.isna(row.get(found_columns['отчество'])):
-                            middle_name = ''
-                    
-                    username = str(row.get(found_columns['логин'], '')).strip()
-                    email = ''
-                    if 'email' in found_columns:
-                        email = str(row.get(found_columns['email'], '')).strip()
-                        if pd.isna(row.get(found_columns['email'])):
-                            email = ''
-                    
-                    # Очищаем от NaN
-                    if pd.isna(last_name) or last_name == 'nan':
-                        last_name = ''
-                    if pd.isna(first_name) or first_name == 'nan':
-                        first_name = ''
-                    if pd.isna(middle_name) or middle_name == 'nan':
-                        middle_name = ''
-                    if pd.isna(username) or username == 'nan':
-                        username = ''
-                    if pd.isna(email) or email == 'nan':
-                        email = ''
-                    
-                    # Проверяем обязательные поля
-                    if not last_name or not first_name or not username:
-                        error_msg = f'Строка {index + 2}: пропущена - пустые обязательные поля'
-                        logger.warning(f'Строка {index + 2}: пропущена - пустые обязательные поля')
-                        results['errors'].append(error_msg)
-                        log_entry = {'level': 'warn', 'message': error_msg}
-                        results['logs'].append(log_entry)
-                        results['skipped'] += 1
-                    
-                    # Проверяем дубликат по ФИО
-                    elif User.objects.filter(
-                        last_name__iexact=last_name,
-                        first_name__iexact=first_name,
-                        middle_name__iexact=middle_name if middle_name else ''
-                    ).exists():
-                        skip_msg = f'Строка {index + 2}: пользователь "{last_name} {first_name}" уже существует'
-                        logger.warning(f'Строка {index + 2}: пропущен дубликат по ФИО')
-                        log_entry = {'level': 'warn', 'message': skip_msg}
-                        results['logs'].append(log_entry)
-                        results['skipped'] += 1
-                    
-                    # Проверяем дубликат логина
-                    elif User.objects.filter(username__iexact=username).exists():
-                        skip_msg = f'Строка {index + 2}: логин "{username}" уже занят'
-                        logger.warning(f'Строка {index + 2}: пропущен - логин уже занят')
-                        log_entry = {'level': 'warn', 'message': skip_msg}
-                        results['logs'].append(log_entry)
-                        results['skipped'] += 1
-                    
-                    # Проверяем дубликат email
-                    elif email and User.objects.filter(email__iexact=email).exists():
-                        skip_msg = f'Строка {index + 2}: email "{email}" уже используется'
-                        logger.warning(f'Строка {index + 2}: пропущен - email уже используется')
-                        log_entry = {'level': 'warn', 'message': skip_msg}
-                        results['logs'].append(log_entry)
-                        results['skipped'] += 1
-                    
-                    else:
-                        # Создаём пользователя
-                        with transaction.atomic():
-                            # Временно отключаем сигнал для пропуска приветственных писем
-                            if skip_welcome_emails:
-                                try:
-                                    from modules.lms.api.signals import create_user_profile
-                                    post_save.disconnect(create_user_profile, sender=User)
-                                except ImportError:
-                                    pass
-                            
-                            try:
-                                user = User.objects.create_user(
-                                    username=username,
-                                    first_name=first_name,
-                                    last_name=last_name,
-                                    middle_name=middle_name if middle_name else '',
-                                    email=email if email else '',
-                                    password='1'
-                                )
-                            finally:
-                                if skip_welcome_emails:
-                                    try:
-                                        from modules.lms.api.signals import create_user_profile
-                                        post_save.connect(create_user_profile, sender=User)
-                                    except ImportError:
-                                        pass
-                        
-                        results['created'] += 1
-                        success_msg = f'Строка {index + 2}: создан "{last_name} {first_name}" ({username})'
-                        logger.warning(f'Строка {index + 2}: создан пользователь ID={user.id}')
-                        log_entry = {'level': 'success', 'message': success_msg}
-                        results['logs'].append(log_entry)
-                    
-                except Exception as e:
-                    error_msg = f'Строка {index + 2}: ошибка - {str(e)}'
-                    logger.error(f'Строка {index + 2}: ошибка - {str(e)}', exc_info=True)
-                    results['errors'].append(error_msg)
-                    log_entry = {'level': 'error', 'message': error_msg}
-                    results['logs'].append(log_entry)
-                
-                # Отправляем событие прогресса
-                progress_percent = int((processed / total_rows) * 100)
-                progress_event = {
-                    'type': 'progress',
-                    'total': total_rows,
-                    'processed': processed,
-                    'created': results['created'],
-                    'skipped': results['skipped'],
-                    'progress': progress_percent,
-                    'log': log_entry
-                }
-                yield f"data: {json.dumps(progress_event, ensure_ascii=False)}\n\n"
-            
-            # Отправляем финальное событие
-            final_msg = f'Импорт завершен! Создано: {results["created"]}, пропущено: {results["skipped"]}'
-            logger.warning(f'Импорт пользователей завершен. Создано: {results["created"]}, пропущено: {results["skipped"]}')
-            results['logs'].append({'level': 'success', 'message': final_msg})
-            
-            done_event = {
-                'type': 'done',
-                'total': total_rows,
-                'processed': total_rows,
-                'created': results['created'],
-                'skipped': results['skipped'],
-                'errors': results['errors'],
-                'logs': results['logs'],
-                'success': len(results['errors']) == 0 or results['created'] > 0
+            response = {
+                'state': task.state,
+                'current': task.info.get('current', 0),
+                'total': task.info.get('total', 0),
+                'created': task.info.get('created', 0),
+                'skipped': task.info.get('skipped', 0),
+                'progress': task.info.get('progress', 0),
+                'new_logs': new_logs,
+                'status': 'Обработка...'
             }
-            yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
+        elif task.state == 'SUCCESS':
+            result = task.result
+            response = {
+                'state': task.state,
+                'current': result.get('total', 0),
+                'total': result.get('total', 0),
+                'created': result.get('created', 0),
+                'skipped': result.get('skipped', 0),
+                'progress': 100,
+                'status': 'Завершено',
+                'result': result
+            }
+        elif task.state == 'FAILURE':
+            response = {
+                'state': task.state,
+                'current': 0,
+                'total': 0,
+                'created': 0,
+                'skipped': 0,
+                'progress': 0,
+                'status': 'Ошибка',
+                'error': str(task.info)
+            }
+        else:
+            response = {
+                'state': task.state,
+                'current': 0,
+                'total': 0,
+                'created': 0,
+                'skipped': 0,
+                'progress': 0,
+                'new_logs': [],
+                'status': str(task.state)
+            }
         
-        response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
-        response['Cache-Control'] = 'no-cache'
-        response['X-Accel-Buffering'] = 'no'
-        return response
+        return Response(response, status=status.HTTP_200_OK)
