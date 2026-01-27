@@ -106,6 +106,7 @@ class PageSerializer(serializers.ModelSerializer):
     category_id = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(), source='category', write_only=True, required=False
     )
+    category_index = serializers.BooleanField(required=False, default=False)
     tags = TagSerializer(many=True, read_only=True)
     tags_ids = serializers.PrimaryKeyRelatedField(
         queryset=Tag.objects.all(), many=True, source='tags', write_only=True, required=False

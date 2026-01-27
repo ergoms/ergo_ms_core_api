@@ -46,9 +46,9 @@ class PageViewSet(viewsets.ModelViewSet):
     serializer_class = PageSerializer
     lookup_field     = 'slug'
 
-    # фильтры + сортировка
+    # фильтры + сортировка (только поля, существующие в модели CmsPage)
     filter_backends  = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['category', 'tags']
+    filterset_fields = ['name', 'slug', 'is_homepage']
     ordering_fields  = ['date_of_creation', 'name']
     ordering         = ['-date_of_creation']
 

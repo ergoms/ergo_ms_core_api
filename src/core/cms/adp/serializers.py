@@ -302,6 +302,7 @@ class UserRoleSerializer(ModelSerializer):
     
     class Meta:
         model = UserRole
+        ref_name = 'CmsAdpUserRole'
         fields = [
             'id', 'user', 'username', 'role', 'role_name',
             'role_groups', 'role_groups_data', 'is_active',

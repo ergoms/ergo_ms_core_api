@@ -1,6 +1,7 @@
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from drf_yasg.utils import swagger_auto_schema
@@ -864,7 +865,8 @@ class ImportUsersView(BaseAPIViewAuthMixin):
     Пароль по умолчанию: "1".
     Проверка дубликатов по ФИО.
     """
-    
+    parser_classes = [MultiPartParser, FormParser]
+
     @swagger_auto_schema(
         operation_description="Импорт пользователей из Excel (.xlsx, .xls) или CSV файла через Celery.",
         manual_parameters=[
