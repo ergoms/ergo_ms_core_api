@@ -87,6 +87,8 @@ class ThemeSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'is_system']
+        # Уникальное имя схемы для Swagger, чтобы не конфликтовать с LmsThemeSerializer
+        ref_name = 'CoreThemeSerializer'
     
     def validate(self, data):
         # Нельзя редактировать системные темы
