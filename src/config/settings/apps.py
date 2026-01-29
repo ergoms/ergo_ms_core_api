@@ -13,16 +13,28 @@ Middleware (промежуточное ПО) в контексте Django — э
 from src.core.utils.auto_api.auto_config import ModuleDiscoverer
 from src.config.settings.base import MODULES_DIR, CORE_DIR
 
-# Обнаруживаем и устанавливаем основные и сторонние модули через ModuleDiscoverer
-discoverer = ModuleDiscoverer()
 
-CORE: list[str] = []
-discoverer._recursively_find_apps(str(CORE_DIR), 'src.core', CORE)
+def discover_installed_apps() -> list[str]:
+    """
+    Ленивая обертка над ModuleDiscoverer.
 
-MODULES: list[str] = []
-discoverer._find_modules_apps(str(MODULES_DIR), MODULES)
+    ВАЖНО:
+    - Не выполняем discovery на уровне модуля settings, чтобы избежать
+      ранних импортов приложений во время `apps.populate()`.
+    - Вызывается Django только один раз при построении INSTALLED_APPS.
+    """
+    discoverer = ModuleDiscoverer()
 
-ALL_MODULES = CORE + MODULES
+    core_apps: list[str] = []
+    discoverer._recursively_find_apps(str(CORE_DIR), 'src.core', core_apps)
+
+    module_apps: list[str] = []
+    discoverer._find_modules_apps(str(MODULES_DIR), module_apps)
+
+    return core_apps + module_apps
+
+
+ALL_MODULES = discover_installed_apps()
 
 # Определяем список установленных приложений
 INSTALLED_APPS = ALL_MODULES + [
