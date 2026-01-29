@@ -540,12 +540,27 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
         """
         engine = db_config.get('engine', 'postgresql').lower()
         
+        # Проверяем обязательные поля
+        host = db_config.get('host', '').strip()
+        if not host:
+            logger.warning(
+                f"{self.component_name}: Host не указан в конфигурации БД, "
+                "используется локальный SQLite"
+            )
+            return self._get_local_sqlite_urls()
+        
         # Экранируем credentials
-        user = quote_plus(db_config['user'])
-        password = quote_plus(db_config['password'])
-        host = db_config['host']
-        port = db_config['port']
-        name = db_config['name']
+        user = quote_plus(db_config.get('user', ''))
+        password = quote_plus(db_config.get('password', ''))
+        port = db_config.get('port', 5432 if engine == 'postgresql' else 3306)
+        name = db_config.get('name', '')
+        
+        if not name:
+            logger.warning(
+                f"{self.component_name}: Имя БД не указано в конфигурации, "
+                "используется локальный SQLite"
+            )
+            return self._get_local_sqlite_urls()
         
         if engine == 'postgresql':
             broker_url = f"sqla+postgresql://{user}:{password}@{host}:{port}/{name}"
@@ -561,7 +576,7 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
             logger.warning(f"{self.component_name}: Неподдерживаемый тип БД '{engine}'")
             return self._get_local_sqlite_urls()
         
-        logger.info(f"{self.component_name}: Настроена работа с {engine} БД")
+        logger.info(f"{self.component_name}: Настроена работа с {engine} БД ({host}:{port}/{name})")
         return broker_url, result_backend
     
     def _process_config(self, raw_config: Optional[Dict]) -> Dict:
