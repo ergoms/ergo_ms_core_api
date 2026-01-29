@@ -87,14 +87,15 @@ class CeleryModuleManager:
                 # Создаем экземпляр конфигурации
                 config_instance = config_class(module_name)
                 self.modules_configs[module_name] = config_instance
-                self.logger.info(f"Успешно загружена конфигурация Celery для модуля {module_name}")
+                self.logger.debug(f"Успешно загружена конфигурация Celery для модуля {module_name}")
                 return
             else:
-                self.logger.warning(f"В модуле {config_module_path} не найден класс конфигурации Celery, создается дефолтная конфигурация")
+                # Отсутствие класса конфигурации - нормальная ситуация, используем дефолт
+                self.logger.debug(f"В модуле {config_module_path} не найден класс конфигурации Celery, создается дефолтная конфигурация")
                 self.modules_configs[module_name] = self._create_default_config(module_name, app_path)
         except ImportError as e:
-            # Если файл конфигурации не найден, создаем базовую конфигурацию
-            self.logger.warning(f"Не удалось импортировать конфигурацию Celery для модуля {module_name} (путь: {config_module_path}): {e}. Создается дефолтная конфигурация.")
+            # Если файл конфигурации не найден - это нормальная ситуация, не все модули имеют celery_config
+            self.logger.debug(f"Модуль {module_name} не имеет celery_config (путь: {config_module_path}), создается дефолтная конфигурация")
             self.modules_configs[module_name] = self._create_default_config(module_name, app_path)
         except Exception as e:
             self.logger.error(f"Ошибка загрузки конфигурации модуля {module_name}: {e}", exc_info=True)

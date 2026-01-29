@@ -46,7 +46,7 @@ class CeleryBeatSyncManager:
             'deleted': 0,
         }
         
-        self.logger.info(f"Начало синхронизации: задач в конфиге={len(self.config_schedule)}")
+        self.logger.debug(f"Начало синхронизации: задач в конфиге={len(self.config_schedule)}")
         
         # Находим БД, где существует таблица (может отличаться от указанной)
         actual_db_alias = self._find_database_with_table()
@@ -60,7 +60,7 @@ class CeleryBeatSyncManager:
         
         # Используем найденную БД для синхронизации
         if actual_db_alias != self.db_alias:
-            self.logger.info(
+            self.logger.debug(
                 f"Используем БД '{actual_db_alias}' для синхронизации "
                 f"(вместо указанной '{self.db_alias}')"
             )
@@ -72,7 +72,7 @@ class CeleryBeatSyncManager:
             with atomic:  # type: ignore
                 # Получаем все задачи из БД
                 db_tasks = self._get_db_tasks()
-                self.logger.info(f"Задач в БД: {len(db_tasks)}")
+                self.logger.debug(f"Задач в БД: {len(db_tasks)}")
                 
                 # Синхронизируем задачи из конфига
                 config_task_names = set(self.config_schedule.keys())
@@ -92,23 +92,22 @@ class CeleryBeatSyncManager:
                 db_task_names = set(db_tasks.keys())
                 tasks_to_delete = db_task_names - config_task_names
                 
-                self.logger.info(
-                    f"Задач для удаления: {len(tasks_to_delete)} "
-                    f"(в БД: {len(db_task_names)}, в конфиге: {len(config_task_names)})"
-                )
-                
                 if tasks_to_delete:
-                    self.logger.info(f"Список задач для удаления: {', '.join(sorted(tasks_to_delete))}")
+                    self.logger.debug(
+                        f"Задач для удаления: {len(tasks_to_delete)} "
+                        f"(в БД: {len(db_task_names)}, в конфиге: {len(config_task_names)})"
+                    )
+                    self.logger.debug(f"Список задач для удаления: {', '.join(sorted(tasks_to_delete))}")
                 
                 # Удаляем только задачи, которые не являются системными
                 for task_name in tasks_to_delete:
                     if not self._is_system_task(task_name):
-                        self.logger.info(f"Удаление задачи: {task_name}")
+                        self.logger.debug(f"Удаление задачи: {task_name}")
                         self._delete_task(db_tasks[task_name])
                         results['deleted'] += 1
-                        self.logger.info(f"Удалена задача из БД (отсутствует в конфиге): {task_name}")
+                        self.logger.debug(f"Удалена задача из БД (отсутствует в конфиге): {task_name}")
                     else:
-                        self.logger.info(f"Пропущена системная задача: {task_name}")
+                        self.logger.debug(f"Пропущена системная задача: {task_name}")
                 
                 self.logger.info(
                     f"Синхронизация завершена: создано={results['created']}, "
@@ -298,14 +297,14 @@ class CeleryBeatSyncManager:
                     db_task.expires = expires_value  # type: ignore
             
             db_task.save(using=self.db_alias)
-            self.logger.info(f"Обновлена задача: {task_name}")
+            self.logger.debug(f"Обновлена задача: {task_name}")
     
     def _delete_task(self, db_task: PeriodicTask):
         """Удаляет задачу из БД."""
         task_name = db_task.name
         try:
             db_task.delete(using=self.db_alias)
-            self.logger.info(f"Удалена задача: {task_name}")
+            self.logger.debug(f"Удалена задача: {task_name}")
         except Exception as e:
             self.logger.error(f"Ошибка при удалении задачи {task_name}: {e}", exc_info=True)
             raise
