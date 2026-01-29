@@ -180,3 +180,59 @@ class KnowledgeChunk(models.Model):
     
     def __str__(self):
         return f"Chunk {self.chunk_index} из документа '{self.document.title}'"
+
+
+class TechnologicalProcessDocument(models.Model):
+    """
+    Документ техпроцесса для AI ассистента
+    
+    Хранит оригинальный файл (DOCX) и конвертированный Markdown контент.
+    Используется для работы с техпроцессами без RAG - весь текст передается в промпт.
+    Документы привязаны к конкретной сессии чата и удаляются вместе с ней.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tp_documents')
+    session = models.ForeignKey(
+        ChatSession,
+        on_delete=models.CASCADE,
+        related_name='tp_documents',
+        help_text='Сессия чата, к которой привязан документ',
+        null=True,
+        blank=True,  # Временно разрешаем null для миграции существующих данных
+    )
+    title = models.CharField(max_length=500, help_text='Название документа техпроцесса')
+    
+    # Оригинальный файл (DOCX)
+    file = models.FileField(
+        upload_to='tp_documents/',
+        help_text='Оригинальный файл техпроцесса (DOCX)'
+    )
+    file_type = models.CharField(
+        max_length=50,
+        default='docx',
+        help_text='Тип файла (обычно docx)'
+    )
+    
+    # Конвертированный Markdown контент
+    markdown_content = models.TextField(
+        help_text='Конвертированный Markdown контент документа'
+    )
+    
+    # Метаданные
+    metadata = models.JSONField(default=dict, blank=True, help_text='Дополнительные метаданные документа')
+    
+    # Временные метки
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['session', '-created_at']),
+        ]
+        verbose_name = 'Документ техпроцесса'
+        verbose_name_plural = 'Документы техпроцессов'
+    
+    def __str__(self):
+        return f"{self.title} ({self.user.username})"

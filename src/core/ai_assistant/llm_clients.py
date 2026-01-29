@@ -23,11 +23,37 @@ class BaseLLMClient:
         self,
         prompt: str,
         *,
-        num_predict: int,
+        num_predict: Optional[int] = None,
         temperature: float,
         stream: bool = False,
         stream_callback: Optional[Callable[[str], None]] = None,
     ) -> str:
+        raise NotImplementedError
+    
+    def chat(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        num_predict: Optional[int] = None,
+        temperature: Optional[float] = None,
+        seed: Optional[int] = None,
+        stream: bool = False,
+        stream_callback: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """
+        Отправка сообщений в чат с сохранением контекста.
+        
+        Args:
+            messages: Список сообщений в формате [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
+            num_predict: Максимальное количество токенов (опционально)
+            temperature: Температура (опционально)
+            seed: Seed для воспроизводимости результатов (опционально)
+            stream: Использовать streaming (опционально)
+            stream_callback: Callback для streaming (опционально)
+        
+        Returns:
+            Ответ модели
+        """
         raise NotImplementedError
 
     def check_health(self) -> Dict[str, Any]:
@@ -52,7 +78,7 @@ class CompositeLLMClient(BaseLLMClient):
         self,
         prompt: str,
         *,
-        num_predict: int,
+        num_predict: Optional[int] = None,
         temperature: float,
         stream: bool = False,
         stream_callback: Optional[Callable[[str], None]] = None,
@@ -62,6 +88,26 @@ class CompositeLLMClient(BaseLLMClient):
             prompt,
             num_predict=num_predict,
             temperature=temperature,
+            stream=stream,
+            stream_callback=stream_callback,
+        )
+    
+    def chat(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        num_predict: Optional[int] = None,
+        temperature: Optional[float] = None,
+        seed: Optional[int] = None,
+        stream: bool = False,
+        stream_callback: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        client = self._clients[0]
+        return client.chat(
+            messages,
+            num_predict=num_predict,
+            temperature=temperature,
+            seed=seed,
             stream=stream,
             stream_callback=stream_callback,
         )
@@ -146,7 +192,7 @@ class HttpxOllamaClient(BaseLLMClient):
         self,
         prompt: str,
         *,
-        num_predict: int,
+        num_predict: Optional[int] = None,
         temperature: float,
         stream: bool,
     ) -> Dict[str, Any]:
@@ -156,12 +202,13 @@ class HttpxOllamaClient(BaseLLMClient):
             "stream": stream,
             "keep_alive": self._keep_alive,
             "options": {
-                "num_predict": num_predict,
                 "temperature": temperature,
                 "top_k": 40,
                 "top_p": 0.9,
             },
         }
+        if num_predict is not None:
+            payload["options"]["num_predict"] = num_predict
         if self._device_config:
             payload["options"].update(self._device_config)
         return payload
@@ -170,7 +217,7 @@ class HttpxOllamaClient(BaseLLMClient):
         self,
         prompt: str,
         *,
-        num_predict: int,
+        num_predict: Optional[int] = None,
         temperature: float,
         stream: bool = False,
         stream_callback: Optional[Callable[[str], None]] = None,
@@ -276,6 +323,130 @@ class HttpxOllamaClient(BaseLLMClient):
                 raise LLMClientError(error_msg) from e
             raise
         return "".join(chunks)
+    
+    def chat(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        num_predict: Optional[int] = None,
+        temperature: Optional[float] = None,
+        seed: Optional[int] = None,
+        stream: bool = False,
+        stream_callback: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """
+        Отправка сообщений в чат с сохранением контекста через /api/chat.
+        """
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": stream,
+            "keep_alive": self._keep_alive,
+            "options": {
+                "top_k": 40,
+                "top_p": 0.9,
+            },
+        }
+        if num_predict is not None:
+            payload["options"]["num_predict"] = num_predict
+        if temperature is not None:
+            payload["options"]["temperature"] = temperature
+        if seed is not None:
+            payload["options"]["seed"] = seed
+        if self._device_config:
+            payload["options"].update(self._device_config)
+        
+        last_error: Optional[Exception] = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                if stream:
+                    return self._stream_chat(payload, stream_callback)
+                return self._chat(payload)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_error = exc
+                logger.warning(
+                    "Ошибка Ollama chat (попытка %s/%s): %s",
+                    attempt + 1,
+                    self._max_retries + 1,
+                    exc,
+                )
+                continue
+        raise LLMClientError("Ollama API недоступен") from last_error
+    
+    def _chat(self, payload: Dict[str, Any]) -> str:
+        """Выполняет обычный (не streaming) запрос к /api/chat."""
+        try:
+            response = self._client.post("/api/chat", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            return data.get("message", {}).get("content", "")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                error_msg = f"Ollama API вернул 404. Проверьте:\n"
+                error_msg += f"1. URL: {self._base_url}/api/chat\n"
+                error_msg += f"2. Модель '{self.model}' существует? Выполните: ollama list\n"
+                error_msg += f"3. Если модели нет, установите: ollama pull {self.model}\n"
+                error_msg += f"Ответ сервера: {e.response.text}"
+                raise LLMClientError(error_msg) from e
+            raise
+    
+    def _stream_chat(
+        self,
+        payload: Dict[str, Any],
+        stream_callback: Optional[Callable[[str], None]],
+    ) -> str:
+        """Выполняет streaming запрос к /api/chat."""
+        chunks: List[str] = []
+        try:
+            with self._client.stream("POST", "/api/chat", json=payload) as response:
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as status_error:
+                    if status_error.response.status_code == 404:
+                        try:
+                            error_text = status_error.response.text
+                        except Exception:
+                            error_text = "Не удалось получить ответ сервера"
+                        error_msg = f"Ollama API вернул 404. Проверьте:\n"
+                        error_msg += f"1. URL: {self._base_url}/api/chat\n"
+                        error_msg += f"2. Модель '{self.model}' существует? Выполните: ollama list\n"
+                        error_msg += f"3. Если модели нет, установите: ollama pull {self.model}\n"
+                        error_msg += f"Ответ сервера: {error_text}"
+                        raise LLMClientError(error_msg) from status_error
+                    raise
+                
+                for raw_line in response.iter_lines():
+                    if not raw_line:
+                        continue
+                    try:
+                        data = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    message = data.get("message", {})
+                    text = message.get("content") if isinstance(message, dict) else None
+                    if text:
+                        chunks.append(text)
+                        if stream_callback:
+                            stream_callback(text)
+                    if data.get("done"):
+                        break
+        except LLMClientError:
+            raise
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                try:
+                    error_text = e.response.text
+                except Exception:
+                    error_text = "Не удалось получить ответ сервера"
+                error_msg = f"Ollama API вернул 404. Проверьте:\n"
+                error_msg += f"1. URL: {self._base_url}/api/chat\n"
+                error_msg += f"2. Модель '{self.model}' существует? Выполните: ollama list\n"
+                error_msg += f"3. Если модели нет, установите: ollama pull {self.model}\n"
+                error_msg += f"Ответ сервера: {error_text}"
+                raise LLMClientError(error_msg) from e
+            raise
+        return "".join(chunks)
 
 
 class HttpxLlamaCppClient(BaseLLMClient):
@@ -344,20 +515,22 @@ class HttpxLlamaCppClient(BaseLLMClient):
         self,
         prompt: str,
         *,
-        num_predict: int,
+        num_predict: Optional[int] = None,
         temperature: float,
         stream: bool,
     ) -> Dict[str, Any]:
         """Формирует payload для llama.cpp /completion endpoint."""
         payload = {
             "prompt": prompt,
-            "n_predict": num_predict,
             "temperature": temperature,
             "stream": stream,
             "top_k": 40,
             "top_p": 0.9,
             "stop": ["</s>", "<|end|>", "<|im_end|>"],
         }
+        
+        if num_predict is not None:
+            payload["n_predict"] = num_predict
         
         # Добавляем параметры устройства
         if self._device_config:
@@ -370,7 +543,7 @@ class HttpxLlamaCppClient(BaseLLMClient):
         self,
         prompt: str,
         *,
-        num_predict: int,
+        num_predict: Optional[int] = None,
         temperature: float,
         stream: bool = False,
         stream_callback: Optional[Callable[[str], None]] = None,
