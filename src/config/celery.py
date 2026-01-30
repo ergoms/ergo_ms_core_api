@@ -321,11 +321,21 @@ if IS_CELERY_PROCESS:
         except Exception as exc:
             logger.error("Beat: ошибка синхронизации задач с БД: %s", exc, exc_info=True)
 else:
-    # В процессе Django (runserver и т.д.) нужны broker_url и result_backend для apply_async
+    # В процессе Django (runserver и т.д.): broker, result_backend и маршруты для apply_async
     try:
         if hasattr(settings, "CELERY_BROKER_URL"):
             celery_app.conf.broker_url = settings.CELERY_BROKER_URL
         if hasattr(settings, "CELERY_RESULT_BACKEND"):
             celery_app.conf.result_backend = settings.CELERY_RESULT_BACKEND
+        from src.core.utils.celery.manager import CeleryModuleManager
+        _django_module_manager = CeleryModuleManager()
+        celery_app.conf.task_routes = _django_module_manager.get_all_task_routes()
+        celery_app.conf.task_default_queue = "default"
+        celery_app.conf.task_queues = _django_module_manager.get_all_task_queues()
+        if "default" not in celery_app.conf.task_queues:
+            celery_app.conf.task_queues["default"] = {
+                "exchange": "default",
+                "routing_key": "default",
+            }
     except Exception:
         pass
