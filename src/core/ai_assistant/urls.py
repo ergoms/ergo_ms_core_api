@@ -1,16 +1,14 @@
-from django.urls import path, re_path
+from django.urls import path, re_path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     UserFilesListView, BIQueryView, OllamaStatusView, ChartAnalysisView,
     ChatView, ChatStreamView, ChatSessionViewSet, KnowledgeDocumentViewSet,
     EmbeddingsStatusView, GeneratedDocumentDownloadView,
-    TechnologicalProcessDocumentViewSet, TPChatStreamView
 )
 
 router = DefaultRouter()
 router.register(r'chat_sessions', ChatSessionViewSet, basename='chat-session')
 router.register(r'knowledge_documents', KnowledgeDocumentViewSet, basename='knowledge-document')
-router.register(r'tp_documents', TechnologicalProcessDocumentViewSet, basename='tp-document')
 
 urlpatterns = [
     path('files/', UserFilesListView.as_view(), name='ai-assistant-files'),
@@ -20,6 +18,6 @@ urlpatterns = [
     path('chart_analysis/', ChartAnalysisView.as_view(), name='ai-assistant-chart-analysis'),
     path('chat/', ChatView.as_view(), name='ai-assistant-chat'),
     path('chat/stream/', ChatStreamView.as_view(), name='ai-assistant-chat-stream'),
-    path('tp_chat/stream/', TPChatStreamView.as_view(), name='ai-assistant-tp-chat-stream'),
+    path('', include('src.core.ai_assistant.tp.urls')),
     re_path(r'^documents/download/(?P<file_path>.+)$', GeneratedDocumentDownloadView.as_view(), name='ai-assistant-document-download'),
 ] + router.urls
