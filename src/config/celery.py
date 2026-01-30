@@ -320,3 +320,12 @@ if IS_CELERY_PROCESS:
             )
         except Exception as exc:
             logger.error("Beat: ошибка синхронизации задач с БД: %s", exc, exc_info=True)
+else:
+    # В процессе Django (runserver и т.д.) нужны broker_url и result_backend для apply_async
+    try:
+        if hasattr(settings, "CELERY_BROKER_URL"):
+            celery_app.conf.broker_url = settings.CELERY_BROKER_URL
+        if hasattr(settings, "CELERY_RESULT_BACKEND"):
+            celery_app.conf.result_backend = settings.CELERY_RESULT_BACKEND
+    except Exception:
+        pass
