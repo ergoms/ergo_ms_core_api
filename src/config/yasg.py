@@ -13,17 +13,27 @@ from drf_yasg import openapi
 
 from django.urls import re_path
 
-from src.config.env import env
+# Получаем название системы из базы данных
+def get_system_title():
+    """Получает название сайта из БД, с fallback на дефолт"""
+    try:
+        from src.core.settings.models import GeneralSettings
+        last_settings = GeneralSettings.objects.order_by('-id').first()
+        if last_settings and last_settings.site_name:
+            return last_settings.site_name
+    except Exception:
+        # Если БД недоступна или таблица не существует, используем дефолт
+        pass
+    return 'ERGO MS'
 
-# Получаем название системы из переменных окружения
-system_title = env.str('SYSTEM_TITLE', default='API')
+system_title = get_system_title()
 
 # Создаем представление схемы API
 schema_view = get_schema_view(
     openapi.Info(
         title=f"{system_title} API",
-        default_version='v1',
-        description="API системы управления организациями",
+        default_version='v1.0.1',
+        description="API эргономичной системы",
         terms_of_service="https://www.google.com/policies/terms/",
     ),
     public=True,
