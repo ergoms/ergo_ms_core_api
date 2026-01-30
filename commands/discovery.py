@@ -27,18 +27,20 @@ class CommandDiscovery:
         """Инициализация Django."""
         if self._django_initialized:
             return
-            
+
         try:
             project_path = os.path.join(os.path.dirname(__file__), '..', 'src')
             if project_path not in sys.path:
                 sys.path.insert(0, project_path)
-            
+
             deploy_type = get_env_deploy_type()
             os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
-            
+
             if not django.conf.settings.configured:
                 django.setup()
-            
+            elif not getattr(apps, 'ready', False):
+                django.setup()
+
             self._django_initialized = True
         except Exception as e:
             print(f"Предупреждение: Не удалось инициализировать Django: {e}")
