@@ -21,7 +21,7 @@ from .llm_clients import build_llm_client, LLMClientError
 from .intent_detector import IntentDetector, UserIntent, detect_intent, select_chart_columns
 from src.core.bi_analysis.bi_charts.models import Chart
 from src.core.utils.mixins import SwaggerSafeMixin
-from .models import ChatSession, ChatMessage, KnowledgeDocument, KnowledgeChunk
+from .models import ChatSession, ChatMessage, KnowledgeDocument, KnowledgeChunk, TechnologicalProcessDocument
 from .skills import get_skills_manager
 from .skills.integration import build_skills_prompt, execute_skill_from_llm_response
 from .rag import (
@@ -164,6 +164,12 @@ def _create_ollama_client(ollama_config=None):
     config_with_defaults = ollama_config or {}
     if 'provider' not in config_with_defaults:
         config_with_defaults = {**config_with_defaults, 'provider': 'ollama'}
+    
+    # Обрабатываем num_gpu - передаем в device_config
+    if 'num_gpu' in config_with_defaults:
+        if 'device_config' not in config_with_defaults:
+            config_with_defaults['device_config'] = {}
+        config_with_defaults['device_config']['num_gpu'] = config_with_defaults['num_gpu']
     
     runtime_config = build_runtime_config(config_with_defaults)
     provider_name = runtime_config.provider.value if hasattr(runtime_config.provider, "value") else str(runtime_config.provider)
@@ -756,7 +762,6 @@ class BIQueryView(APIView):
 
             response = client.complete(
                 prompt,
-                num_predict=5,
                 temperature=0.0,
                 stream=False,
             ).strip().upper()
@@ -940,99 +945,9 @@ class BIQueryView(APIView):
     
     def _create_bi_document(self, file_name, question, commentary, data, columns, sql, user=None, request=None):
         """Создаёт документ с результатами BI анализа."""
-        from pathlib import Path
-        from django.conf import settings
-        from datetime import datetime
-        import uuid
-        
-        try:
-            # Импортируем генератор
-            from .skills.builtin.document.generators import WordGenerator
-            
-            title = f"Отчёт по {file_name}"
-            current_date = datetime.now().strftime('%d.%m.%Y %H:%M')
-            
-            # Генерируем путь для файла
-            base_dir = Path(settings.GENERATED_DOCUMENTS_DIR)
-            if user and hasattr(user, 'id'):
-                base_dir = base_dir / f'user_{user.id}'
-            base_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Создаём безопасное имя файла (ТОЛЬКО ASCII - латиница и цифры)
-            import re
-            # Транслитерация кириллицы
-            translit_map = {
-                'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
-                'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
-                'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
-                'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '',
-                'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
-            }
-            safe_title = ""
-            for c in file_name.lower():
-                if c in translit_map:
-                    safe_title += translit_map[c]
-                elif c.isascii() and (c.isalnum() or c in '-_'):
-                    safe_title += c
-            safe_title = safe_title[:30] or 'report'
-            unique_id = str(uuid.uuid4())[:8]
-            filename = f"Report_{safe_title}_{unique_id}.docx"
-            output_path = base_dir / filename
-            
-            # Генерируем Word документ напрямую из данных
-            generator = WordGenerator()
-            
-            try:
-                file_path = generator.generate_bi_report(
-                    output_path=output_path,
-                    title=title,
-                    date=current_date,
-                    file_name=file_name,
-                    question=question,
-                    commentary=commentary or '',
-                    data=data or [],
-                    columns=columns or [],
-                    sql=sql or ''
-                )
-                logger.info(f"Документ создан: {file_path}, размер: {file_path.stat().st_size} байт")
-            except Exception as gen_error:
-                logger.error(f"Ошибка генерации документа: {gen_error}", exc_info=True)
-                raise
-            
-            # Формируем URL для скачивания (используем forward slashes для URL)
-            from urllib.parse import quote
-            media_root = Path(settings.MEDIA_ROOT)
-            try:
-                relative_path = file_path.relative_to(media_root)
-                # Конвертируем путь в URL формат (forward slashes) и кодируем
-                url_path = str(relative_path).replace('\\', '/')
-                # Кодируем каждый сегмент пути отдельно
-                url_path_encoded = '/'.join(quote(segment, safe='') for segment in url_path.split('/'))
-                relative_download_url = f"/api/ai_assistant/documents/download/{url_path_encoded}"
-            except ValueError:
-                relative_download_url = f"/api/ai_assistant/documents/download/{quote(file_path.name, safe='')}"
-            
-            # Формируем абсолютный URL для скачивания (важно для dev-режима)
-            if request:
-                download_url = request.build_absolute_uri(relative_download_url)
-            else:
-                # Fallback: используем настройки API
-                api_host = getattr(settings, 'API_HOST', 'localhost')
-                api_port = getattr(settings, 'API_PORT', '8000')
-                download_url = f"http://{api_host}:{api_port}{relative_download_url}"
-            
-            logger.info(f"Download URL: {download_url}")
-            
-            return {
-                'title': title,
-                'filename': file_path.name,
-                'file_path': str(file_path),
-                'download_url': download_url,
-            }
-            
-        except Exception as e:
-            logger.error(f"Ошибка создания BI документа: {e}", exc_info=True)
-            return None
+        # Формирование Word отчетов отключено
+        logger.warning("Создание Word документов для BI отчетов отключено")
+        return None
     
     def _regular_response(self, file_upload, question, want_commentary, ollama_config=None, session=None, user_message=None, user=None):
         """Возвращает обычный (не streaming) ответ."""
@@ -1296,7 +1211,6 @@ class ChartAnalysisView(APIView):
                 try:
                     analysis_text = client.complete(
                         analysis_prompt,
-                        num_predict=runtime_config.commentary_tokens,
                         temperature=runtime_config.temperature_commentary,
                         stream=False,
                     )
@@ -1393,7 +1307,6 @@ class ChartAnalysisView(APIView):
             runtime_config, client = _create_ollama_client()
             response_text = client.complete(
                 analysis_prompt,
-                num_predict=runtime_config.commentary_tokens,
                 temperature=runtime_config.temperature_commentary,
                 stream=False,
             )
@@ -1723,20 +1636,40 @@ class ChatView(APIView):
     POST /api/ai_assistant/chat/
     Простой RAG чат для общих вопросов (без streaming)
     
-    Body:
+    Body (JSON или multipart/form-data):
     {
         "message": "Как работает система?",
         "session_id": "uuid",  # опционально, для продолжения существующего чата
-        "module": "chat"  # опционально, модуль AI ассистента
+        "module": "chat",  # опционально, модуль AI ассистента
+        "file": <file>  # опционально, файл для анализа (Word, PDF, TXT)
     }
     """
     permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     
     def post(self, request):
         message = request.data.get('message')
         ollama_config = request.data.get('ollama_config')  # Настройки Ollama из module-config
         session_id = request.data.get('session_id')
         module = request.data.get('module', 'chat')
+        uploaded_files = request.FILES.getlist('files')  # Загруженные файлы (множественная загрузка)
+        # Для обратной совместимости поддерживаем и одиночный файл
+        if not uploaded_files:
+            single_file = request.FILES.get('file')
+            if single_file:
+                uploaded_files = [single_file]
+        
+        # Получаем флаг векторизации
+        enable_vectorization = request.data.get('enable_vectorization', False)
+        if isinstance(enable_vectorization, str):
+            enable_vectorization = enable_vectorization.lower() in ('true', '1', 'yes')
+        
+        # Обрабатываем ollama_config если он пришел как строка JSON (из FormData)
+        if isinstance(ollama_config, str):
+            try:
+                ollama_config = json.loads(ollama_config)
+            except (json.JSONDecodeError, TypeError):
+                ollama_config = None
         
         if not message or not message.strip():
             return Response({
@@ -1788,36 +1721,139 @@ class ChatView(APIView):
             request_started_at = timezone.now()
 
             runtime_config, client = _create_ollama_client(ollama_config)
-            temperature = (ollama_config or {}).get('temperature', 0.3)
-            max_tokens = (ollama_config or {}).get('max_tokens', 2048)
-
-            # Получаем доступные навыки
-            skills_manager = get_skills_manager()
-            available_skills = skills_manager.get_function_definitions()
-            skills_prompt = build_skills_prompt(available_skills) if available_skills else ""
-
-            system_prompt = f"""Ты - полезный AI ассистент системы ERGO MS. 
-Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
-Отвечай кратко, по делу и дружелюбно на русском языке.
-Если не знаешь ответа, честно скажи об этом.{skills_prompt}"""
+            temperature = (ollama_config or {}).get('temperature', 0)
             
-            # Загружаем контекст из истории чата
-            previous_messages = session.messages.filter(
-                message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT
-            ).order_by('-created_at')[:5]  # Последние 5 ответов для контекста
+            # Формируем массив сообщений для chat API с сохранением контекста
+            messages = []
             
-            chat_context = ""
-            if previous_messages.exists():
-                context_parts = []
-                for msg in reversed(previous_messages):
-                    context_parts.append(f"Предыдущий ответ: {msg.content[:200]}")
-                chat_context = "\n".join(context_parts) + "\n\n"
+            # Добавляем системный промпт с инструкциями по работе с файлами
+            system_prompt_parts = []
+            if uploaded_files:
+                if enable_vectorization:
+                    system_prompt_parts.append(
+                        "Пользователь загрузил файлы, которые были проиндексированы с помощью векторного поиска. "
+                        "Используй информацию из векторного поиска для точных и релевантных ответов. "
+                        "Учитывай контекст из всех загруженных файлов при ответе на вопросы."
+                    )
+                else:
+                    system_prompt_parts.append(
+                        "Пользователь загрузил файлы. Используй информацию из загруженных файлов для ответа на вопросы. "
+                        "Учитывай содержимое всех загруженных файлов при формировании ответа."
+                    )
             
-            # Получаем контекст из базы знаний RAG только для модуля docs
+            if system_prompt_parts:
+                messages.append({
+                    "role": "system",
+                    "content": "\n".join(system_prompt_parts)
+                })
+            
+            # Добавляем историю чата из БД (последние 10 сообщений для контекста)
+            previous_messages = session.messages.order_by('created_at')[:10]
+            for msg in previous_messages:
+                if msg.message_type == ChatMessage.MESSAGE_TYPE_USER:
+                    messages.append({"role": "user", "content": msg.content})
+                elif msg.message_type == ChatMessage.MESSAGE_TYPE_ASSISTANT:
+                    messages.append({"role": "assistant", "content": msg.content})
+            
+            # Обрабатываем загруженные файлы, если они есть
+            uploaded_file_context = ""
+            vectorized_document_ids = []
+            
+            # Получаем уже проиндексированные документы из сессии (если есть)
+            if session.metadata and 'vectorized_documents' in session.metadata:
+                vectorized_document_ids = session.metadata['vectorized_documents']
+            
+            if uploaded_files:
+                if enable_vectorization:
+                    # Векторизация: создаем временные KnowledgeDocument и индексируем их
+                    try:
+                        embeddings_service, _ = _get_rag_services(ollama_config)
+                        indexing_service = RAGIndexingService(
+                            embeddings_service=embeddings_service,
+                            chunk_size=RAG_CHUNK_SIZE,
+                            chunk_overlap=RAG_CHUNK_OVERLAP,
+                        )
+                        
+                        new_document_ids = []
+                        for uploaded_file in uploaded_files:
+                            try:
+                                # Создаем временный KnowledgeDocument
+                                temp_doc = KnowledgeDocument.objects.create(
+                                    user=request.user,
+                                    title=f"Временный документ: {uploaded_file.name}",
+                                    file=uploaded_file,
+                                    source=f"chat_upload_{session.id}",
+                                    metadata={
+                                        'session_id': str(session.id),
+                                        'is_temporary': True,
+                                        'uploaded_at': timezone.now().isoformat(),
+                                    }
+                                )
+                                
+                                # Индексируем документ
+                                indexing_result = indexing_service.index_document(temp_doc, force_reindex=True)
+                                
+                                if indexing_result.get('success'):
+                                    new_document_ids.append(str(temp_doc.id))
+                                    logger.info(f"Файл {uploaded_file.name} успешно проиндексирован (ID: {temp_doc.id})")
+                                else:
+                                    logger.warning(f"Не удалось проиндексировать файл {uploaded_file.name}: {indexing_result.get('error')}")
+                                    temp_doc.delete()  # Удаляем документ, если индексация не удалась
+                                    
+                            except Exception as e:
+                                logger.error(f"Ошибка векторизации файла {uploaded_file.name}: {e}", exc_info=True)
+                        
+                        # Сохраняем ID новых документов в metadata сессии
+                        if new_document_ids:
+                            if not session.metadata:
+                                session.metadata = {}
+                            if 'vectorized_documents' not in session.metadata:
+                                session.metadata['vectorized_documents'] = []
+                            session.metadata['vectorized_documents'].extend(new_document_ids)
+                            session.save(update_fields=['metadata'])
+                            vectorized_document_ids.extend(new_document_ids)
+                            
+                    except Exception as e:
+                        logger.error(f"Ошибка при векторизации файлов: {e}", exc_info=True)
+                
+                # Извлекаем текст из файлов для обычного контекста (если векторизация не включена)
+                if not enable_vectorization:
+                    file_contexts = []
+                    for uploaded_file in uploaded_files:
+                        try:
+                            from io import BytesIO
+                            file_obj = BytesIO(uploaded_file.read())
+                            extracted_content, detected_type = DocumentParserService.parse_document(
+                                file_obj=file_obj,
+                                filename=uploaded_file.name
+                            )
+                            if extracted_content:
+                                # Ограничиваем размер контекста из файла
+                                max_file_context_length = 2000  # Примерно 2000 символов
+                                if len(extracted_content) > max_file_context_length:
+                                    extracted_content = extracted_content[:max_file_context_length] + "..."
+                                file_contexts.append(f"[СОДЕРЖИМОЕ ФАЙЛА: {uploaded_file.name}]\n{extracted_content}\n[/СОДЕРЖИМОЕ ФАЙЛА]")
+                        except DocumentParseError as e:
+                            logger.warning(f"Не удалось извлечь текст из файла {uploaded_file.name}: {e}")
+                        except Exception as e:
+                            logger.error(f"Ошибка обработки файла {uploaded_file.name}: {e}", exc_info=True)
+                    
+                    if file_contexts:
+                        uploaded_file_context = "\n\n".join(file_contexts) + "\n\nИспользуй информацию из загруженных файлов для ответа на вопрос пользователя."
+            
+            # Получаем контекст из базы знаний RAG
             rag_context = ""
             rag_chunks = []
             
-            if module == 'docs':
+            # Если векторизация включена, используем векторный поиск по загруженным файлам
+            if enable_vectorization and vectorized_document_ids:
+                rag_context, rag_chunks = _get_rag_context(
+                    query=message,
+                    user=request.user,
+                    ollama_config=ollama_config,
+                    document_ids=vectorized_document_ids,
+                )
+            elif module == 'docs':
                 # Получаем document_id из metadata сессии или из запроса
                 document_id = None
                 if session.metadata and 'document_id' in session.metadata:
@@ -1834,27 +1870,29 @@ class ChatView(APIView):
                     document_ids=document_ids,
                 )
             
-            # Формируем полный промпт с контекстами
-            full_context_parts = []
+            # Формируем текущее сообщение пользователя с дополнительными контекстами
+            user_message_parts = []
             
-            if chat_context:
-                full_context_parts.append(f"История предыдущих ответов:\n{chat_context}")
+            if uploaded_file_context:
+                user_message_parts.append(uploaded_file_context)
             
             if rag_context:
-                full_context_parts.append(
-                    f"\n[ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n{rag_context}\n[/ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n\n"
+                user_message_parts.append(
+                    f"[ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n{rag_context}\n[/ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n\n"
                     "Используй эту информацию для ответа на вопрос пользователя. "
                     "Если в базе знаний есть релевантная информация, обязательно используй её. "
                     "Если информации нет, отвечай на основе своих знаний."
                 )
             
-            full_context = "\n".join(full_context_parts)
+            user_message_parts.append(message)
+            user_message = "\n\n".join(user_message_parts)
             
-            full_prompt = f"{system_prompt}\n\n{full_context}Вопрос пользователя: {message}"
+            # Добавляем текущее сообщение пользователя
+            messages.append({"role": "user", "content": user_message})
             
-            answer = client.complete(
-                full_prompt,
-                num_predict=max_tokens,
+            # Используем chat API для сохранения контекста
+            answer = client.chat(
+                messages,
                 temperature=temperature,
                 stream=False,
             ).strip()
@@ -1942,11 +1980,12 @@ class ChatStreamView(APIView):
     POST /api/ai_assistant/chat/stream/
     RAG чат с поддержкой Server-Sent Events (SSE) для streaming ответов
     
-    Body:
+    Body (JSON или multipart/form-data):
     {
         "message": "Как работает система?",
         "session_id": "uuid",  # опционально, для продолжения существующего чата
-        "module": "chat"  # опционально, модуль AI ассистента
+        "module": "chat",  # опционально, модуль AI ассистента
+        "file": <file>  # опционально, файл для анализа (Word, PDF, TXT)
     }
     
     Response: SSE stream с событиями:
@@ -1955,12 +1994,31 @@ class ChatStreamView(APIView):
     - {"type": "error", "message": "..."} - ошибка
     """
     permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     
     def post(self, request):
         message = request.data.get('message')
         ollama_config = request.data.get('ollama_config')
         session_id = request.data.get('session_id')
         module = request.data.get('module', 'chat')
+        uploaded_files = request.FILES.getlist('files')  # Загруженные файлы (множественная загрузка)
+        # Для обратной совместимости поддерживаем и одиночный файл
+        if not uploaded_files:
+            single_file = request.FILES.get('file')
+            if single_file:
+                uploaded_files = [single_file]
+        
+        # Получаем флаг векторизации
+        enable_vectorization = request.data.get('enable_vectorization', False)
+        if isinstance(enable_vectorization, str):
+            enable_vectorization = enable_vectorization.lower() in ('true', '1', 'yes')
+        
+        # Обрабатываем ollama_config если он пришел как строка JSON (из FormData)
+        if isinstance(ollama_config, str):
+            try:
+                ollama_config = json.loads(ollama_config)
+            except (json.JSONDecodeError, TypeError):
+                ollama_config = None
         
         if not message or not message.strip():
             return Response({
@@ -2015,36 +2073,110 @@ class ChatStreamView(APIView):
                 request_started_at = timezone.now()
                 
                 runtime_config, client = _create_ollama_client(ollama_config)
-                temperature = (ollama_config or {}).get('temperature', 0.3)
-                max_tokens = (ollama_config or {}).get('max_tokens', 2048)
-
-                # Получаем доступные навыки
-                skills_manager = get_skills_manager()
-                available_skills = skills_manager.get_function_definitions()
-                skills_prompt = build_skills_prompt(available_skills) if available_skills else ""
-
-                system_prompt = f"""Ты - полезный AI ассистент системы ERGO MS. 
-Твоя задача - помогать пользователям с вопросами о системе, навигации и функционале.
-Отвечай кратко, по делу и дружелюбно на русском языке.
-Если не знаешь ответа, честно скажи об этом.{skills_prompt}"""
+                temperature = (ollama_config or {}).get('temperature', 0)
                 
-                # Загружаем контекст из истории чата
-                previous_messages = session.messages.filter(
-                    message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT
-                ).order_by('-created_at')[:5]  # Последние 5 ответов для контекста
+                # Формируем массив сообщений для chat API с сохранением контекста
+                messages = []
                 
-                chat_context = ""
-                if previous_messages.exists():
-                    context_parts = []
-                    for msg in reversed(previous_messages):
-                        context_parts.append(f"Предыдущий ответ: {msg.content[:200]}")
-                    chat_context = "\n".join(context_parts) + "\n\n"
+                # Обрабатываем загруженные файлы, если они есть
+                uploaded_file_context = ""
+                vectorized_document_ids = []
                 
-                # Получаем контекст из базы знаний RAG только для модуля docs
+                # Получаем уже проиндексированные документы из сессии (если есть)
+                if session.metadata and 'vectorized_documents' in session.metadata:
+                    vectorized_document_ids = session.metadata['vectorized_documents']
+                
+                if uploaded_files:
+                    if enable_vectorization:
+                        # Векторизация: создаем временные KnowledgeDocument и индексируем их
+                        try:
+                            embeddings_service, _ = _get_rag_services(ollama_config)
+                            indexing_service = RAGIndexingService(
+                                embeddings_service=embeddings_service,
+                                chunk_size=RAG_CHUNK_SIZE,
+                                chunk_overlap=RAG_CHUNK_OVERLAP,
+                            )
+                            
+                            new_document_ids = []
+                            for uploaded_file in uploaded_files:
+                                try:
+                                    # Создаем временный KnowledgeDocument
+                                    temp_doc = KnowledgeDocument.objects.create(
+                                        user=request.user,
+                                        title=f"Временный документ: {uploaded_file.name}",
+                                        file=uploaded_file,
+                                        source=f"chat_upload_{session.id}",
+                                        metadata={
+                                            'session_id': str(session.id),
+                                            'is_temporary': True,
+                                            'uploaded_at': timezone.now().isoformat(),
+                                        }
+                                    )
+                                    
+                                    # Индексируем документ
+                                    indexing_result = indexing_service.index_document(temp_doc, force_reindex=True)
+                                    
+                                    if indexing_result.get('success'):
+                                        new_document_ids.append(str(temp_doc.id))
+                                        logger.info(f"Файл {uploaded_file.name} успешно проиндексирован (ID: {temp_doc.id})")
+                                    else:
+                                        logger.warning(f"Не удалось проиндексировать файл {uploaded_file.name}: {indexing_result.get('error')}")
+                                        temp_doc.delete()  # Удаляем документ, если индексация не удалась
+                                        
+                                except Exception as e:
+                                    logger.error(f"Ошибка векторизации файла {uploaded_file.name}: {e}", exc_info=True)
+                            
+                            # Сохраняем ID новых документов в metadata сессии
+                            if new_document_ids:
+                                if not session.metadata:
+                                    session.metadata = {}
+                                if 'vectorized_documents' not in session.metadata:
+                                    session.metadata['vectorized_documents'] = []
+                                session.metadata['vectorized_documents'].extend(new_document_ids)
+                                session.save(update_fields=['metadata'])
+                                vectorized_document_ids.extend(new_document_ids)
+                                
+                        except Exception as e:
+                            logger.error(f"Ошибка при векторизации файлов: {e}", exc_info=True)
+                    
+                    # Извлекаем текст из файлов для обычного контекста (если векторизация не включена)
+                    if not enable_vectorization:
+                        file_contexts = []
+                        for uploaded_file in uploaded_files:
+                            try:
+                                from io import BytesIO
+                                file_obj = BytesIO(uploaded_file.read())
+                                extracted_content, detected_type = DocumentParserService.parse_document(
+                                    file_obj=file_obj,
+                                    filename=uploaded_file.name
+                                )
+                                if extracted_content:
+                                    # Ограничиваем размер контекста из файла
+                                    max_file_context_length = 2000  # Примерно 2000 символов
+                                    if len(extracted_content) > max_file_context_length:
+                                        extracted_content = extracted_content[:max_file_context_length] + "..."
+                                    file_contexts.append(f"[СОДЕРЖИМОЕ ФАЙЛА: {uploaded_file.name}]\n{extracted_content}\n[/СОДЕРЖИМОЕ ФАЙЛА]")
+                            except DocumentParseError as e:
+                                logger.warning(f"Не удалось извлечь текст из файла {uploaded_file.name}: {e}")
+                            except Exception as e:
+                                logger.error(f"Ошибка обработки файла {uploaded_file.name}: {e}", exc_info=True)
+                        
+                        if file_contexts:
+                            uploaded_file_context = "\n\n".join(file_contexts) + "\n\nИспользуй информацию из загруженных файлов для ответа на вопрос пользователя."
+                
+                # Получаем контекст из базы знаний RAG
                 rag_context = ""
                 rag_chunks = []
                 
-                if module == 'docs':
+                # Если векторизация включена, используем векторный поиск по загруженным файлам
+                if enable_vectorization and vectorized_document_ids:
+                    rag_context, rag_chunks = _get_rag_context(
+                        query=message,
+                        user=request.user,
+                        ollama_config=ollama_config,
+                        document_ids=vectorized_document_ids,
+                    )
+                elif module == 'docs':
                     # Получаем document_id из metadata сессии или из запроса
                     document_id = None
                     if session.metadata and 'document_id' in session.metadata:
@@ -2061,23 +2193,54 @@ class ChatStreamView(APIView):
                         document_ids=document_ids,
                     )
                 
-                # Формируем полный промпт с контекстами
-                full_context_parts = []
+                # Добавляем системный промпт с инструкциями по работе с файлами
+                system_prompt_parts = []
+                if uploaded_files:
+                    if enable_vectorization:
+                        system_prompt_parts.append(
+                            "Пользователь загрузил файлы, которые были проиндексированы с помощью векторного поиска. "
+                            "Используй информацию из векторного поиска для точных и релевантных ответов. "
+                            "Учитывай контекст из всех загруженных файлов при ответе на вопросы."
+                        )
+                    else:
+                        system_prompt_parts.append(
+                            "Пользователь загрузил файлы. Используй информацию из загруженных файлов для ответа на вопросы. "
+                            "Учитывай содержимое всех загруженных файлов при формировании ответа."
+                        )
                 
-                if chat_context:
-                    full_context_parts.append(f"История предыдущих ответов:\n{chat_context}")
+                if system_prompt_parts:
+                    messages.append({
+                        "role": "system",
+                        "content": "\n".join(system_prompt_parts)
+                    })
+                
+                # Добавляем историю чата из БД (последние 10 сообщений для контекста)
+                previous_messages = session.messages.order_by('created_at')[:10]
+                for msg in previous_messages:
+                    if msg.message_type == ChatMessage.MESSAGE_TYPE_USER:
+                        messages.append({"role": "user", "content": msg.content})
+                    elif msg.message_type == ChatMessage.MESSAGE_TYPE_ASSISTANT:
+                        messages.append({"role": "assistant", "content": msg.content})
+                
+                # Формируем текущее сообщение пользователя с дополнительными контекстами
+                user_message_parts = []
+                
+                if uploaded_file_context:
+                    user_message_parts.append(uploaded_file_context)
                 
                 if rag_context:
-                    full_context_parts.append(
-                        f"\n[ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n{rag_context}\n[/ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n\n"
+                    user_message_parts.append(
+                        f"[ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n{rag_context}\n[/ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ]\n\n"
                         "Используй эту информацию для ответа на вопрос пользователя. "
                         "Если в базе знаний есть релевантная информация, обязательно используй её. "
                         "Если информации нет, отвечай на основе своих знаний."
                     )
                 
-                full_context = "\n".join(full_context_parts)
+                user_message_parts.append(message)
+                user_message = "\n\n".join(user_message_parts)
                 
-                full_prompt = f"{system_prompt}\n\n{full_context}Вопрос пользователя: {message}"
+                # Добавляем текущее сообщение пользователя
+                messages.append({"role": "user", "content": user_message})
                 
                 # Оптимизация: используем Queue вместо списка
                 from queue import Queue, Empty
@@ -2088,11 +2251,10 @@ class ChatStreamView(APIView):
                 def stream_callback(text):
                     streaming_chunks_queue.put(text)
                 
-                def run_complete():
+                def run_chat():
                     try:
-                        result = client.complete(
-                            full_prompt,
-                            num_predict=max_tokens,
+                        result = client.chat(
+                            messages,
                             temperature=temperature,
                             stream=True,
                             stream_callback=stream_callback,
@@ -2105,11 +2267,11 @@ class ChatStreamView(APIView):
                         streaming_chunks_queue.put(None)
                 
                 # Запускаем в отдельном потоке
-                complete_thread = threading.Thread(target=run_complete)
-                complete_thread.start()
+                chat_thread = threading.Thread(target=run_chat)
+                chat_thread.start()
                 
                 # Оптимизация: используем блокирующее ожидание вместо активного polling
-                while complete_thread.is_alive() or not streaming_chunks_queue.empty():
+                while chat_thread.is_alive() or not streaming_chunks_queue.empty():
                     try:
                         chunk = streaming_chunks_queue.get(timeout=0.1)
                         if chunk is None:  # Сигнал завершения
@@ -2118,7 +2280,7 @@ class ChatStreamView(APIView):
                     except Empty:
                         continue
                 
-                complete_thread.join(timeout=5.0)
+                chat_thread.join(timeout=5.0)
                 
                 # Проверяем ошибки
                 if 'error' in exception_container:
@@ -2880,3 +3042,580 @@ class GeneratedDocumentDownloadView(APIView):
                 'success': False,
                 'error': f'Ошибка скачивания файла: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class TechnologicalProcessDocumentViewSet(ViewSet, SwaggerSafeMixin):
+    """
+    ViewSet для управления документами техпроцессов
+    
+    Поддерживает:
+    - Загрузку DOCX файлов через multipart/form-data
+    - Автоматическую конвертацию в Markdown при загрузке
+    - Получение списка документов пользователя
+    - Удаление документов
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    
+    def list(self, request):
+        """
+        GET /api/ai_assistant/tp_documents/
+        Получить список документов техпроцессов для текущей сессии чата
+        
+        Параметры:
+        - session_id: UUID сессии чата (обязательно)
+        """
+        user = self.get_safe_user()
+        session_id = request.query_params.get('session_id')
+        
+        if not session_id:
+            return Response({
+                'success': False,
+                'error': 'Не указан session_id. Укажите сессию чата для получения документов.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Получаем сессию и проверяем права доступа
+        try:
+            session = ChatSession.objects.get(id=session_id, user=user, module='tp')
+        except ChatSession.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Сессия чата не найдена.'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Получаем только документы текущей сессии
+        queryset = TechnologicalProcessDocument.objects.filter(user=user, session=session)
+        queryset = self.get_safe_queryset(queryset)
+        
+        documents = []
+        for doc in queryset.order_by('-created_at'):
+            file_size = None
+            file_url = None
+            if doc.file:
+                try:
+                    file_size = doc.file.size
+                    file_url = doc.file.url if hasattr(doc.file, 'url') else None
+                except Exception:
+                    pass
+            
+            documents.append({
+                'id': str(doc.id),
+                'title': doc.title,
+                'file_type': doc.file_type,
+                'file_name': doc.file.name.split('/')[-1] if doc.file else None,
+                'file_size': file_size,
+                'file_url': file_url,
+                'markdown_preview': (doc.markdown_content[:200] + '...' if doc.markdown_content and len(doc.markdown_content) > 200 else doc.markdown_content) if doc.markdown_content else None,
+                'created_at': doc.created_at.isoformat(),
+                'updated_at': doc.updated_at.isoformat(),
+                'metadata': doc.metadata,
+            })
+        
+        return Response({
+            'success': True,
+            'documents': documents,
+            'count': len(documents),
+        }, status=status.HTTP_200_OK)
+    
+    def create(self, request):
+        """
+        POST /api/ai_assistant/tp_documents/
+        Загрузить документы техпроцессов
+        
+        Параметры (multipart/form-data):
+        - files: файлы DOCX (обязательно, множественная загрузка)
+        - file: файл DOCX (опционально, для обратной совместимости)
+        - metadata: JSON метаданные (опционально)
+        
+        Автоматически конвертирует DOCX в Markdown при загрузке.
+        Название документа берется из имени файла (без расширения).
+        """
+        import os
+        from io import BytesIO
+        from .tp_converter import TPDocumentConverter
+        
+        user = self.get_safe_user()
+        
+        # Получаем session_id из запроса (обязательно для привязки документов к сессии)
+        session_id = request.data.get('session_id')
+        if not session_id:
+            return Response({
+                'success': False,
+                'error': 'Не указан session_id. Документы должны быть привязаны к сессии чата.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Получаем или создаем сессию
+        try:
+            session = ChatSession.objects.get(id=session_id, user=user, module='tp')
+        except ChatSession.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Сессия чата не найдена. Создайте новый чат перед загрузкой документов.'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Поддержка множественной загрузки
+        uploaded_files = request.FILES.getlist('files')
+        # Для обратной совместимости поддерживаем и одиночный файл
+        if not uploaded_files:
+            single_file = request.FILES.get('file')
+            if single_file:
+                uploaded_files = [single_file]
+        
+        metadata = request.data.get('metadata', {})
+        
+        # Обработка metadata если это строка JSON
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        
+        if not uploaded_files:
+            return Response({
+                'success': False,
+                'error': 'Не указаны файлы. Укажите файлы DOCX для загрузки.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        documents = []
+        errors = []
+        
+        for uploaded_file in uploaded_files:
+            try:
+                # Извлекаем название из имени файла (без расширения)
+                filename = uploaded_file.name
+                title = os.path.splitext(filename)[0]  # Убираем расширение
+                
+                # Проверяем тип файла
+                file_type = DocumentParserService.get_file_type(filename)
+                if file_type != 'docx':
+                    errors.append({
+                        'file': filename,
+                        'error': f'Неподдерживаемый тип файла: {file_type}. Поддерживается только DOCX.'
+                    })
+                    continue
+                
+                # Конвертируем DOCX в Markdown
+                file_obj = BytesIO(uploaded_file.read())
+                markdown_content = TPDocumentConverter.docx_to_markdown(file_obj=file_obj)
+                file_obj.seek(0)
+                uploaded_file.seek(0)
+                
+                # Создаем документ, привязанный к сессии
+                document = TechnologicalProcessDocument.objects.create(
+                    user=user,
+                    session=session,
+                    title=title,
+                    file_type=file_type,
+                    markdown_content=markdown_content,
+                    metadata=metadata,
+                )
+                
+                # Сохраняем файл
+                document.file = uploaded_file
+                document.save(update_fields=['file'])
+                
+                documents.append({
+                    'id': str(document.id),
+                    'title': document.title,
+                    'file_type': document.file_type,
+                    'file_name': document.file.name.split('/')[-1] if document.file else None,
+                    'markdown_preview': (document.markdown_content[:200] + '...' if len(document.markdown_content) > 200 else document.markdown_content),
+                    'created_at': document.created_at.isoformat(),
+                    'updated_at': document.updated_at.isoformat(),
+                    'metadata': document.metadata,
+                })
+                
+            except ValueError as e:
+                errors.append({
+                    'file': filename,
+                    'error': f'Ошибка конвертации документа: {str(e)}'
+                })
+            except Exception as e:
+                logger.error(f"Ошибка создания документа техпроцесса {filename}: {e}", exc_info=True)
+                errors.append({
+                    'file': filename,
+                    'error': f'Ошибка создания документа: {str(e)}'
+                })
+        
+        if not documents and errors:
+            # Если не удалось загрузить ни один файл
+            return Response({
+                'success': False,
+                'error': 'Не удалось загрузить ни один файл',
+                'errors': errors,
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response({
+            'success': True,
+            'documents': documents,
+            'count': len(documents),
+            'errors': errors if errors else None,
+        }, status=status.HTTP_201_CREATED)
+    
+    def retrieve(self, request, pk=None):
+        """
+        GET /api/ai_assistant/tp_documents/{id}/
+        Получить документ техпроцесса с полным Markdown контентом
+        """
+        user = self.get_safe_user()
+        queryset = TechnologicalProcessDocument.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        try:
+            document = queryset.get(id=pk)
+            
+            file_size = None
+            file_url = None
+            if document.file:
+                try:
+                    file_size = document.file.size
+                    file_url = document.file.url if hasattr(document.file, 'url') else None
+                except Exception:
+                    pass
+            
+            return Response({
+                'success': True,
+                'document': {
+                    'id': str(document.id),
+                    'title': document.title,
+                    'file_type': document.file_type,
+                    'file_name': document.file.name.split('/')[-1] if document.file else None,
+                    'file_size': file_size,
+                    'file_url': file_url,
+                    'markdown_content': document.markdown_content,
+                    'created_at': document.created_at.isoformat(),
+                    'updated_at': document.updated_at.isoformat(),
+                    'metadata': document.metadata,
+                },
+            }, status=status.HTTP_200_OK)
+            
+        except TechnologicalProcessDocument.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Документ не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    def destroy(self, request, pk=None):
+        """
+        DELETE /api/ai_assistant/tp_documents/{id}/
+        Удалить документ техпроцесса
+        """
+        user = self.get_safe_user()
+        queryset = TechnologicalProcessDocument.objects.filter(user=user)
+        queryset = self.get_safe_queryset(queryset)
+        
+        try:
+            document = queryset.get(id=pk)
+            document.delete()
+            
+            return Response({
+                'success': True,
+                'message': 'Документ успешно удален'
+            }, status=status.HTTP_200_OK)
+            
+        except TechnologicalProcessDocument.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Документ не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
+class TPChatStreamView(APIView):
+    """
+    POST /api/ai_assistant/tp_chat/stream/
+    Чат с техпроцессами с поддержкой Server-Sent Events (SSE) для streaming ответов
+    
+    Body (JSON):
+    {
+        "message": "Найди значения трудоемкости...",
+        "session_id": "uuid",  # опционально, для продолжения существующего чата
+        "ollama_config": {  # опционально, настройки Ollama из module-config
+            "temperature": 0.3,
+            "max_tokens": 4096,
+            "top_p": 0.9,
+            "top_k": 40,
+            "repeat_penalty": 1.1
+        }
+    }
+    
+    Response: SSE stream с событиями:
+    - {"type": "chunk", "text": "..."} - часть ответа
+    - {"type": "done", "full_response": "...", "session_id": "...", "message_id": "...", "processing_time_ms": 123} - завершение
+    - {"type": "error", "message": "..."} - ошибка
+    
+    Загружает все документы техпроцессов пользователя и передает их Markdown контент в промпт.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    
+    def post(self, request):
+        message = request.data.get('message')
+        ollama_config = request.data.get('ollama_config')
+        session_id = request.data.get('session_id')
+        
+        # Обрабатываем ollama_config если он пришел как строка JSON (из FormData)
+        if isinstance(ollama_config, str):
+            try:
+                ollama_config = json.loads(ollama_config)
+            except (json.JSONDecodeError, TypeError):
+                ollama_config = None
+        
+        if not message or not message.strip():
+            return Response({
+                'success': False,
+                'error': 'Не указано сообщение'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Получаем или создаем сессию чата
+        if session_id:
+            try:
+                session = ChatSession.objects.get(id=session_id, user=request.user, module='tp')
+            except ChatSession.DoesNotExist:
+                session = None
+        else:
+            session = None
+        
+        if not session:
+            session = ChatSession.objects.create(
+                user=request.user,
+                module='tp',
+                title=message[:50] if message else 'Новый чат техпроцессов',
+                metadata={}
+            )
+        
+        # Сохраняем сообщение пользователя
+        user_message = ChatMessage.objects.create(
+            session=session,
+            message_type=ChatMessage.MESSAGE_TYPE_USER,
+            content=message,
+            metadata={'ollama_config': ollama_config} if ollama_config else {}
+        )
+        
+        def event_stream():
+            import threading
+            
+            try:
+                # Засекаем время начала запроса
+                request_started_at = timezone.now()
+                
+                # Загружаем только документы текущей сессии чата
+                tp_documents = TechnologicalProcessDocument.objects.filter(
+                    user=request.user,
+                    session=session
+                ).order_by('-created_at')
+                
+                # Конкатенируем Markdown контент всех документов
+                documents_content = []
+                for doc in tp_documents:
+                    if doc.markdown_content:
+                        documents_content.append(
+                            f"## {doc.title}\n\n{doc.markdown_content}\n\n"
+                        )
+                
+                all_documents_markdown = "\n".join(documents_content)
+                
+                # Создаем LLM клиент с настройками из ollama_config
+                # num_gpu обрабатывается в _create_ollama_client
+                runtime_config, client = _create_ollama_client(ollama_config)
+                
+                # Получаем параметры генерации из ollama_config
+                temperature = (ollama_config or {}).get('temperature', 0.3)
+                max_tokens = (ollama_config or {}).get('max_tokens', 4096)
+                top_p = (ollama_config or {}).get('top_p', 0.9)
+                top_k = (ollama_config or {}).get('top_k', 40)
+                repeat_penalty = (ollama_config or {}).get('repeat_penalty', 1.1)
+                seed = (ollama_config or {}).get('seed')  # Seed для воспроизводимости
+                
+                # Формируем системный промпт с thinking и reasoning
+                system_prompt = (
+                    "Reasoning: high\n\n"
+                    "Ты - AI ассистент для работы с техпроцессами. "
+                    "Твоя задача - отвечать на вопросы пользователя на основе загруженных документов техпроцессов. "
+                    "Используй информацию из документов для точных и релевантных ответов. "
+                    "Если в документах есть таблицы, анализируй их структуру и извлекай нужные данные. "
+                    "При ответе указывай название документа, из которого взята информация.\n\n"
+                    "КРИТИЧЕСКИ ВАЖНО: Фильтрация документов по объему работ\n"
+                    "Если в вопросе пользователя указан объем работ (ТР-1, ТР-2, ТО-1, ТО-2, ТО-3 и т.д.), "
+                    "ты ОБЯЗАН использовать ТОЛЬКО документы, соответствующие этому объему работ. "
+                    "Например: если вопрос про \"ТР-1\", то НЕ используй документы про ТР-2, ТО-2, ТО-3 и т.д. "
+                    "Каждый документ техпроцесса относится к определенному объему работ - проверяй это в названии документа и его содержимом. "
+                    "Использование документа несоответствующего объема работ - это КРИТИЧЕСКАЯ ОШИБКА.\n\n"
+                    "СПРАВОЧНАЯ ИНФОРМАЦИЯ: Объемы работ техпроцессов\n"
+                    "Техническое обслуживание (ТО): ТО-1 (локомотивная бригада, при приёмке-сдаче), "
+                    "ТО-2 (пункты ТО, смотровые канавы), ТО-3 (локомотивное депо), "
+                    "ТО-4 (обточка бандажей), ТО-5а/б/в/г (подготовка к запасу/резерву/эксплуатации).\n"
+                    "Текущий ремонт (ТР, деповской): ТР-1 (малый/периодический), ТР-2 (большой периодический), ТР-3 (подъемочный).\n"
+                    "Заводской ремонт: СР (средний ремонт), КР-1 (капитальный ремонт первого объема), КР-2 (капитальный ремонт второго объема).\n"
+                    "Используй эту информацию для правильной идентификации и фильтрации документов по объему работ.\n\n"
+                    "ВАЖНО: Перед каждым ответом ОБЯЗАТЕЛЬНО используй блок <think> для размышлений. "
+                    "В блоке <think> ОБЯЗАТЕЛЬНО проверь: указан ли в вопросе объем работ? "
+                    "Если да - какие документы соответствуют этому объему работ? "
+                    "Какие документы нужно ИСКЛЮЧИТЬ из-за несоответствия объему работ?\n"
+                    "Формат ответа:\n"
+                    "<think>\n"
+                    "Твои размышления здесь: анализируй вопрос, определяй объем работ (если указан), "
+                    "определяй какие документы релевантны и соответствуют объему работ, "
+                    "планируй структуру ответа, думай о том, как лучше представить информацию.\n"
+                    "</think>\n\n"
+                    "После блока </think> давай финальный ответ пользователю."
+                )
+                
+                # Формируем промпт с документами
+                user_prompt_parts = []
+                
+                if all_documents_markdown:
+                    user_prompt_parts.append(
+                        f"Загруженные документы техпроцессов:\n\n{all_documents_markdown}\n\n"
+                    )
+                else:
+                    user_prompt_parts.append(
+                        "Внимание: Загруженных документов техпроцессов нет. "
+                        "Попроси пользователя загрузить документы для работы с техпроцессами.\n\n"
+                    )
+                
+                user_prompt_parts.append(f"Вопрос пользователя: {message}")
+                user_prompt_parts.append(
+                    "\nКРИТИЧЕСКИ ВАЖНО: Фильтрация по объему работ\n"
+                    "Если в вопросе указан объем работ (ТР-1, ТР-2, ТО-1, ТО-2, ТО-3 и т.д.), "
+                    "используй ТОЛЬКО документы, соответствующие этому объему работ. "
+                    "Документы других объемов работ НЕ должны использоваться.\n\n"
+                    "ОБЯЗАТЕЛЬНО используй блок <think> перед ответом. "
+                    "В блоке <think> ОБЯЗАТЕЛЬНО:\n"
+                    "1. Определи, указан ли в вопросе объем работ (ТР-1, ТР-2, ТО-1, ТО-2, ТО-3 и т.д.)\n"
+                    "2. Если объем работ указан - определи какие документы соответствуют этому объему работ\n"
+                    "3. Явно исключи документы, которые НЕ соответствуют указанному объему работ\n"
+                    "4. Спланируй структуру ответа\n\n"
+                    "Формат ответа:\n"
+                    "<think>\n"
+                    "Твои размышления здесь\n"
+                    "</think>\n\n"
+                    "Финальный ответ здесь.\n\n"
+                    "Ответь на вопрос, используя информацию из загруженных документов техпроцессов. "
+                    "Если информация найдена в документах, обязательно укажи название документа. "
+                    "Если информации нет в документах, сообщи об этом."
+                )
+                
+                user_prompt = "\n".join(user_prompt_parts)
+                
+                # Формируем массив сообщений для chat API
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+                
+                # Добавляем историю чата из БД (последние 10 сообщений для контекста)
+                previous_messages = session.messages.order_by('created_at')[:10]
+                chat_history = []
+                for msg in previous_messages:
+                    if msg.message_type == ChatMessage.MESSAGE_TYPE_USER:
+                        chat_history.append({"role": "user", "content": msg.content})
+                    elif msg.message_type == ChatMessage.MESSAGE_TYPE_ASSISTANT:
+                        chat_history.append({"role": "assistant", "content": msg.content})
+                
+                # Вставляем историю перед текущим сообщением
+                messages = [messages[0]] + chat_history + [messages[1]]
+                
+                # Оптимизация: используем Queue вместо списка
+                from queue import Queue, Empty
+                streaming_chunks_queue = Queue()
+                result_container = {}
+                exception_container = {}
+                
+                def stream_callback(text):
+                    streaming_chunks_queue.put(text)
+                
+                def run_chat():
+                    try:
+                        result = client.chat(
+                            messages,
+                            temperature=temperature,
+                            num_predict=max_tokens,
+                            seed=seed,
+                            stream=True,
+                            stream_callback=stream_callback,
+                        )
+                        result_container['response'] = result.strip()
+                    except Exception as e:
+                        exception_container['error'] = e
+                    finally:
+                        # Сигнал завершения
+                        streaming_chunks_queue.put(None)
+                
+                # Запускаем в отдельном потоке
+                chat_thread = threading.Thread(target=run_chat)
+                chat_thread.start()
+                
+                # Оптимизация: используем блокирующее ожидание вместо активного polling
+                while chat_thread.is_alive() or not streaming_chunks_queue.empty():
+                    try:
+                        chunk = streaming_chunks_queue.get(timeout=0.1)
+                        if chunk is None:  # Сигнал завершения
+                            break
+                        yield f"data: {_safe_json_dumps({'type': 'chunk', 'text': chunk}, ensure_ascii=False)}\n\n"
+                    except Empty:
+                        continue
+                
+                chat_thread.join(timeout=5.0)
+                
+                # Проверяем ошибки
+                if 'error' in exception_container:
+                    raise exception_container['error']
+                
+                # Засекаем время получения ответа
+                response_received_at = timezone.now()
+                
+                # Получаем полный ответ
+                full_response = result_container.get('response', '')
+                
+                # Логируем полный ответ в консоль для отладки
+                logger.info(f"[TP Chat] Полный ответ от LLM (длина: {len(full_response)}):\n{full_response}")
+                print(f"[TP Chat] Полный ответ от LLM (длина: {len(full_response)}):\n{full_response}")
+                
+                processing_time = int((response_received_at - request_started_at).total_seconds() * 1000)
+                
+                # Формируем metadata
+                message_metadata = {
+                    'model': runtime_config.model,
+                    'documents_count': tp_documents.count(),
+                }
+                if ollama_config:
+                    message_metadata['ollama_config'] = ollama_config
+                
+                # Сохраняем ответ ассистента
+                assistant_message = ChatMessage.objects.create(
+                    session=session,
+                    message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
+                    content=full_response,
+                    request_started_at=request_started_at,
+                    response_received_at=response_received_at,
+                    processing_time_ms=processing_time,
+                    metadata=message_metadata
+                )
+                
+                # Обновляем время сессии
+                session.updated_at = timezone.now()
+                session.save(update_fields=['updated_at'])
+                
+                # Формируем финальное событие
+                done_event = {
+                    'type': 'done',
+                    'full_response': full_response,
+                    'session_id': str(session.id),
+                    'message_id': str(assistant_message.id),
+                    'processing_time_ms': processing_time,
+                    'timestamp': assistant_message.created_at.isoformat(),
+                }
+                
+                yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
+                
+            except Exception as e:
+                logger.error(f"Ошибка в TPChatStreamView: {e}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        
+        response = StreamingHttpResponse(
+            event_stream(),
+            content_type='text/event-stream'
+        )
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        return response

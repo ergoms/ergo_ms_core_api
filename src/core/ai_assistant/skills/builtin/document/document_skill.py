@@ -1,5 +1,5 @@
 """
-Навык для создания документов Word и PDF.
+Навык для создания документов PDF.
 Использует MD шаблоны и генераторы документов.
 """
 import uuid
@@ -11,14 +11,13 @@ from django.conf import settings
 
 from ...base import BaseSkill, SkillResult
 from .template_loader import get_template_loader
-from .generators import WordGenerator, PDFGenerator
+from .generators import PDFGenerator
 
 
 class DocumentSkill(BaseSkill):
-    """Навык для создания документов Word и PDF на основе шаблонов."""
+    """Навык для создания документов PDF на основе шаблонов."""
     
     def __init__(self):
-        self._word_generator = WordGenerator()
         self._pdf_generator = PDFGenerator()
         self._template_loader = get_template_loader()
     
@@ -33,9 +32,20 @@ class DocumentSkill(BaseSkill):
     @property
     def description(self) -> str:
         templates_info = self._template_loader.get_templates_description()
-        return f"""Создает документ Word (.docx) или PDF на основе шаблонов.
-Используй ТОЛЬКО когда пользователь ЯВНО просит: "создай документ", "сделай файл", "запиши в документ".
-НЕ используй для вопросов и объяснений.
+        return f"""Создает документ PDF на основе шаблонов.
+
+ИСПОЛЬЗУЙ ТОЛЬКО когда пользователь ЯВНО просит создать/сформировать/выгрузить документ:
+- "создай документ", "сделай файл", "запиши в документ"
+- "сформируй отчёт", "выгрузи отчёт", "экспортируй в файл"
+- "сохрани как документ", "создай PDF"
+
+НЕ используй этот навык если:
+- Пользователь просто задает вопрос или просит объяснить что-то
+- В ответе упоминается слово "документ" в контексте информации (например: "в документе указано...")
+- Пользователь просит найти информацию или проиндексировать документ
+- Это обычный вопрос к базе знаний (RAG)
+
+Этот навык только для СОЗДАНИЯ нового файла, а не для работы с существующими документами.
 
 {templates_info}"""
     
@@ -54,9 +64,9 @@ class DocumentSkill(BaseSkill):
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["docx", "pdf"],
-                    "description": "Формат документа: docx (Word) или pdf",
-                    "default": "docx"
+                    "enum": ["pdf"],
+                    "description": "Формат документа: pdf",
+                    "default": "pdf"
                 },
                 "title": {
                     "type": "string",
@@ -104,8 +114,15 @@ class DocumentSkill(BaseSkill):
             )
         
         template_id = parameters.get('template', 'report')
-        doc_format = parameters.get('format', 'docx')
+        doc_format = parameters.get('format', 'pdf')
         title = parameters.get('title', 'Документ')
+        
+        # Проверяем формат - Word отчеты отключены
+        if doc_format == 'docx':
+            return SkillResult(
+                success=False,
+                error="Формирование Word отчетов отключено. Используйте формат PDF."
+            )
         
         # Получаем шаблон
         template = self._template_loader.get_template(template_id)
@@ -134,18 +151,12 @@ class DocumentSkill(BaseSkill):
         try:
             output_path = self._get_output_path(title, doc_format, context)
             
-            if doc_format == 'pdf':
-                file_path = self._pdf_generator.generate(
-                    rendered_content, 
-                    output_path, 
-                    title=title
-                )
-            else:
-                file_path = self._word_generator.generate(
-                    rendered_content, 
-                    output_path, 
-                    title=title
-                )
+            # Только PDF формат поддерживается
+            file_path = self._pdf_generator.generate(
+                rendered_content, 
+                output_path, 
+                title=title
+            )
             
             # Сохраняем информацию о документе в БД
             document_info = self._save_document_info(
@@ -185,6 +196,13 @@ class DocumentSkill(BaseSkill):
         context: Optional[Dict[str, Any]]
     ) -> SkillResult:
         """Создает простой документ без шаблона."""
+        # Проверяем формат - Word отчеты отключены
+        if doc_format == 'docx':
+            return SkillResult(
+                success=False,
+                error="Формирование Word отчетов отключено. Используйте формат PDF."
+            )
+        
         title = parameters.get('title', 'Документ')
         content = parameters.get('content', '')
         
@@ -206,18 +224,12 @@ class DocumentSkill(BaseSkill):
         try:
             output_path = self._get_output_path(title, doc_format, context)
             
-            if doc_format == 'pdf':
-                file_path = self._pdf_generator.generate(
-                    markdown_content, 
-                    output_path, 
-                    title=title
-                )
-            else:
-                file_path = self._word_generator.generate(
-                    markdown_content, 
-                    output_path, 
-                    title=title
-                )
+            # Только PDF формат поддерживается
+            file_path = self._pdf_generator.generate(
+                markdown_content, 
+                output_path, 
+                title=title
+            )
             
             document_info = self._save_document_info(
                 title=title,
