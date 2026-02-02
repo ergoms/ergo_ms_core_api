@@ -2444,6 +2444,9 @@ class ChatSessionViewSet(ViewSet, SwaggerSafeMixin):
             title=title,
             module=module
         )
+        if module == 'tp':
+            from src.core.ai_assistant.tp.views import create_tp_intro_message
+            create_tp_intro_message(session)
         
         return Response({
             'success': True,
@@ -2451,7 +2454,7 @@ class ChatSessionViewSet(ViewSet, SwaggerSafeMixin):
                 'id': str(session.id),
                 'title': session.title,
                 'module': session.module,
-                'message_count': 0,
+                'message_count': session.message_count,
                 'created_at': session.created_at.isoformat(),
                 'updated_at': session.updated_at.isoformat(),
             }
