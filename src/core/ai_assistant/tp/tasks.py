@@ -215,8 +215,8 @@ def process_tp_chat_response(self, session_id: str, user_id: int, message: str, 
 
         messages = build_tp_chat_messages(session, message, all_documents_markdown)
         runtime_config, client = create_ollama_client(ollama_config)
-        temperature = ollama_config.get('temperature', 0.3)
-        max_tokens = ollama_config.get('max_tokens', 4096)
+        temperature = ollama_config.get('temperature')
+        max_tokens = ollama_config.get('max_tokens')
         seed = ollama_config.get('seed')
 
         full_response = client.chat(
