@@ -72,12 +72,13 @@ class DashboardSerializer(serializers.ModelSerializer):
     """Сериализатор для дашборда со страницами."""
     pages = DashboardPageSerializer(many=True, read_only=True)
     owner_username = serializers.CharField(source='owner.username', read_only=True)
+    owner_id = serializers.IntegerField(source='owner.id', read_only=True)
     charts_count = serializers.IntegerField(read_only=True)
-    
+
     class Meta:
         model = Dashboard
         fields = [
-            'id', 'name', 'description', 'owner', 'owner_username',
+            'id', 'name', 'description', 'owner', 'owner_id', 'owner_username',
             'created_at', 'updated_at', 'pages', 'charts_count'
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at', 'charts_count']
@@ -153,12 +154,13 @@ class DashboardWriteSerializer(serializers.ModelSerializer):
 class DashboardShortSerializer(serializers.ModelSerializer):
     """Короткий сериализатор для списка дашбордов."""
     owner_username = serializers.CharField(source='owner.username', read_only=True)
+    owner_id = serializers.IntegerField(source='owner.id', read_only=True)
     charts_count = serializers.IntegerField(read_only=True)
-    
+
     class Meta:
         model = Dashboard
         fields = [
-            'id', 'name', 'description', 'owner_username',
+            'id', 'name', 'description', 'owner_id', 'owner_username',
             'created_at', 'updated_at', 'charts_count'
         ]
 

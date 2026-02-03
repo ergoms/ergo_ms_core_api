@@ -1,4 +1,4 @@
-from rest_framework import generics
+from rest_framework import generics, permissions
 from rest_framework.permissions import IsAuthenticated
 
 from src.core.bi_analysis.bi_charts.models import Chart
@@ -18,6 +18,18 @@ from src.core.bi_analysis.bi_charts.models import Chart
 from src.core.bi_analysis.bi_charts.serializers import ChartSerializer
 from src.core.bi_analysis.bi_datasets.models import Dataset
 
+
+class IsChartOwnerOrReadOnly(permissions.BasePermission):
+    """GET/HEAD/OPTIONS — любой авторизованный; PUT/PATCH/DELETE — только владелец."""
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if obj.owner_id is None:
+            return False
+        return obj.owner_id == request.user.id
+
+
 class ChartListCreateView(generics.ListCreateAPIView):
     queryset = Chart.objects.all()
     serializer_class = ChartSerializer
@@ -33,15 +45,18 @@ class ChartListCreateView(generics.ListCreateAPIView):
         serializer.save(owner=self.request.user)
 
 class ChartDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Chart.objects.all()
+    """
+    GET: любой авторизованный (просмотр в т.ч. чужого чарта).
+    PUT/PATCH/DELETE: только владелец.
+    """
+    queryset = Chart.objects.all().select_related('dataset')
     serializer_class = ChartSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsChartOwnerOrReadOnly]
 
     def get_queryset(self):
-        user = self.request.user
-        if not user.is_authenticated:
-            return self.queryset.none()
-        return self.queryset.filter(owner=user)
+        if getattr(self, 'swagger_fake_view', False):
+            return Chart.objects.none()
+        return Chart.objects.all().select_related('dataset')
     
 class DatasetRowsAggAPIView(APIView):
     """
