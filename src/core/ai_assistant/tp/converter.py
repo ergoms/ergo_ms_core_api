@@ -1,111 +1,109 @@
-from typing import Optional
-from io import BytesIO
+"""
+Конвертация DOCX в Markdown: mammoth (DOCX → HTML) и html2text (HTML → Markdown).
+Таблицы постобрабатываются: подряд идущие ячейки с одинаковым значением объединяются (colspan).
+"""
+import re
+from html import escape
+from typing import List, Optional, Tuple
 
-try:
-    from docx import Document
-except ImportError:
-    Document = None
+import html2text
+import mammoth
+
+
+def _merge_same_cells_in_row(cells: List[str]) -> List[Tuple[str, int]]:
+    """Объединяет подряд идущие одинаковые ячейки в (значение, colspan)."""
+    if not cells:
+        return []
+    merged: List[Tuple[str, int]] = []
+    for c in cells:
+        if merged and merged[-1][0] == c:
+            merged[-1] = (merged[-1][0], merged[-1][1] + 1)
+        else:
+            merged.append((c, 1))
+    return merged
+
+
+def _md_table_to_html_with_colspan(md_table_lines: List[str]) -> str:
+    """Превращает markdown-таблицу в HTML с объединёнными ячейками (colspan)."""
+    rows = []
+    for line in md_table_lines:
+        line = line.strip()
+        if not line or not line.startswith("|") or not line.endswith("|"):
+            continue
+        parts = [p.strip() for p in line.split("|")][1:-1]
+        if not parts:
+            continue
+        if re.match(r"^[\s\-:]+$", "".join(parts)):
+            continue
+        rows.append(parts)
+    if not rows:
+        return "\n".join(md_table_lines)
+    out = ["<table>"]
+    for row_cells in rows:
+        merged = _merge_same_cells_in_row(row_cells)
+        tds = "".join(
+            f'<td colspan="{span}">{escape(cell)}</td>' if span > 1 else f"<td>{escape(cell)}</td>"
+            for cell, span in merged
+        )
+        out.append(f"<tr>{tds}</tr>")
+    out.append("</table>")
+    return "\n".join(out)
+
+
+def _tables_merge_same_cells(md: str) -> str:
+    """Находит markdown-таблицы и заменяет их на HTML с объединёнными ячейками."""
+    lines = md.split("\n")
+    result = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.strip().startswith("|") and line.strip().endswith("|"):
+            table_lines = [line]
+            j = i + 1
+            while j < len(lines) and lines[j].strip().startswith("|") and lines[j].strip().endswith("|"):
+                table_lines.append(lines[j])
+                j += 1
+            has_sep = any(re.search(r"\-+", ln) for ln in table_lines)
+            if has_sep and len(table_lines) >= 2:
+                result.append(_md_table_to_html_with_colspan(table_lines))
+                i = j
+                continue
+        result.append(line)
+        i += 1
+    return "\n".join(result)
 
 
 class TPDocumentConverter:
+    """Конвертация DOCX в Markdown через mammoth + html2text."""
+
     @staticmethod
-    def docx_to_markdown(file_path: Optional[str] = None, file_obj: Optional[BytesIO] = None) -> str:
-        if Document is None:
-            raise ValueError(
-                "Модуль python-docx не установлен. "
-                "Установите: poetry add python-docx"
-            )
+    def docx_to_markdown(file_path: Optional[str] = None, file_obj=None) -> str:
+        if file_obj is not None:
+            file_obj.seek(0)
+            docx_file = file_obj
+            should_close = False
+        elif file_path:
+            docx_file = open(file_path, "rb")
+            should_close = True
+        else:
+            raise ValueError("Не указан ни путь к файлу, ни файловый объект")
+
         try:
-            if file_obj:
-                file_obj.seek(0)
-                doc = Document(file_obj)
-            elif file_path:
-                doc = Document(file_path)
-            else:
-                raise ValueError("Не указан ни путь к файлу, ни файловый объект")
-            markdown_parts = []
-            for element in doc.element.body:
-                if element.tag.endswith('p'):
-                    paragraph = None
-                    for p in doc.paragraphs:
-                        if p._element == element:
-                            paragraph = p
-                            break
-                    if paragraph and paragraph.text.strip():
-                        markdown_text = TPDocumentConverter._paragraph_to_markdown(paragraph)
-                        if markdown_text:
-                            markdown_parts.append(markdown_text)
-                elif element.tag.endswith('tbl'):
-                    table = None
-                    for t in doc.tables:
-                        if t._element == element:
-                            table = t
-                            break
-                    if table:
-                        markdown_table = TPDocumentConverter._table_to_markdown(table)
-                        if markdown_table:
-                            markdown_parts.append(markdown_table)
-            result = "\n\n".join(markdown_parts)
-            if not result.strip():
+            result = mammoth.convert_to_html(docx_file)
+            html = result.value
+            converter = html2text.HTML2Text()
+            converter.ignore_links = True
+            converter.ignore_images = True
+            md = converter.handle(html)
+            md = _tables_merge_same_cells(md)
+            out = md.strip()
+            if not out:
                 raise ValueError("Документ пуст или не удалось извлечь контент")
-            return result.strip()
+            return out
+        except ValueError:
+            raise
         except Exception as e:
-            if isinstance(e, ValueError):
-                raise
-            raise ValueError(f"Ошибка конвертации DOCX в Markdown: {str(e)}") from e
-
-    @staticmethod
-    def _paragraph_to_markdown(paragraph) -> str:
-        text = paragraph.text.strip()
-        if not text:
-            return ""
-        style = paragraph.style.name if paragraph.style else None
-        if style and style.startswith('Heading'):
-            level = 1
-            if 'Heading 2' in style:
-                level = 2
-            elif 'Heading 3' in style:
-                level = 3
-            elif 'Heading 4' in style:
-                level = 4
-            elif 'Heading 5' in style:
-                level = 5
-            elif 'Heading 6' in style:
-                level = 6
-            return f"{'#' * level} {text}"
-        return TPDocumentConverter._format_runs(paragraph.runs)
-
-    @staticmethod
-    def _format_runs(runs) -> str:
-        result = []
-        for run in runs:
-            text = run.text
-            if not text:
-                continue
-            if run.bold:
-                text = f"**{text}**"
-            if run.italic:
-                text = f"*{text}*"
-            if run.underline:
-                text = f"<u>{text}</u>"
-            result.append(text)
-        return "".join(result)
-
-    @staticmethod
-    def _table_to_markdown(table) -> str:
-        if not table.rows:
-            return ""
-        markdown_rows = []
-        for row_idx, row in enumerate(table.rows):
-            cells = []
-            for cell in row.cells:
-                cell_text = cell.text.strip()
-                cell_text = " ".join(cell_text.split())
-                cell_text = cell_text.replace("|", "\\|").replace("\n", " ")
-                cells.append(cell_text or " ")
-            markdown_row = "| " + " | ".join(cells) + " |"
-            markdown_rows.append(markdown_row)
-            if row_idx == 0:
-                separator = "| " + " | ".join(["---"] * len(cells)) + " |"
-                markdown_rows.append(separator)
-        return "\n".join(markdown_rows)
+            raise ValueError(f"Ошибка конвертации DOCX в Markdown: {e}") from e
+        finally:
+            if should_close:
+                docx_file.close()

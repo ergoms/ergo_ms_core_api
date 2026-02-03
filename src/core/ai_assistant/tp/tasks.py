@@ -18,6 +18,7 @@ from src.core.ai_assistant.llm_utils import create_ollama_client
 from .models import TechnologicalProcessDocument
 from .converter import TPDocumentConverter
 from .prompt_utils import build_tp_chat_messages
+from . import settings as tp_settings
 
 User = get_user_model()
 logger = logging.getLogger('celery.module.ai_assistant_tp.tasks')
@@ -170,9 +171,10 @@ def process_tp_documents(self, session_id: str, user_id: int, file_infos: list, 
 def process_tp_chat_response(self, session_id: str, user_id: int, message: str, ollama_config: dict = None):
     """
     Обрабатывает запрос пользователя в чате техпроцессов в очереди: вызов LLM, сохранение ответа в БД.
-    По опыту модулей video_analysis, porosity_analysis, impuls_analysis: логгер, таймауты, возврат dict.
+    Параметры LLM берутся только из config.js (см. tp_settings.TP_OLLAMA_CONFIG).
     """
     ollama_config = ollama_config or {}
+    config = tp_settings.TP_OLLAMA_CONFIG
     request_started_at = timezone.now()
     start_ts = time.time()
 
@@ -208,9 +210,17 @@ def process_tp_chat_response(self, session_id: str, user_id: int, message: str, 
             session=session,
         ).order_by('-created_at')
         documents_content = []
-        for doc in tp_documents:
+        for idx, doc in enumerate(tp_documents, 1):
             if doc.markdown_content:
-                documents_content.append(f"## {doc.title}\n\n{doc.markdown_content}\n\n")
+                # Добавляем явный разделитель между документами (если их несколько)
+                if idx > 1:
+                    documents_content.append("\n" + "=" * 80 + "\n")
+                # Форматируем документ с явным указанием начала и конца
+                documents_content.append(
+                    f"# ДОКУМЕНТ {idx}: {doc.title}\n\n"
+                    f"{doc.markdown_content}\n\n"
+                    f"--- КОНЕЦ ДОКУМЕНТА {idx}: {doc.title} ---\n"
+                )
         all_documents_markdown = "\n".join(documents_content)
 
         messages = build_tp_chat_messages(session, message, all_documents_markdown)
@@ -230,13 +240,25 @@ def process_tp_chat_response(self, session_id: str, user_id: int, message: str, 
 
         response_received_at = timezone.now()
         processing_time_ms = int((response_received_at - request_started_at).total_seconds() * 1000)
+        if not ChatSession.objects.filter(pk=session.id).exists():
+            logger.warning(
+                "process_tp_chat_response: сессия удалена во время обработки, session_id=%s",
+                session_id,
+            )
+            return {
+                'success': False,
+                'error': 'Сессия чата была удалена во время обработки',
+                'full_response': full_response,
+                'message_id': None,
+                'session_id': str(session_id),
+                'processing_time_ms': processing_time_ms,
+                'timestamp': response_received_at.isoformat(),
+            }
         message_metadata = {
             'model': runtime_config.model,
             'documents_count': tp_documents.count(),
+            'ollama_config': config,
         }
-        if ollama_config:
-            message_metadata['ollama_config'] = ollama_config
-
         assistant_message = ChatMessage.objects.create(
             session=session,
             message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
