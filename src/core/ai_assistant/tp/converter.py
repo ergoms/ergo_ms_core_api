@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Set
 from io import BytesIO
 
 try:
@@ -23,7 +23,15 @@ class TPDocumentConverter:
                 doc = Document(file_path)
             else:
                 raise ValueError("Не указан ни путь к файлу, ни файловый объект")
+            
             markdown_parts = []
+            
+            # Извлекаем header и footer из всех секций документа
+            header_footer_parts = TPDocumentConverter._extract_header_footer(doc)
+            if header_footer_parts:
+                markdown_parts.extend(header_footer_parts)
+            
+            # Извлекаем основной контент документа
             for element in doc.element.body:
                 if element.tag.endswith('p'):
                     paragraph = None
@@ -45,6 +53,7 @@ class TPDocumentConverter:
                         markdown_table = TPDocumentConverter._table_to_markdown(table)
                         if markdown_table:
                             markdown_parts.append(markdown_table)
+            
             result = "\n\n".join(markdown_parts)
             if not result.strip():
                 raise ValueError("Документ пуст или не удалось извлечь контент")
@@ -53,6 +62,49 @@ class TPDocumentConverter:
             if isinstance(e, ValueError):
                 raise
             raise ValueError(f"Ошибка конвертации DOCX в Markdown: {str(e)}") from e
+    
+    @staticmethod
+    def _extract_header_footer(doc) -> List[str]:
+        """Извлекает текст из header и footer всех секций документа."""
+        header_footer_parts = []
+        seen_texts: Set[str] = set()
+        
+        for section in doc.sections:
+            # Обрабатываем header
+            if section.header:
+                header_texts = []
+                for paragraph in section.header.paragraphs:
+                    text = paragraph.text.strip()
+                    if text and text not in seen_texts:
+                        header_texts.append(text)
+                        seen_texts.add(text)
+                if header_texts:
+                    header_footer_parts.append("**Header:** " + " | ".join(header_texts))
+                
+                # Обрабатываем таблицы в header
+                for table in section.header.tables:
+                    table_text = TPDocumentConverter._table_to_markdown(table)
+                    if table_text:
+                        header_footer_parts.append("**Header Table:**\n" + table_text)
+            
+            # Обрабатываем footer
+            if section.footer:
+                footer_texts = []
+                for paragraph in section.footer.paragraphs:
+                    text = paragraph.text.strip()
+                    if text and text not in seen_texts:
+                        footer_texts.append(text)
+                        seen_texts.add(text)
+                if footer_texts:
+                    header_footer_parts.append("**Footer:** " + " | ".join(footer_texts))
+                
+                # Обрабатываем таблицы в footer
+                for table in section.footer.tables:
+                    table_text = TPDocumentConverter._table_to_markdown(table)
+                    if table_text:
+                        header_footer_parts.append("**Footer Table:**\n" + table_text)
+        
+        return header_footer_parts
 
     @staticmethod
     def _paragraph_to_markdown(paragraph) -> str:
@@ -97,15 +149,35 @@ class TPDocumentConverter:
             return ""
         markdown_rows = []
         for row_idx, row in enumerate(table.rows):
-            cells = []
+            cell_texts = []
+            
+            # Собираем текст из всех ячеек строки
             for cell in row.cells:
                 cell_text = cell.text.strip()
                 cell_text = " ".join(cell_text.split())
-                cell_text = cell_text.replace("|", "\\|").replace("\n", " ")
-                cells.append(cell_text or " ")
-            markdown_row = "| " + " | ".join(cells) + " |"
+                cell_texts.append(cell_text)
+            
+            # Удаляем дубликаты: оставляем только первое вхождение, остальные очищаем
+            seen_texts: Set[str] = set()
+            cleaned_cells = []
+            for cell_text in cell_texts:
+                # Нормализуем текст для сравнения (приводим к нижнему регистру и удаляем лишние пробелы)
+                normalized_text = " ".join(cell_text.lower().split()) if cell_text else ""
+                
+                if normalized_text and normalized_text in seen_texts:
+                    # Дубликат - очищаем ячейку
+                    cleaned_cells.append(" ")
+                else:
+                    # Уникальный текст - сохраняем
+                    if normalized_text:
+                        seen_texts.add(normalized_text)
+                    # Экранируем специальные символы для markdown
+                    escaped_text = cell_text.replace("|", "\\|").replace("\n", " ")
+                    cleaned_cells.append(escaped_text or " ")
+            
+            markdown_row = "| " + " | ".join(cleaned_cells) + " |"
             markdown_rows.append(markdown_row)
             if row_idx == 0:
-                separator = "| " + " | ".join(["---"] * len(cells)) + " |"
+                separator = "| " + " | ".join(["---"] * len(cleaned_cells)) + " |"
                 markdown_rows.append(separator)
         return "\n".join(markdown_rows)

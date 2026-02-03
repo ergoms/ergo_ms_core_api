@@ -208,9 +208,17 @@ def process_tp_chat_response(self, session_id: str, user_id: int, message: str, 
             session=session,
         ).order_by('-created_at')
         documents_content = []
-        for doc in tp_documents:
+        for idx, doc in enumerate(tp_documents, 1):
             if doc.markdown_content:
-                documents_content.append(f"## {doc.title}\n\n{doc.markdown_content}\n\n")
+                # Добавляем явный разделитель между документами (если их несколько)
+                if idx > 1:
+                    documents_content.append("\n" + "=" * 80 + "\n")
+                # Форматируем документ с явным указанием начала и конца
+                documents_content.append(
+                    f"# ДОКУМЕНТ {idx}: {doc.title}\n\n"
+                    f"{doc.markdown_content}\n\n"
+                    f"--- КОНЕЦ ДОКУМЕНТА {idx}: {doc.title} ---\n"
+                )
         all_documents_markdown = "\n".join(documents_content)
 
         messages = build_tp_chat_messages(session, message, all_documents_markdown)
@@ -230,13 +238,26 @@ def process_tp_chat_response(self, session_id: str, user_id: int, message: str, 
 
         response_received_at = timezone.now()
         processing_time_ms = int((response_received_at - request_started_at).total_seconds() * 1000)
+        if not ChatSession.objects.filter(pk=session.id).exists():
+            logger.warning(
+                "process_tp_chat_response: сессия удалена во время обработки, session_id=%s",
+                session_id,
+            )
+            return {
+                'success': False,
+                'error': 'Сессия чата была удалена во время обработки',
+                'full_response': full_response,
+                'message_id': None,
+                'session_id': str(session_id),
+                'processing_time_ms': processing_time_ms,
+                'timestamp': response_received_at.isoformat(),
+            }
         message_metadata = {
             'model': runtime_config.model,
             'documents_count': tp_documents.count(),
         }
         if ollama_config:
             message_metadata['ollama_config'] = ollama_config
-
         assistant_message = ChatMessage.objects.create(
             session=session,
             message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
