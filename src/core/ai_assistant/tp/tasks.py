@@ -18,6 +18,7 @@ from src.core.ai_assistant.llm_utils import create_ollama_client
 from .models import TechnologicalProcessDocument
 from .converter import TPDocumentConverter
 from .prompt_utils import build_tp_chat_messages
+from . import settings as tp_settings
 
 User = get_user_model()
 logger = logging.getLogger('celery.module.ai_assistant_tp.tasks')
@@ -170,9 +171,10 @@ def process_tp_documents(self, session_id: str, user_id: int, file_infos: list, 
 def process_tp_chat_response(self, session_id: str, user_id: int, message: str, ollama_config: dict = None):
     """
     Обрабатывает запрос пользователя в чате техпроцессов в очереди: вызов LLM, сохранение ответа в БД.
-    По опыту модулей video_analysis, porosity_analysis, impuls_analysis: логгер, таймауты, возврат dict.
+    Параметры LLM берутся только из config.js (см. tp_settings.TP_OLLAMA_CONFIG).
     """
     ollama_config = ollama_config or {}
+    config = tp_settings.TP_OLLAMA_CONFIG
     request_started_at = timezone.now()
     start_ts = time.time()
 
@@ -255,9 +257,8 @@ def process_tp_chat_response(self, session_id: str, user_id: int, message: str, 
         message_metadata = {
             'model': runtime_config.model,
             'documents_count': tp_documents.count(),
+            'ollama_config': config,
         }
-        if ollama_config:
-            message_metadata['ollama_config'] = ollama_config
         assistant_message = ChatMessage.objects.create(
             session=session,
             message_type=ChatMessage.MESSAGE_TYPE_ASSISTANT,
