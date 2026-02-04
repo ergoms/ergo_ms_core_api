@@ -5,6 +5,7 @@ from django.shortcuts import get_object_or_404
 from django.http import Http404
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
+from psycopg2 import sql
 from .models import Connection
 
 from rest_framework import (
@@ -45,7 +46,8 @@ from src.core.bi_analysis.services.services import (
     auto_join_table,
     introspect_columns,
     rebuild_dataset_joins,
-    table_exists
+    table_exists,
+    build_dataset_query,
 )
 
 from ..bi_charts.methods import get_rows_for_chart
@@ -2021,25 +2023,39 @@ class DatasetFieldValuesView(APIView):
             else:
                 return Response({"detail": "Field not found"}, status=404)
 
-        if not dataset.table_ref or not dataset.table_ref.startswith(('staging_', 'temp_')):
-            return Response({"detail": "Таблица ещё не создана для датасета"}, status=400)
-
-        base_table = dataset.table_ref
-        if '.' in base_table:
-            schema, table = base_table.split('.', 1)
-        else:
-            schema, table = 'public', base_table
-
         try:
+            # Строим базовый запрос датасета только с одним нужным полем.
+            # build_dataset_query уже учитывает новую архитектуру (чтение файлов напрямую,
+            # JOIN-ы и пр.), поэтому нам не нужна материализованная таблица в БД.
+            base_query = build_dataset_query(
+                dataset,
+                select_fields=[field.name],
+                limit=None,
+                offset=None,
+            )
+
+            # Оборачиваем базовый запрос и выбираем уникальные непустые значения нужного поля.
+            distinct_query = sql.SQL(
+                'SELECT DISTINCT {col} '
+                'FROM ({base}) AS sub '
+                'WHERE {col} IS NOT NULL '
+                'ORDER BY {col} '
+                'LIMIT 1000'
+            ).format(
+                col=sql.Identifier(field.name),
+                base=base_query,
+            )
+
             with connection.cursor() as cursor:
-                # Get unique values for the field
-                cursor.execute(
-                    f'SELECT DISTINCT "{field.source_column}" FROM "{schema}"."{table}" WHERE "{field.source_column}" IS NOT NULL ORDER BY "{field.source_column}" LIMIT 1000',
-                )
+                # Получаем уникальные значения поля
+                cursor.execute(distinct_query)
                 rows = cursor.fetchall()
                 values = [str(row[0]) for row in rows if row[0] is not None]
-        except ProgrammingError:
-            return Response({"detail": f"Table {schema}.{table} does not exist or field {field.source_column} not found"}, status=404)
+        except ProgrammingError as e:
+            return Response(
+                {"detail": f"Ошибка выполнения SQL запроса для поля {field.source_column}: {str(e)}"},
+                status=404,
+            )
         except Exception as e:
             return Response({"detail": f"Database error: {str(e)}"}, status=500)
 
