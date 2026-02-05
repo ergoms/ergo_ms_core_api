@@ -115,28 +115,22 @@ def get_rows_for_chart(dataset, chart_fields):
         else:
             return col_expr, False
 
-    # Получаем маппинг полей датасета для получения правильных выражений
     ds_fields_map_full = {f.name: f for f in dataset.fields.all()}
-    
-    # Получаем базовый запрос датасета
-    base_query = build_dataset_query(dataset)
-    
-    # Строим SELECT с агрегациями для chart_fields
+    base_query, display_columns = build_dataset_query(dataset)
+    # Базовый запрос возвращает колонки out_0, out_1, ...; display_columns — порядок имён полей
+    name_to_out = {name: f'out_{i}' for i, name in enumerate(display_columns)} if display_columns else {}
+
     for field in chart_fields:
         output_name = field.get('name')
         if not output_name:
             continue
-        
-        # Получаем исходное поле датасета
+
         ds_field = ds_fields_map_full.get(output_name)
-        
-        # Определяем выражение для колонки
+
         if ds_field and ds_field.expression:
-            # Используем expression из поля датасета
             col_expr = sql.SQL(ds_field.expression)
         else:
-            # Используем имя поля напрямую (поле уже должно быть в SELECT базового запроса)
-            col_expr = sql.Identifier(output_name)
+            col_expr = sql.Identifier(name_to_out.get(output_name, output_name))
         
         # Получаем агрегацию
         aggregation = field.get('aggregation', 'none')

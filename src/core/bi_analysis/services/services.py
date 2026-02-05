@@ -356,13 +356,11 @@ def sync_dataset_fields_after_all_joins(dataset):
     Строит запрос и проверяет доступные колонки.
     """
     try:
-        # Используем build_dataset_query для получения списка колонок
-        query = build_dataset_query(dataset, limit=0)
-        
-        # Выполняем запрос для получения структуры
+        query, display_columns = build_dataset_query(dataset, limit=0)
+
         with connection.cursor() as cursor:
             cursor.execute(query)
-            columns = [col[0] for col in cursor.description]
+            columns = display_columns if display_columns else [col[0] for col in cursor.description]
         
         # Получаем существующие поля
         existing_fields = {f.name: f for f in DataSetField.objects.filter(dataset=dataset)}
@@ -695,12 +693,9 @@ def dataframe_to_sql_values(table, table_alias='t0', row_limit=None):
     if not data_rows:
         return sql.SQL('(SELECT NULL::text AS col WHERE FALSE)'), None
 
-    col_defs = []
-    for col in limited.columns:
-        col_name = str(col).replace('"', '""')
-        if not col_name:
-            col_name = 'column'
-        col_defs.append(f'"{col_name}"')
+    # Используем короткие уникальные имена (col_0, col_1, ...), т.к. в PostgreSQL
+    # идентификаторы обрезаются до 63 байт; длинные кириллические имена дают дубликаты
+    col_defs = [f'"col_{i}"' for i in range(len(limited.columns))]
 
     values_clause = ',\n'.join(data_rows)
     col_list = ', '.join(col_defs)
@@ -739,6 +734,9 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
     # Определяем, является ли источник файловым
     is_file_source = main_table.file_upload_id is not None
     
+    main_table_columns = None
+    join_table_columns = {}
+
     if is_file_source:
         # Для файловых источников читаем данные напрямую из файла
         # Вычисляем сколько строк нужно прочитать: limit + offset (если есть)
@@ -757,6 +755,7 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
                 sheet_name=getattr(main_table, 'sheet_name', None),
                 row_limit=file_read_limit
             )
+            main_table_columns = list(df.columns)
             # Передаем None для row_limit в dataframe_to_sql_values, чтобы включить все прочитанные данные
             # Лимит и offset будут применены в SQL запросе через LIMIT/OFFSET clauses
             from_with_alias, _ = dataframe_to_sql_values(df, main_alias, row_limit=None)
@@ -803,6 +802,7 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
                     sheet_name=getattr(join_table, 'sheet_name', None),
                     row_limit=None  # Читаем все данные для JOIN
                 )
+                join_table_columns[join_table.id] = list(df_join.columns)
                 # Передаем None для row_limit, чтобы включить все данные для JOIN
                 join_table_ref, _ = dataframe_to_sql_values(df_join, table_alias, row_limit=None)
             except Exception as e:
@@ -828,15 +828,24 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
         
         # Определяем левую таблицу для JOIN
         # joined_on_left - это колонка в главной таблице (или предыдущей joined таблице)
-        # Для простоты будем считать, что left_column всегда из главной таблицы
         left_table_alias = main_alias  # По умолчанию главная таблица
         
-        # Условие JOIN: left_column из левой таблицы = right_column из join таблицы
+        # Для файловых источников подзапрос отдаёт col_0, col_1, ... — используем индекс
+        left_col_ref = (
+            f'col_{main_table_columns.index(join_table.joined_on_left)}'
+            if is_file_source and main_table_columns and join_table.joined_on_left in main_table_columns
+            else join_table.joined_on_left
+        )
+        right_col_ref = (
+            f'col_{join_table_columns[join_table.id].index(join_table.joined_on_right)}'
+            if is_join_file_source and join_table.joined_on_right in join_table_columns.get(join_table.id, [])
+            else join_table.joined_on_right
+        )
         join_condition = sql.SQL('{}.{} = {}.{}').format(
             sql.Identifier(left_table_alias),
-            sql.Identifier(join_table.joined_on_left),
+            sql.Identifier(left_col_ref),
             sql.Identifier(table_alias),
-            sql.Identifier(join_table.joined_on_right)
+            sql.Identifier(right_col_ref)
         )
         
         if is_join_file_source:
@@ -863,36 +872,47 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
         fields = dataset.fields.filter(name__in=select_fields).order_by('order')
     
     select_parts = []
-    table_aliases = {}
-    
-    # Маппинг таблиц к алиасам (используем уже построенный table_id_to_alias)
     table_aliases = table_id_to_alias.copy()
-    
-    for field in fields:
-        # Определяем выражение для поля
+    display_columns = []
+
+    def _col_ref(table_id, source_column):
+        if table_id == main_table.id and main_table_columns and source_column in main_table_columns:
+            return f'col_{main_table_columns.index(source_column)}'
+        if table_id in join_table_columns and source_column in join_table_columns[table_id]:
+            return f'col_{join_table_columns[table_id].index(source_column)}'
+        return source_column
+
+    for out_idx, field in enumerate(fields):
         if field.expression:
-            # Используем выражение напрямую (должно содержать валидный SQL)
-            # Осторожно: expression может содержать сложный SQL, поэтому используем SQL()
-            # Будем предполагать, что expression уже содержит правильный SQL с алиасами
             field_expr = sql.SQL(field.expression)
         else:
-            # Используем source_column из source_table
             table_alias = table_aliases.get(field.source_table.id, main_alias)
+            col_ref = _col_ref(field.source_table.id, field.source_column)
             field_expr = sql.SQL('{}.{}').format(
                 sql.Identifier(table_alias),
-                sql.Identifier(field.source_column)
+                sql.Identifier(col_ref)
             )
-        
         select_parts.append(
             sql.SQL('{} AS {}').format(
                 field_expr,
-                sql.Identifier(field.name)
+                sql.Identifier(f'out_{out_idx}')
             )
         )
-    
+        display_columns.append(field.name)
+
     if not select_parts:
-        # Если нет полей, выбираем все колонки из главной таблицы
-        select_parts.append(sql.SQL('{}.*').format(sql.Identifier(main_alias)))
+        if is_file_source and main_table_columns:
+            for out_idx, col in enumerate(main_table_columns):
+                select_parts.append(
+                    sql.SQL('{}.{} AS {}').format(
+                        sql.Identifier(main_alias),
+                        sql.Identifier(f'col_{out_idx}'),
+                        sql.Identifier(f'out_{out_idx}')
+                    )
+                )
+            display_columns = main_table_columns
+        else:
+            select_parts.append(sql.SQL('{}.*').format(sql.Identifier(main_alias)))
     
     # Собираем итоговый запрос
     query_parts = [
@@ -912,20 +932,17 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
     # Добавляем поиск по всем текстовым полям
     if search:
         search_conditions = []
-        # Получаем все поля для поиска
         search_fields = dataset.fields.all() if select_fields is None else dataset.fields.filter(name__in=select_fields)
-        
         for field in search_fields:
             table_alias = table_aliases.get(field.source_table.id, main_alias)
-            # Ищем только в текстовых полях (предполагаем, что все поля могут быть текстовыми)
+            col_ref = _col_ref(field.source_table.id, field.source_column)
             search_conditions.append(
                 sql.SQL('CAST({}.{} AS TEXT) ILIKE {}').format(
                     sql.Identifier(table_alias),
-                    sql.Identifier(field.source_column),
+                    sql.Identifier(col_ref),
                     sql.Literal(f'%{search}%')
                 )
             )
-        
         if search_conditions:
             where_conditions.append(sql.SQL('({})').format(sql.SQL(' OR ').join(search_conditions)))
     
@@ -942,7 +959,7 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
         query_parts.append(sql.SQL('LIMIT {}').format(sql.Literal(limit)))
     
     final_query = sql.SQL(' ').join(query_parts)
-    return final_query
+    return final_query, display_columns if display_columns else None
 
 
 def build_dataset_count_query(dataset, where_clause=None, search=None):
@@ -969,20 +986,22 @@ def build_dataset_count_query(dataset, where_clause=None, search=None):
     # Определяем, является ли источник файловым
     is_file_source = main_table.file_upload_id is not None
     
+    main_table_columns = None
+    join_table_columns = {}
+
     if is_file_source:
         # Для файловых источников читаем данные напрямую из файла
-        # Для COUNT читаем все данные (без лимита)
         try:
             df = read_file_to_dataframe(
                 main_table.file_upload_id,
                 sheet_name=getattr(main_table, 'sheet_name', None),
-                row_limit=None  # Читаем все данные для COUNT
+                row_limit=None
             )
+            main_table_columns = list(df.columns)
             from_with_alias, _ = dataframe_to_sql_values(df, main_alias, row_limit=None)
         except Exception as e:
             raise ValueError(f"Ошибка чтения файла: {str(e)}")
     else:
-        # Для БД источников используем прямое подключение к таблице
         table_name = main_table.table_name
         if '.' in table_name:
             schema, table = table_name.split('.', 1)
@@ -992,23 +1011,19 @@ def build_dataset_count_query(dataset, where_clause=None, search=None):
             )
         else:
             from_clause = sql.Identifier(table_name)
-        
         from_with_alias = sql.SQL('{} AS {}').format(from_clause, sql.Identifier(main_alias))
-    
-    # Собираем JOIN'ы (та же логика, что и в build_dataset_query)
+
     joins = []
     joined_tables = dataset.tables.filter(joined_on_type__isnull=False).order_by('id')
     table_id_to_alias = {main_table.id: main_alias}
-    
+
     for idx, join_table in enumerate(joined_tables, start=1):
         if not join_table.joined_on_left or not join_table.joined_on_right:
             continue
-        
         table_alias = f't{idx}'
         table_id_to_alias[join_table.id] = table_alias
-        
         is_join_file_source = join_table.file_upload_id is not None
-        
+
         if is_join_file_source:
             try:
                 df_join = read_file_to_dataframe(
@@ -1016,6 +1031,7 @@ def build_dataset_count_query(dataset, where_clause=None, search=None):
                     sheet_name=getattr(join_table, 'sheet_name', None),
                     row_limit=None
                 )
+                join_table_columns[join_table.id] = list(df_join.columns)
                 join_table_ref, _ = dataframe_to_sql_values(df_join, table_alias, row_limit=None)
             except Exception as e:
                 raise ValueError(f"Ошибка чтения файла для JOIN: {str(e)}")
@@ -1029,27 +1045,29 @@ def build_dataset_count_query(dataset, where_clause=None, search=None):
                 )
             else:
                 join_from_clause = sql.Identifier(table_name)
-            
             join_table_ref = sql.SQL('{} AS {}').format(join_from_clause, sql.Identifier(table_alias))
-        
-        # Определяем тип JOIN
+
         join_type = (join_table.joined_on_type or 'LEFT JOIN').strip().upper()
         if 'JOIN' not in join_type:
             join_type = f'{join_type} JOIN'
-        
-        # Определяем левую таблицу для JOIN
-        # joined_on_left - это колонка в главной таблице (или предыдущей joined таблице)
-        # Для простоты будем считать, что left_column всегда из главной таблицы
-        left_table_alias = main_alias  # По умолчанию главная таблица
-        
-        # Условие JOIN: left_column из левой таблицы = right_column из join таблицы
+        left_table_alias = main_alias
+
+        left_col_ref = (
+            f'col_{main_table_columns.index(join_table.joined_on_left)}'
+            if is_file_source and main_table_columns and join_table.joined_on_left in main_table_columns
+            else join_table.joined_on_left
+        )
+        right_col_ref = (
+            f'col_{join_table_columns[join_table.id].index(join_table.joined_on_right)}'
+            if is_join_file_source and join_table.joined_on_right in join_table_columns.get(join_table.id, [])
+            else join_table.joined_on_right
+        )
         join_condition = sql.SQL('{}.{} = {}.{}').format(
             sql.Identifier(left_table_alias),
-            sql.Identifier(join_table.joined_on_left),
+            sql.Identifier(left_col_ref),
             sql.Identifier(table_alias),
-            sql.Identifier(join_table.joined_on_right)
+            sql.Identifier(right_col_ref)
         )
-        
         joins.append(sql.SQL('{} {} ON {}').format(
             sql.SQL(join_type),
             join_table_ref,
@@ -1063,14 +1081,21 @@ def build_dataset_count_query(dataset, where_clause=None, search=None):
         where_conditions.append(sql.SQL(where_clause))
     
     if search:
-        # Поиск по всем текстовым полям
+        def _count_col_ref(table_id, source_column):
+            if table_id == main_table.id and main_table_columns and source_column in main_table_columns:
+                return f'col_{main_table_columns.index(source_column)}'
+            if table_id in join_table_columns and source_column in join_table_columns[table_id]:
+                return f'col_{join_table_columns[table_id].index(source_column)}'
+            return source_column
+
         search_conditions = []
         for field in dataset.fields.all():
             table_alias = table_id_to_alias.get(field.source_table.id, main_alias)
-            col_ref = sql.Identifier(table_alias, field.source_column)
+            col_ref = _count_col_ref(field.source_table.id, field.source_column)
             search_conditions.append(
-                sql.SQL('CAST({} AS TEXT) ILIKE {}').format(
-                    col_ref,
+                sql.SQL('CAST({}.{} AS TEXT) ILIKE {}').format(
+                    sql.Identifier(table_alias),
+                    sql.Identifier(col_ref),
                     sql.Literal(f'%{search}%')
                 )
             )

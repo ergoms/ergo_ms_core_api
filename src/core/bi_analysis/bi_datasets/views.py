@@ -515,17 +515,17 @@ class DatasetPreviewView(APIView):
             # Без поиска используем лимит для пагинации
             query_limit = None if search else limit
             
-            query = build_dataset_query(
-                dataset, 
-                limit=query_limit, 
+            query, display_columns = build_dataset_query(
+                dataset,
+                limit=query_limit,
                 offset=offset,
                 search=search if search else None
             )
-            
+
             with connection.cursor() as cursor:
                 cursor.execute(query)
                 rows = cursor.fetchall()
-                columns = [col[0] for col in cursor.description]
+                columns = display_columns if display_columns else [col[0] for col in cursor.description]
                     
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
@@ -761,13 +761,23 @@ class DatasetDraftPreviewView(APIView):
             # Получаем колонки из БД таблицы
             main_cols = introspect_columns(table_name)
         
-        # Формируем SELECT - берем все колонки главной таблицы
-        select_parts = [sql.SQL('{}.{} AS {}').format(
-            sql.Identifier(main_alias),
-            sql.Identifier(col),
-            sql.Identifier(col)
-        ) for col in main_cols]
-        
+        # Формируем SELECT с уникальными алиасами (col_0, col_1, ...), чтобы избежать
+        # неоднозначности при длинных именах колонок: в PostgreSQL идентификаторы обрезаются
+        # до 63 байт (кириллица = 2 байта → ~31 символ), из‑за чего разные колонки могут
+        # получить один и тот же алиас. Для файлового источника подзапрос отдаёт col_0, col_1, ...
+        display_column_names = []
+        select_parts = []
+        col_idx = 0
+        for col in main_cols:
+            col_ref = f'col_{col_idx}' if is_main_file else col
+            select_parts.append(sql.SQL('{}.{} AS {}').format(
+                sql.Identifier(main_alias),
+                sql.Identifier(col_ref),
+                sql.Identifier(f'col_{col_idx}')
+            ))
+            display_column_names.append(col)
+            col_idx += 1
+
         # Обрабатываем JOIN'ы
         join_clauses = []
         alias_idx = ord('b')
@@ -814,14 +824,17 @@ class DatasetDraftPreviewView(APIView):
                 
                 join_cols = introspect_columns(table_name)
             
-            # Добавляем колонки из JOIN таблицы (только уникальные)
-            for col in join_cols:
+            # Добавляем колонки из JOIN таблицы (только уникальные) с уникальными алиасами
+            for j, col in enumerate(join_cols):
                 if col not in all_cols:
+                    join_col_ref = f'col_{j}' if is_join_file else col
                     select_parts.append(sql.SQL('{}.{} AS {}').format(
                         sql.Identifier(tbl_alias),
-                        sql.Identifier(col),
-                        sql.Identifier(col)
+                        sql.Identifier(join_col_ref),
+                        sql.Identifier(f'col_{col_idx}')
                     ))
+                    display_column_names.append(col)
+                    col_idx += 1
                     all_cols.add(col)
             
             # Формируем условие JOIN
@@ -835,12 +848,14 @@ class DatasetDraftPreviewView(APIView):
             
             left_col = lines[0]['left']
             right_col = lines[0]['right']
+            left_col_ref = f'col_{main_cols.index(left_col)}' if is_main_file and left_col in main_cols else left_col
+            right_col_ref = f'col_{join_cols.index(right_col)}' if is_join_file and right_col in join_cols else right_col
             
             join_condition = sql.SQL('{}.{} = {}.{}').format(
                 sql.Identifier(main_alias),
-                sql.Identifier(left_col),
+                sql.Identifier(left_col_ref),
                 sql.Identifier(tbl_alias),
-                sql.Identifier(right_col)
+                sql.Identifier(right_col_ref)
             )
             
             join_clause = sql.SQL('{} {} ON {}').format(
@@ -883,12 +898,11 @@ class DatasetDraftPreviewView(APIView):
             with connection.cursor() as cursor:
                 cursor.execute(final_query)
                 rows = cursor.fetchall()
-                columns = [col[0] for col in cursor.description]
             
-            logger.info(f"Получено {len(rows)} строк, {len(columns)} колонок")
+            logger.info(f"Получено {len(rows)} строк, {len(display_column_names)} колонок")
 
             return Response({
-                "columns": columns,
+                "columns": display_column_names,
                 "rows": rows,
                 "has_more": len(rows) == limit if limit else False
             })
@@ -2024,17 +2038,15 @@ class DatasetFieldValuesView(APIView):
                 return Response({"detail": "Field not found"}, status=404)
 
         try:
-            # Строим базовый запрос датасета только с одним нужным полем.
-            # build_dataset_query уже учитывает новую архитектуру (чтение файлов напрямую,
-            # JOIN-ы и пр.), поэтому нам не нужна материализованная таблица в БД.
-            base_query = build_dataset_query(
+            base_query, display_columns = build_dataset_query(
                 dataset,
                 select_fields=[field.name],
                 limit=None,
                 offset=None,
             )
+            # Базовый запрос возвращает одну колонку out_0 при select_fields
+            col_ident = sql.Identifier('out_0')
 
-            # Оборачиваем базовый запрос и выбираем уникальные непустые значения нужного поля.
             distinct_query = sql.SQL(
                 'SELECT DISTINCT {col} '
                 'FROM ({base}) AS sub '
@@ -2042,7 +2054,7 @@ class DatasetFieldValuesView(APIView):
                 'ORDER BY {col} '
                 'LIMIT 1000'
             ).format(
-                col=sql.Identifier(field.name),
+                col=col_ident,
                 base=base_query,
             )
 

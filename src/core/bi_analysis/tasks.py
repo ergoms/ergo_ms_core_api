@@ -384,15 +384,14 @@ def process_dataset_preview(self, dataset_id: int, limit: Optional[int] = None):
         if not dataset.tables.exists():
             raise ValueError("Таблицы не найдены в датасете. Добавьте главную таблицу для предпросмотра.")
         
-        # Используем новую логику с динамическим SQL, которая читает файлы напрямую через polars и бинарные файлы
-        query = build_dataset_query(dataset, limit=limit)
-        
+        query, display_columns = build_dataset_query(dataset, limit=limit)
+
         self.update_state(state='PROGRESS', meta={'progress': 0.5, 'message': 'Выполнение SQL запроса'})
-        
+
         with connection.cursor() as cursor:
             cursor.execute(query)
             rows = cursor.fetchall()
-            columns = [col[0] for col in cursor.description]
+            columns = display_columns if display_columns else [col[0] for col in cursor.description]
         
         self.update_state(state='PROGRESS', meta={'progress': 1.0, 'message': 'Завершено'})
         
@@ -516,13 +515,22 @@ def process_draft_preview(self, draft_data: Dict[str, Any]):
             
             main_cols = introspect_columns(table_name)
         
-        # Формируем SELECT
-        select_parts = [sql.SQL('{}.{} AS {}').format(
-            sql.Identifier(main_alias),
-            sql.Identifier(col),
-            sql.Identifier(col)
-        ) for col in main_cols]
-        
+        # Формируем SELECT с уникальными алиасами (col_0, col_1, ...) во избежание
+        # неоднозначности при длинных именах колонок (PostgreSQL обрезает идентификаторы до 63 байт).
+        # Для файлового источника подзапрос отдаёт col_0, col_1, ...
+        display_column_names = []
+        select_parts = []
+        col_idx = 0
+        for col in main_cols:
+            col_ref = f'col_{col_idx}' if is_main_file else col
+            select_parts.append(sql.SQL('{}.{} AS {}').format(
+                sql.Identifier(main_alias),
+                sql.Identifier(col_ref),
+                sql.Identifier(f'col_{col_idx}')
+            ))
+            display_column_names.append(col)
+            col_idx += 1
+
         # Обрабатываем JOIN'ы
         join_clauses = []
         alias_idx = ord('b')
@@ -562,14 +570,17 @@ def process_draft_preview(self, draft_data: Dict[str, Any]):
                 
                 join_cols = introspect_columns(table_name)
             
-            # Добавляем колонки из JOIN таблицы
-            for col in join_cols:
+            # Добавляем колонки из JOIN таблицы с уникальными алиасами
+            for j, col in enumerate(join_cols):
                 if col not in all_cols:
+                    join_col_ref = f'col_{j}' if is_join_file else col
                     select_parts.append(sql.SQL('{}.{} AS {}').format(
                         sql.Identifier(tbl_alias),
-                        sql.Identifier(col),
-                        sql.Identifier(col)
+                        sql.Identifier(join_col_ref),
+                        sql.Identifier(f'col_{col_idx}')
                     ))
+                    display_column_names.append(col)
+                    col_idx += 1
                     all_cols.add(col)
             
             # Формируем условие JOIN
@@ -583,12 +594,14 @@ def process_draft_preview(self, draft_data: Dict[str, Any]):
             
             left_col = lines[0]['left']
             right_col = lines[0]['right']
+            left_col_ref = f'col_{main_cols.index(left_col)}' if is_main_file and left_col in main_cols else left_col
+            right_col_ref = f'col_{join_cols.index(right_col)}' if is_join_file and right_col in join_cols else right_col
             
             join_condition = sql.SQL('{}.{} = {}.{}').format(
                 sql.Identifier(main_alias),
-                sql.Identifier(left_col),
+                sql.Identifier(left_col_ref),
                 sql.Identifier(tbl_alias),
-                sql.Identifier(right_col)
+                sql.Identifier(right_col_ref)
             )
             
             join_clause = sql.SQL('{} {} ON {}').format(
@@ -613,12 +626,11 @@ def process_draft_preview(self, draft_data: Dict[str, Any]):
         with connection.cursor() as cursor:
             cursor.execute(final_query)
             rows = cursor.fetchall()
-            columns = [col[0] for col in cursor.description]
         
         self.update_state(state='PROGRESS', meta={'progress': 0.9, 'message': 'Формирование результата'})
         
         result = {
-            'columns': columns,
+            'columns': display_column_names,
             'rows': rows
         }
         
