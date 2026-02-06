@@ -117,8 +117,11 @@ class DatasetUpdateSerializer(serializers.ModelSerializer):
                     'description': p.get('description', ''),
                 })
             instance.set_params_items(items)
-        fields_data = self.initial_data.get('fields', [])
-        if fields_data is not None:  # Явно передан список полей (может быть пустым)
+        # ВАЖНО: используем default=None, чтобы отличать
+        # "ключ fields не передан" (fields_data is None)
+        # от "передан пустой список" (fields_data == []).
+        fields_data = self.initial_data.get('fields', None)
+        if fields_data is not None:  # Ключ fields явно присутствует (может быть пустым списком)
             # Получаем ID полей из запроса
             field_ids_in_request = {field_data.get('id') for field_data in fields_data if field_data.get('id')}
             
