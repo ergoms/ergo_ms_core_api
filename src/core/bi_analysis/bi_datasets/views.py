@@ -2037,6 +2037,8 @@ class DatasetFieldValuesView(APIView):
             else:
                 return Response({"detail": "Field not found"}, status=404)
 
+        search = (request.query_params.get('search') or '').strip()
+
         try:
             base_query, display_columns = build_dataset_query(
                 dataset,
@@ -2044,18 +2046,28 @@ class DatasetFieldValuesView(APIView):
                 limit=None,
                 offset=None,
             )
-            # Базовый запрос возвращает одну колонку out_0 при select_fields
             col_ident = sql.Identifier('out_0')
+
+            where_parts = [sql.SQL('{col} IS NOT NULL').format(col=col_ident)]
+            if search:
+                where_parts.append(
+                    sql.SQL('position(lower({pat}::text) in lower({col}::text)) > 0').format(
+                        pat=sql.Literal(search),
+                        col=col_ident,
+                    )
+                )
+            where_clause = sql.SQL(' AND ').join(where_parts)
 
             distinct_query = sql.SQL(
                 'SELECT DISTINCT {col} '
                 'FROM ({base}) AS sub '
-                'WHERE {col} IS NOT NULL '
+                'WHERE {where} '
                 'ORDER BY {col} '
                 'LIMIT 1000'
             ).format(
                 col=col_ident,
                 base=base_query,
+                where=where_clause,
             )
 
             with connection.cursor() as cursor:
