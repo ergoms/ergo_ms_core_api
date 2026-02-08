@@ -936,18 +936,23 @@ class RenameDatasetColumnsView(APIView):
         request_data = getattr(request, 'data', {})
         renames = request_data.get('renames', []) if isinstance(request_data, dict) else []
         table_ref = dataset.table_ref
-        schema, table = ('public', table_ref)
-        if '.' in table_ref:
-            schema, table = table_ref.split('.', 1)
-
-        with connection.cursor() as cursor:
+        if table_ref is not None:
+            schema, table = ('public', table_ref)
+            if '.' in table_ref:
+                schema, table = table_ref.split('.', 1)
+            with connection.cursor() as cursor:
+                for rename in renames:
+                    cursor.execute(
+                        f'ALTER TABLE "{schema}"."{table}" RENAME COLUMN "{rename["old_name"]}" TO "{rename["new_name"]}";'
+                    )
+                    DataSetField.objects.filter(
+                        dataset=dataset, source_column=rename["old_name"]
+                    ).update(name=rename["new_name"], source_column=rename["new_name"])
+        else:
             for rename in renames:
-                cursor.execute(
-                    f'ALTER TABLE "{schema}"."{table}" RENAME COLUMN "{rename["old_name"]}" TO "{rename["new_name"]}";'
-                )
                 DataSetField.objects.filter(
                     dataset=dataset, source_column=rename["old_name"]
-                ).update(name=rename["new_name"], source_column=rename["new_name"])
+                ).update(name=rename["new_name"])
         return Response({"status": "ok"})
 
 # ==============================================================================

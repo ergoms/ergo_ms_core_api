@@ -875,9 +875,12 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
     table_aliases = table_id_to_alias.copy()
     display_columns = []
 
-    def _col_ref(table_id, source_column):
-        if table_id == main_table.id and main_table_columns and source_column in main_table_columns:
-            return f'col_{main_table_columns.index(source_column)}'
+    def _col_ref(table_id, source_column, fallback_out_idx=None):
+        if table_id == main_table.id and main_table_columns:
+            if source_column in main_table_columns:
+                return f'col_{main_table_columns.index(source_column)}'
+            if is_file_source and fallback_out_idx is not None and fallback_out_idx < len(main_table_columns):
+                return f'col_{fallback_out_idx}'
         if table_id in join_table_columns and source_column in join_table_columns[table_id]:
             return f'col_{join_table_columns[table_id].index(source_column)}'
         return source_column
@@ -887,7 +890,7 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
             field_expr = sql.SQL(field.expression)
         else:
             table_alias = table_aliases.get(field.source_table.id, main_alias)
-            col_ref = _col_ref(field.source_table.id, field.source_column)
+            col_ref = _col_ref(field.source_table.id, field.source_column, fallback_out_idx=out_idx)
             field_expr = sql.SQL('{}.{}').format(
                 sql.Identifier(table_alias),
                 sql.Identifier(col_ref)
