@@ -1518,15 +1518,21 @@ class DatasetRowsAggAPIView(APIView):
     """
     POST  .../datasets/<dataset_id>/rows-agg/
     body = { "fields": {... exactly Chart.params ...} }
+    Поля из группы "filters" применяются как WHERE и не участвуют в GROUP BY,
+    чтобы индикатор и другие типы графиков не дублировали строки по измерениям фильтров.
     """
     def post(self, request, pk):
         ds = get_object_or_404(Dataset, pk=pk)
-        chart_fields = []
         request_data = getattr(request, 'data', {})
         fields_data = request_data.get('fields', {}) if isinstance(request_data, dict) else {}
-        for group_key, field_list in (fields_data or {}).items():
+        fields_data = fields_data or {}
+        chart_fields = []
+        for group_key, field_list in fields_data.items():
+            if group_key == 'filters':
+                continue
             chart_fields.extend(field_list)
-        data = get_rows_for_chart(ds, chart_fields)
+        filter_conditions = list(fields_data.get('filters') or [])
+        data = get_rows_for_chart(ds, chart_fields, filter_conditions=filter_conditions)
         return Response(data)
 
 def detect_column_type(values):

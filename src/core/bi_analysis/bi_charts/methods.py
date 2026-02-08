@@ -37,10 +37,63 @@ def _probe_type(table: str, column: str) -> str:
 
     return 'string'
 
-def get_rows_for_chart(dataset, chart_fields):
+def _build_filter_where(filter_conditions, name_to_out):
+    """Строит SQL WHERE из условий фильтров (для подзапроса с колонками out_0, out_1, ...)."""
+    if not filter_conditions or not name_to_out:
+        return None
+    where_parts = []
+    for fc in filter_conditions:
+        name = fc.get('name') or (fc.get('field') or {}).get('name')
+        if not name:
+            continue
+        col_ref = name_to_out.get(name)
+        if col_ref is None:
+            continue
+        filt = fc.get('filter') or fc
+        op = (filt.get('op') or 'eq').lower()
+        value = filt.get('value')
+        col_expr = sql.Identifier(col_ref)
+        if op == 'eq':
+            where_parts.append(sql.SQL('{} = {}').format(col_expr, sql.Literal(value)))
+        elif op == 'neq':
+            where_parts.append(sql.SQL('{} IS DISTINCT FROM {}').format(col_expr, sql.Literal(value)))
+        elif op == 'in':
+            vals = value if isinstance(value, (list, tuple)) else [value]
+            if vals:
+                where_parts.append(
+                    sql.SQL('{} IN ({})').format(col_expr, sql.SQL(',').join(sql.Literal(v) for v in vals))
+                )
+        elif op == 'nin':
+            vals = value if isinstance(value, (list, tuple)) else [value]
+            if vals:
+                where_parts.append(
+                    sql.SQL('{} NOT IN ({})').format(col_expr, sql.SQL(',').join(sql.Literal(v) for v in vals))
+                )
+        elif op in ('gt', 'gte', 'lt', 'lte'):
+            where_parts.append(
+                sql.SQL('{} {} {}').format(col_expr, sql.SQL(op), sql.Literal(value))
+            )
+        elif op in ('contains', 'contains_i'):
+            pattern = f'%{value}%' if value is not None else '%%'
+            expr = sql.SQL('{}::text ILIKE {}').format(col_expr, sql.Literal(pattern))
+            where_parts.append(expr)
+        elif op in ('startswith', 'startswith_i'):
+            pattern = f'{value}%' if value is not None else '%'
+            where_parts.append(sql.SQL('{}::text ILIKE {}').format(col_expr, sql.Literal(pattern)))
+        elif op == 'empty':
+            where_parts.append(sql.SQL('{} IS NULL OR {}::text = \'\'').format(col_expr, col_expr))
+        elif op == 'nempty':
+            where_parts.append(sql.SQL('{} IS NOT NULL AND {}::text <> \'\'').format(col_expr, col_expr))
+    if not where_parts:
+        return None
+    return sql.SQL(' AND ').join(where_parts)
+
+
+def get_rows_for_chart(dataset, chart_fields, filter_conditions=None):
     """
     :param dataset: объект DataSet
     :param chart_fields: список объектов DataSetField (или dict с полями name, aggregation, expression/source_column)
+    :param filter_conditions: список dict с name/field, filter{op, value} — применяются как WHERE, не в GROUP BY
     :return: список словарей (одна строка — одна агрегированная группа)
     """
     # Проверяем, что dataset - это объект Dataset с метаданными
@@ -148,13 +201,17 @@ def get_rows_for_chart(dataset, chart_fields):
         if not is_agg:
             group_by_exprs.append(col_expr)
 
-    # Строим итоговый запрос: SELECT с агрегациями FROM (базовый запрос)
+    # Строим итоговый запрос: SELECT с агрегациями FROM (базовый запрос) [WHERE по фильтрам]
     subquery = sql.SQL('({}) AS dataset_query').format(base_query)
     
     final_query_parts = [
         sql.SQL('SELECT {}').format(sql.SQL(', ').join(select_exprs)),
         sql.SQL('FROM {}').format(subquery)
     ]
+    
+    filter_where = _build_filter_where(filter_conditions or [], name_to_out)
+    if filter_where is not None:
+        final_query_parts.append(sql.SQL('WHERE {}').format(filter_where))
     
     if group_by_exprs:
         final_query_parts.append(
