@@ -212,6 +212,9 @@ class DataSetField(models.Model):
     order         = models.PositiveSmallIntegerField(default=0)
     description   = models.TextField(blank=True, default="")
 
+    class Meta:
+        ordering = ['order', 'id']
+
     def __str__(self):
         return f"{self.dataset.name}.{self.name}"
 
