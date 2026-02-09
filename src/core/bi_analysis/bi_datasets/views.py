@@ -433,34 +433,33 @@ class DatasetPreviewView(APIView):
                         row_limit=limit
                     )
 
-                    # Если в датасете определены поля, используем их для выбора и порядка колонок.
-                    # Это делает быстрый путь семантически эквивалентным SQL-пути, который
-                    # строится через build_dataset_query и использует dataset.fields.order_by('order').
-                    dataset_fields_qs = dataset.fields.all().order_by('order')
-                    if dataset_fields_qs.exists():
-                        # Сначала пытаемся выбрать колонки исходя из source_column (если заданы),
-                        # при отсутствии — по имени поля (name). Отсутствующие в файле колонки пропускаем.
-                        selected_columns = []
-                        for f in dataset_fields_qs:
-                            src_col = f.source_column or f.name
-                            if src_col and src_col in table_data.columns:
-                                selected_columns.append(src_col)
-
-                        if selected_columns:
-                            # Фильтруем и переупорядочиваем колонки в соответствии с полями датасета
-                            table_data = table_data.select(selected_columns)
-
-                    # Конвертируем в формат ответа
-                    columns = table_data.columns
-                    rows = table_data.rows
-                    
-                    # Преобразуем строки в список кортежей (как в SQL результате)
-                    rows_tuples = [tuple(row) for row in rows]
+                    # Если в датасете определены поля, используем их для выбора, порядка и имён колонок.
+                    # Все поля датасета попадают в предпросмотр; отсутствующие в файле — колонка с None.
+                    dataset_fields_qs = list(dataset.fields.all().order_by('order'))
+                    if dataset_fields_qs:
+                        col_name_to_idx = {c: i for i, c in enumerate(table_data.columns)}
+                        display_columns = [f.name for f in dataset_fields_qs]
+                        new_rows = []
+                        for row in table_data.rows:
+                            new_row = []
+                            for f in dataset_fields_qs:
+                                src_col = f.source_column or f.name
+                                idx = col_name_to_idx.get(src_col) if src_col else None
+                                if idx is not None and idx < len(row):
+                                    new_row.append(row[idx])
+                                else:
+                                    new_row.append(None)
+                            new_rows.append(tuple(new_row))
+                        columns = display_columns
+                        rows_tuples = new_rows
+                    else:
+                        columns = table_data.columns
+                        rows_tuples = [tuple(row) for row in table_data.rows]
                     
                     response_data = {
                         "columns": columns,
                         "rows": rows_tuples,
-                        "has_more": len(rows) == limit  # Указываем, есть ли еще данные
+                        "has_more": len(rows_tuples) == limit if limit else False
                     }
                     
                     # Добавляем total_count, если он был подсчитан

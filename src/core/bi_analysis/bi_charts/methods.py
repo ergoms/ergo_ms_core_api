@@ -1,7 +1,8 @@
+import re
 from django.db import connection
 from psycopg2 import sql
 from decimal import Decimal
-from src.core.bi_analysis.services.services import build_dataset_query
+from src.core.bi_analysis.services.services import build_dataset_query, read_file_to_dataframe
 
 PG_NUMERIC = {
     'smallint', 'integer', 'bigint',
@@ -36,6 +37,84 @@ def _probe_type(table: str, column: str) -> str:
             return 'date'
 
     return 'string'
+
+def _resolve_column_index(columns, col_name, field_order=None, ordered_names=None):
+    """Возвращает индекс колонки по имени (точное совпадение, strip, order поля или порядок в датасете)."""
+    if not columns:
+        return None
+    if col_name in columns:
+        return columns.index(col_name)
+    col_stripped = str(col_name or '').strip()
+    for i, c in enumerate(columns):
+        if str(c or '').strip() == col_stripped:
+            return i
+    if field_order is not None and 0 <= field_order < len(columns):
+        return field_order
+    if ordered_names and col_name in ordered_names and len(ordered_names) <= len(columns):
+        return ordered_names.index(col_name)
+    return None
+
+
+def _row_passes_filters(row, filter_conditions, columns, name_to_idx):
+    """Проверяет, проходит ли строка (list) все условия фильтра. name_to_idx: имя поля -> индекс колонки."""
+    if not filter_conditions or not name_to_idx:
+        return True
+    for fc in filter_conditions:
+        name = fc.get('name') or (fc.get('field') or {}).get('name')
+        if not name:
+            continue
+        col_idx = name_to_idx.get(name)
+        if col_idx is None or col_idx >= len(row):
+            continue
+        filt = fc.get('filter') or fc
+        op = (filt.get('op') or 'eq').lower()
+        value = filt.get('value')
+        cell = row[col_idx]
+        cell_str = str(cell).strip() if cell is not None else ''
+        if op == 'eq':
+            if not (cell == value or cell_str == str(value).strip()):
+                return False
+        elif op == 'neq':
+            if cell == value or cell_str == str(value).strip():
+                return False
+        elif op == 'in':
+            vals = value if isinstance(value, (list, tuple)) else [value]
+            if vals and cell not in vals and cell_str not in [str(v).strip() for v in vals]:
+                return False
+        elif op == 'nin':
+            vals = value if isinstance(value, (list, tuple)) else [value]
+            if vals and (cell in vals or cell_str in [str(v).strip() for v in vals]):
+                return False
+        elif op in ('gt', 'gte', 'lt', 'lte'):
+            try:
+                cv = float(str(cell).replace(',', '.')) if cell not in (None, '') else None
+                vv = float(value) if value not in (None, '') else None
+                if cv is None or vv is None:
+                    return False
+                if op == 'gt' and not (cv > vv):
+                    return False
+                if op == 'gte' and not (cv >= vv):
+                    return False
+                if op == 'lt' and not (cv < vv):
+                    return False
+                if op == 'lte' and not (cv <= vv):
+                    return False
+            except (TypeError, ValueError):
+                return False
+        elif op in ('contains', 'contains_i'):
+            if value is None or (cell_str.upper().find(str(value).upper()) < 0):
+                return False
+        elif op in ('startswith', 'startswith_i'):
+            if value is None or not cell_str.upper().startswith(str(value).upper()):
+                return False
+        elif op == 'empty':
+            if cell is not None and cell_str != '':
+                return False
+        elif op == 'nempty':
+            if cell is None or cell_str == '':
+                return False
+    return True
+
 
 def _build_filter_where(filter_conditions, name_to_out):
     """Строит SQL WHERE из условий фильтров (для подзапроса с колонками out_0, out_1, ...)."""
@@ -129,6 +208,78 @@ def get_rows_for_chart(dataset, chart_fields, filter_conditions=None):
     chart_fields = enriched_fields
     # --------------------------------------------------------------------------
 
+    main_table = dataset.tables.filter(joined_on_type__isnull=True).first()
+    has_joins = dataset.tables.filter(joined_on_type__isnull=False).exists()
+    ds_fields_map_full = {f.name: f for f in dataset.fields.all()}
+
+    if (
+        main_table
+        and main_table.file_upload_id
+        and not has_joins
+        and len(chart_fields) == 1
+    ):
+        f = chart_fields[0]
+        output_name = f.get('name')
+        agg = (f.get('aggregation') or 'none').lower()
+        if agg == 'none' and output_name and output_name in ds_fields_map_full:
+            ds_agg = getattr(ds_fields_map_full[output_name], 'aggregation', None)
+            if ds_agg:
+                agg = (ds_agg or 'none').lower()
+        if agg == 'none' and output_name:
+            agg = 'sum'
+        if agg in ('sum', 'avg', 'count') and output_name:
+            ds_field = ds_fields_map_full.get(output_name)
+            col_name = (getattr(ds_field, 'source_column', None) or output_name) if ds_field else output_name
+            try:
+                table_data = read_file_to_dataframe(
+                    main_table.file_upload_id,
+                    sheet_name=getattr(main_table, 'sheet_name', None),
+                    row_limit=None
+                )
+            except Exception:
+                table_data = None
+            if table_data and table_data.columns:
+                ordered_names = list(
+                    dataset.fields.all().order_by('order').values_list('name', flat=True)
+                )
+                field_order = getattr(ds_field, 'order', None) if ds_field else None
+                idx = _resolve_column_index(
+                    table_data.columns, col_name,
+                    field_order=field_order,
+                    ordered_names=ordered_names if len(ordered_names) <= len(table_data.columns) else None
+                )
+                if idx is not None:
+                    name_to_idx = {}
+                    for field in dataset.fields.all():
+                        fc_name = getattr(field, 'source_column', None) or field.name
+                        fi = _resolve_column_index(table_data.columns, fc_name)
+                        if fi is not None:
+                            name_to_idx[field.name] = fi
+                    total = 0
+                    count = 0
+                    for row in table_data.rows:
+                        if filter_conditions and not _row_passes_filters(
+                            row, filter_conditions, table_data.columns, name_to_idx
+                        ):
+                            continue
+                        if idx >= len(row):
+                            continue
+                        v = row[idx]
+                        s = str(v).replace(',', '.') if v is not None else ''
+                        s = re.sub(r'[^0-9.-]', '', s)
+                        if s and s != '-':
+                            try:
+                                total += float(s)
+                                count += 1
+                            except ValueError:
+                                pass
+                    result = (
+                        [{output_name: total}] if agg == 'sum' else
+                        [{output_name: total / count if count else None}] if agg == 'avg' else
+                        [{output_name: count}]
+                    )
+                    return result
+
     select_exprs = []
     output_names = []  # имена полей, которые реально попали в SELECT (в нужном порядке)
     group_by_exprs = []
@@ -169,7 +320,6 @@ def get_rows_for_chart(dataset, chart_fields, filter_conditions=None):
         else:
             return col_expr, False
 
-    ds_fields_map_full = {f.name: f for f in dataset.fields.all()}
     base_query, display_columns = build_dataset_query(dataset)
     # Базовый запрос возвращает колонки out_0, out_1, ...; display_columns — порядок имён полей
     name_to_out = {name: f'out_{i}' for i, name in enumerate(display_columns)} if display_columns else {}

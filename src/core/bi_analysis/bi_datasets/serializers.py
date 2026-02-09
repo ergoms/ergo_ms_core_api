@@ -122,17 +122,28 @@ class DatasetUpdateSerializer(serializers.ModelSerializer):
         # от "передан пустой список" (fields_data == []).
         fields_data = self.initial_data.get('fields', None)
         if fields_data is not None:  # Ключ fields явно присутствует (может быть пустым списком)
-            # Получаем ID полей из запроса
-            field_ids_in_request = {field_data.get('id') for field_data in fields_data if field_data.get('id')}
-            
+            raw_ids = [field_data.get('id') for field_data in fields_data if field_data.get('id') is not None]
+            field_ids_in_request = set()
+            for fid in raw_ids:
+                try:
+                    field_ids_in_request.add(int(fid))
+                except (TypeError, ValueError):
+                    pass
+
             # Удаляем поля, которых нет в запросе
             fields_to_delete = instance.fields.exclude(id__in=field_ids_in_request)
             if fields_to_delete.exists():
                 fields_to_delete.delete()
-            
+
             # Обновляем существующие поля и создаем новые
             for idx, field_data in enumerate(fields_data):
-                field_id = field_data.get('id')
+                raw_field_id = field_data.get('id')
+                field_id = None
+                if raw_field_id is not None:
+                    try:
+                        field_id = int(raw_field_id)
+                    except (TypeError, ValueError):
+                        pass
                 if field_id:
                     # Обновляем существующее поле
                     field_obj = instance.fields.filter(id=field_id).first()

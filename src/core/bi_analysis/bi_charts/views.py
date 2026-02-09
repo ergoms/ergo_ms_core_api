@@ -82,14 +82,15 @@ class ChartRowsAPIView(APIView):
 
         params = chart.params or {}
         chart_fields = []
-        for section in ('x', 'y', 'color', 'labels', 'sort', 'filters'):
+        for section in ('x', 'y', 'y2', 'color', 'labels', 'sort', 'value', 'indicators', 'category'):
             if section in params:
                 section_fields = params[section]
                 if isinstance(section_fields, list):
                     chart_fields.extend(section_fields)
                 elif section_fields:
                     chart_fields.append(section_fields)
-        rows = get_rows_for_chart(dataset, chart_fields)
+        filter_conditions = list(params.get('filters') or [])
+        rows = get_rows_for_chart(dataset, chart_fields, filter_conditions=filter_conditions)
         return Response(rows)
 
 @api_view(['GET'])
