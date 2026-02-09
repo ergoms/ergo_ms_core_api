@@ -765,3 +765,27 @@ def process_file_preview(self, temp_path: str, sheet_name: Optional[str] = None,
         logger.error(f"Ошибка обработки предпросмотра файла {temp_path}: {str(e)}")
         raise
 
+
+@shared_task(name='src.core.bi_analysis.tasks.cleanup_unattached_file_uploads')
+def cleanup_unattached_file_uploads():
+    """
+    Удаляет FileUpload без привязки к подключению (connection=null), старше 30 дней.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+
+    threshold = timezone.now() - timedelta(days=30)
+    qs = FileUpload.objects.filter(connection__isnull=True, uploaded_at__lt=threshold)
+    deleted_count = 0
+    for upload in qs:
+        try:
+            if upload.file:
+                upload.file.delete(save=False)
+            upload.delete()
+            deleted_count += 1
+        except Exception as e:
+            logger.warning("Не удалось удалить FileUpload id=%s: %s", upload.id, e)
+    if deleted_count:
+        logger.info("cleanup_unattached_file_uploads: удалено записей %s", deleted_count)
+    return deleted_count
+

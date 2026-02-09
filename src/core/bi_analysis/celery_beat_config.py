@@ -20,6 +20,10 @@ class BIAnalysisBeatConfig(CeleryBeatModuleConfig):
                 'task': 'src.core.bi_analysis.tasks.sync_data_from_sources',
                 'schedule': crontab(minute='*/5'),
             },
+            'cleanup-unattached-file-uploads': {
+                'task': 'src.core.bi_analysis.tasks.cleanup_unattached_file_uploads',
+                'schedule': crontab(hour=3, minute=0),
+            },
         }
     
     def get_additional_beat_config(self) -> Dict[str, Any]:

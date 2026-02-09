@@ -15,7 +15,7 @@ from rest_framework import (
     viewsets
 )
 from rest_framework.exceptions import ValidationError
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -1026,12 +1026,13 @@ class TempUploadView(APIView):
 class FileUploadDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     GET    /upload/{pk}/    — метаданные + предпросмотр содержимого
-    PUT    /upload/{pk}/    — изменить имя/загрузить новый файл
+    PATCH  /upload/{pk}/    — обновить метаданные (например connection) — JSON
+    PUT    /upload/{pk}/    — изменить имя/загрузить новый файл — multipart
     DELETE /upload/{pk}/    — удалить запись и файл на диске
     """
     serializer_class = FileUploadSerializer
     permission_classes = [permissions.IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
@@ -1647,6 +1648,141 @@ def extract_columns_info(instance):
             return {'columns': [], 'types': []}
     return {'columns': [], 'types': []}
 
+
+def _create_file_upload_from_temp(user, temp_path, name, original_filename, file_type, sheet, connection_obj):
+    """
+    Создаёт FileUpload из временного файла (конвертация в .bin при возможности, сохранение в storage).
+    Удаляет temp_path после сохранения. connection_obj может быть None (не привязанный файл).
+    """
+    upload = FileUpload(
+        owner=user,
+        name=name,
+        original_filename=original_filename,
+        file_type=file_type,
+        connection=connection_obj
+    )
+    upload.save()
+    if not upload.file_uuid:
+        upload.file_uuid = uuid4()
+        upload.save(update_fields=['file_uuid'])
+
+    logger.info(f"Создан FileUpload с UUID: {upload.file_uuid}, ID: {upload.id}")
+
+    binary_converted = False
+    binary_path = None
+    polars_available = False
+    try:
+        from src.core.bi_analysis.bi_datasets.binary_storage import convert_to_binary
+        try:
+            import polars as pl
+            polars_available = True
+        except ImportError:
+            pass
+
+        if polars_available and temp_path and file_type and os.path.exists(temp_path):
+            temp_binary_path = temp_path + ".bin"
+            conversion_result = convert_to_binary(temp_path, temp_binary_path, sheet_name=sheet, file_type=file_type)
+            if conversion_result and os.path.exists(temp_binary_path):
+                binary_path = temp_binary_path
+                binary_converted = True
+    except Exception as e:
+        logger.error(f"[CONVERT] Ошибка при конвертации в бинарный формат: {str(e)}", exc_info=True)
+
+    if binary_converted and binary_path and os.path.exists(binary_path):
+        binary_filename = f"{upload.file_uuid}.bin"
+        try:
+            with open(binary_path, 'rb') as f:
+                upload.file.save(binary_filename, File(f), save=True)
+            upload.file_type = 'bin'
+            upload.save(update_fields=['file', 'file_type'])
+        except Exception as e:
+            logger.error(f"[SAVE] Ошибка при сохранении бинарного файла: {str(e)}", exc_info=True)
+            binary_converted = False
+        try:
+            if binary_path and os.path.exists(binary_path):
+                os.remove(binary_path)
+        except OSError:
+            pass
+    else:
+        if original_filename:
+            file_ext = os.path.splitext(original_filename)[1] or '.bin'
+        else:
+            file_ext = '.bin' if file_type == 'bin' else ('.xlsx' if file_type == 'xlsx' else '.csv')
+        uuid_filename = f"{upload.file_uuid}{file_ext}"
+        if temp_path and os.path.exists(temp_path):
+            with open(temp_path, 'rb') as f:
+                upload.file.save(uuid_filename, File(f), save=True)
+
+    upload.columns_info = extract_columns_info(upload)
+    upload.save(update_fields=['columns_info'])
+
+    try:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+    except OSError:
+        pass
+
+    return upload
+
+
+class FileUploadUnattachedView(generics.ListAPIView):
+    """
+    GET /upload/unattached/ — файлы пользователя без привязки к подключению (connection=null).
+    """
+    serializer_class = FileUploadSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return FileUpload.objects.none()
+        return FileUpload.objects.filter(
+            owner=self.request.user,
+            connection__isnull=True
+        ).select_related('owner').order_by('-uploaded_at')
+
+
+class DirectUploadView(APIView):
+    """
+    POST /upload/direct/ — загрузка файла с созданием FileUpload(connection=null) без temp_path.
+    multipart: file, опционально sheet для xlsx.
+    """
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'error': 'Файл не передан'}, status=400)
+        sheet = request.data.get('sheet') if request.data else None
+        suffix = os.path.splitext(file.name)[-1]
+        file_type = suffix.lstrip('.').lower()
+        original_filename = file.name
+        name = original_filename
+        if sheet and original_filename.lower().endswith('.xlsx'):
+            base = original_filename.replace('.xlsx', '').replace('.XLSX', '')
+            name = f"{base} – {sheet}.xlsx"
+
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                for chunk in file.chunks():
+                    tmp.write(chunk)
+                temp_path = tmp.name
+            upload = _create_file_upload_from_temp(
+                request.user, temp_path, name, original_filename, file_type, sheet, connection_obj=None
+            )
+            serializer = FileUploadSerializer(upload)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+            logger.exception("[DirectUpload] Ошибка при загрузке файла")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class FinalizeUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1677,145 +1813,17 @@ class FinalizeUploadView(APIView):
             except Connection.DoesNotExist:
                 return Response({"error": "Connection not found"}, status=404)
 
-        upload = FileUpload(
-            owner=request.user,
-            name=name,
-            original_filename=original_filename,
-            file_type=file_type,
-            connection=connection_obj
-        )
-
-        # Сначала сохраняем объект без файла, чтобы сгенерировался UUID
-        upload.save()
-        
-        # UUID должен быть сгенерирован автоматически при сохранении
-        if not upload.file_uuid:
-            from uuid import uuid4
-            upload.file_uuid = uuid4()
-            upload.save(update_fields=['file_uuid'])
-        
-        logger.info(f"Создан FileUpload с UUID: {upload.file_uuid}, ID: {upload.id}")
-        
-        # Конвертируем файл в бинарный формат .bin перед сохранением
-        binary_converted = False
-        binary_path = None
-        
-        # Всегда пытаемся конвертировать в бинарный формат для всех типов файлов
         try:
-            from src.core.bi_analysis.bi_datasets.binary_storage import convert_to_binary
-            
-            # Проверяем, установлен ли Polars
-            polars_available = False
-            try:
-                import polars as pl
-                polars_available = True
-                logger.info("Polars установлен, конвертация в .bin возможна")
-            except ImportError:
-                logger.error("Polars не установлен! Файлы не будут конвертироваться в .bin формат")
-                binary_converted = False
-                binary_path = None
-            
-            if polars_available:  # Если Polars установлен, продолжаем
-                # Конвертируем напрямую из исходного файла, Polars сам прочитает нужный лист
-                # Не создаем промежуточный файл, чтобы избежать повреждения данных
-                if temp_path and file_type and os.path.exists(temp_path):
-                    temp_binary_path = temp_path + ".bin"
-                    logger.info(f"[CONVERT] Начинаем конвертацию файла {temp_path} в бинарный формат {temp_binary_path}, тип: {file_type}, лист: {sheet}")
-                    
-                    conversion_result = convert_to_binary(temp_path, temp_binary_path, sheet_name=sheet, file_type=file_type)
-                    logger.info(f"[CONVERT] Результат конвертации: {conversion_result}")
-                    
-                    if conversion_result:
-                        if os.path.exists(temp_binary_path):
-                            binary_path = temp_binary_path
-                            binary_converted = True
-                            file_size = os.path.getsize(binary_path)
-                            logger.info(f"[CONVERT] Файл успешно конвертирован в бинарный формат: {binary_path}, размер: {file_size} байт")
-                        else:
-                            logger.error(f"[CONVERT] Бинарный файл не был создан: {temp_binary_path}")
-                            binary_converted = False
-                    else:
-                        logger.warning(f"[CONVERT] Не удалось конвертировать файл {temp_path} в бинарный формат, используется оригинальный")
-                        binary_converted = False
-                else:
-                    logger.warning(f"[CONVERT] Не удалось найти исходный файл для конвертации: temp_path={temp_path}, file_type={file_type}, exists={os.path.exists(temp_path) if temp_path else False}")
-                    binary_converted = False
+            upload = _create_file_upload_from_temp(
+                request.user, temp_path, name, original_filename, file_type, sheet, connection_obj
+            )
         except Exception as e:
-            logger.error(f"[CONVERT] Ошибка при конвертации в бинарный формат: {str(e)}", exc_info=True)
-            binary_converted = False
-        
-        # Сохраняем файл в Django (бинарный или оригинальный)
-        # UUID уже должен быть сгенерирован при первом сохранении
-        if not upload.file_uuid:
-            upload.file_uuid = uuid4()
-            upload.save(update_fields=['file_uuid'])
-        
-        logger.info(f"[SAVE] Проверка перед сохранением: binary_converted={binary_converted}, binary_path={binary_path}, exists={os.path.exists(binary_path) if binary_path else False}")
-        
-        if binary_converted and binary_path and os.path.exists(binary_path):
-            # Сохраняем бинарный файл с именем по UUID
-            # Имя файла = UUID.bin
-            binary_filename = f"{upload.file_uuid}.bin"
-            
-            logger.info(f"[SAVE] Сохраняем бинарный файл с UUID: {binary_filename}, путь: {binary_path}")
-            try:
-                with open(binary_path, 'rb') as f:
-                    upload.file.save(binary_filename, File(f), save=True)
-                upload.file_type = 'bin'
-                upload.save(update_fields=['file', 'file_type'])
-                logger.info(f"[SAVE] Бинарный файл успешно сохранен в Django, file_type установлен в 'bin'")
-            except Exception as e:
-                logger.error(f"[SAVE] Ошибка при сохранении бинарного файла в Django: {str(e)}", exc_info=True)
-                # Fallback на оригинальный файл
-                binary_converted = False
-            
-            # Проверяем, что файл действительно сохранен
-            if upload.file and hasattr(upload.file, 'path'):
-                saved_path = upload.file.path
-                if os.path.exists(saved_path):
-                    logger.info(f"Бинарный файл успешно сохранен: {saved_path}, размер: {os.path.getsize(saved_path)} байт")
-                else:
-                    logger.error(f"Бинарный файл не найден после сохранения: {saved_path}")
-            
-            # Удаляем временный бинарный файл
-            try:
-                if binary_path and os.path.exists(binary_path):
-                    os.remove(binary_path)
-                    logger.info(f"Временный бинарный файл удален: {binary_path}")
-            except Exception as e:
-                logger.warning(f"Не удалось удалить временный бинарный файл: {e}")
-        else:
-            # Сохраняем оригинальный файл (fallback) - тоже с UUID
-            logger.warning(f"[SAVE] Используется оригинальный файл вместо бинарного. binary_converted={binary_converted}, binary_path={binary_path}, polars_available={polars_available if 'polars_available' in locals() else 'unknown'}")
-            
-            # Определяем расширение оригинального файла
-            if original_filename:
-                file_ext = os.path.splitext(original_filename)[1] or '.bin'
-            else:
-                file_ext = '.bin' if file_type == 'bin' else ('.xlsx' if file_type == 'xlsx' else '.csv')
-            
-            # Имя файла = UUID + расширение
-            uuid_filename = f"{upload.file_uuid}{file_ext}"
-            
-            if temp_path and os.path.exists(temp_path):
-                with open(temp_path, 'rb') as f:
-                    upload.file.save(uuid_filename, File(f), save=True)
-
-        upload.columns_info = extract_columns_info(upload)
-        upload.save(update_fields=['columns_info'])
-
-        # Удаляем временные файлы
-        try:
-            if temp_path and os.path.exists(temp_path):
-                os.remove(temp_path)
-        except OSError:
-            pass
-        
+            logger.exception("[FINALIZE] Ошибка при создании FileUpload")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         serializer = FileUploadSerializer(upload)
-        response_data = serializer.data
         logger.info(f"[FINALIZE] Файл успешно создан: ID={upload.id}, UUID={upload.file_uuid}, name={upload.name}, owner={upload.owner.id}")
-        return Response(response_data, status=status.HTTP_201_CREATED)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 # ==============================================================================
 # XLSX helper endpoints

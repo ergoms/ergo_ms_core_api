@@ -7,7 +7,8 @@ DatasetDetailView, DatasetPreviewView, DatasetPreviewTaskStatusView,
     TempUploadView, FileUploadDetailView,
     FinalizeUploadView, XlsxSheetListView,
     XlsxTempPreviewView, FilePreviewTaskStatusView, FileUploadByConnectionView, AddTableToDatasetView, DatasetRemoveRelationView, DatasetColumnsAPIView,
-    RenameDatasetColumnsView, DatasetListCreateView, DatasetJoinTableView, DataSetTableColumnsView, DatasetDraftPreviewView, DatasetAddRelationView, DatasetRowsAPIView, DatasetRowsAggAPIView, DatasetFieldValuesView
+    RenameDatasetColumnsView, DatasetListCreateView, DatasetJoinTableView, DataSetTableColumnsView, DatasetDraftPreviewView, DatasetAddRelationView, DatasetRowsAPIView, DatasetRowsAggAPIView, DatasetFieldValuesView,
+    FileUploadUnattachedView, DirectUploadView
 )
 
 from rest_framework.routers import SimpleRouter
@@ -18,6 +19,8 @@ router.register(r'fields', DataSetFieldViewSet, basename='dataset-fields')
 router.register(r'params', DatasetParamViewSet, basename='dataset-params')
 
 urlpatterns = [
+    path('upload/unattached/', FileUploadUnattachedView.as_view(), name='file-upload-unattached'),
+    path('upload/direct/', DirectUploadView.as_view(), name='direct-upload'),
     path('upload/', TempUploadView.as_view(), name='temp-upload'),
     path('upload/<int:pk>/', FileUploadDetailView.as_view(), name='file-upload-detail'),
     path('upload/finalize/', FinalizeUploadView.as_view(), name='finalize-upload'),

@@ -48,6 +48,10 @@ class BIAnalysisCeleryConfig(CeleryModuleConfig):
                 'time_limit': CELERY_TASK_TIMEOUT,
                 'soft_time_limit': CELERY_SOFT_TIMEOUT,
             },
+            'src.core.bi_analysis.tasks.cleanup_unattached_file_uploads': {
+                'time_limit': 600,
+                'soft_time_limit': 540,
+            },
         }
     
     def get_module_loggers(self) -> Dict[str, Any]:
