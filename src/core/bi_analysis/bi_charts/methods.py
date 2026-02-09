@@ -130,6 +130,7 @@ def get_rows_for_chart(dataset, chart_fields, filter_conditions=None):
     # --------------------------------------------------------------------------
 
     select_exprs = []
+    output_names = []  # имена полей, которые реально попали в SELECT (в нужном порядке)
     group_by_exprs = []
 
     def get_agg_sql(agg, col_expr):
@@ -197,6 +198,7 @@ def get_rows_for_chart(dataset, chart_fields, filter_conditions=None):
                 sql.Identifier(output_name)
             )
         )
+        output_names.append(output_name)
         
         if not is_agg:
             group_by_exprs.append(col_expr)
@@ -222,13 +224,15 @@ def get_rows_for_chart(dataset, chart_fields, filter_conditions=None):
 
     with connection.cursor() as cursor:
         cursor.execute(final_query)
-        columns = [col[0] for col in cursor.description]
-        result = [
-            dict(zip(columns, row))
-            for row in cursor.fetchall()
-        ]
+        rows = cursor.fetchall()
 
-    return result
+    # Важно: возвращаем ключи ровно с именами полей датасета (output_names),
+    # а не с потенциально усечёнными alias из PostgreSQL (ограничение 63 байта).
+    # Это гарантирует совпадение с f.name на фронте даже для очень длинных имён.
+    return [
+        dict(zip(output_names, row))
+        for row in rows
+    ]
 
 
 def _get_rows_for_chart_legacy(dataset, chart_fields, table_name):
@@ -254,6 +258,7 @@ def _get_rows_for_chart_legacy(dataset, chart_fields, table_name):
     chart_fields = enriched_fields
 
     select_exprs = []
+    output_names = []
     group_by_exprs = []
 
     def get_agg_sql(agg, col):
@@ -281,6 +286,8 @@ def _get_rows_for_chart_legacy(dataset, chart_fields, table_name):
 
     for field in chart_fields:
         output_name = field.get('name')
+        if not output_name:
+            continue
         column = (
             field.get('expression') or
             field.get('source_column') or
@@ -290,6 +297,7 @@ def _get_rows_for_chart_legacy(dataset, chart_fields, table_name):
         agg_expr, is_agg = get_agg_sql(aggregation, column)
         expr = sql.SQL('{} AS {}').format(agg_expr, sql.Identifier(output_name))
         select_exprs.append(expr)
+        output_names.append(output_name)
         if not is_agg:
             group_by_exprs.append(sql.Identifier(column))
 
@@ -314,7 +322,9 @@ def _get_rows_for_chart_legacy(dataset, chart_fields, table_name):
 
     with connection.cursor() as cursor:
         cursor.execute(query)
-        columns = [col[0] for col in cursor.description]
-        result = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        rows = cursor.fetchall()
 
-    return result
+    return [
+        dict(zip(output_names, row))
+        for row in rows
+    ]
