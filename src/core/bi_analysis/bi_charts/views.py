@@ -58,22 +58,17 @@ class ChartDetailView(generics.RetrieveUpdateDestroyAPIView):
             return Chart.objects.none()
         return Chart.objects.all().select_related('dataset')
     
-class DatasetRowsAggAPIView(APIView):
-    """
-    POST  .../charts/<chart_id>/rows-agg/
-    body = { "fields": {... exactly Chart.params ...} }
-    """
-    def post(self, request, pk):
-        chart = get_object_or_404(Chart, pk=pk)
-        ds = chart.dataset
-
-        chart_fields = []
-        for group_key, field_list in (request.data.get('fields') or {}).items():
-            chart_fields.extend(field_list)
-
-        data = get_rows_for_chart(ds, chart_fields)
-        return Response(data)
     
+_VIRTUAL_MEASURE_IDS = frozenset({'__measure_names__', '__measure_values__'})
+
+
+def _filter_virtual_fields(fields):
+    return [
+        f for f in fields
+        if (f.get('id') or f.get('name')) not in _VIRTUAL_MEASURE_IDS
+    ]
+
+
 class ChartRowsAPIView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request, pk):
@@ -86,8 +81,8 @@ class ChartRowsAPIView(APIView):
             if section in params:
                 section_fields = params[section]
                 if isinstance(section_fields, list):
-                    chart_fields.extend(section_fields)
-                elif section_fields:
+                    chart_fields.extend(_filter_virtual_fields(section_fields))
+                elif section_fields and (section_fields.get('id') or section_fields.get('name')) not in _VIRTUAL_MEASURE_IDS:
                     chart_fields.append(section_fields)
         filter_conditions = list(params.get('filters') or [])
         rows = get_rows_for_chart(dataset, chart_fields, filter_conditions=filter_conditions)
