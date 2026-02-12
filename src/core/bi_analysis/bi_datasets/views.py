@@ -397,7 +397,7 @@ class DatasetPreviewView(APIView):
             main_table = dataset.tables.filter(joined_on_type__isnull=True).first()
             if not main_table:
                 return Response({"detail": "Не найдена главная таблица для датасета"}, status=400)
-            
+
             # Проверяем, есть ли JOIN'ы в датасете
             has_joins = dataset.tables.filter(joined_on_type__isnull=False).exists()
             

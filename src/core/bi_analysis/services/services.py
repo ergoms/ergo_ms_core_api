@@ -483,6 +483,56 @@ def sync_dataset_fields_with_current_table(dataset):
             field.delete()
 
 
+def _auto_bind_file_to_main_table(dataset, main_table):
+    """
+    Пытается автоматически привязать файловый источник к главной таблице датасета,
+    если file_upload_id потерян (например, после замены/удаления файла) и в подключении
+    остался ровно один файл.
+    """
+    if getattr(main_table, "file_upload_id", None) is not None:
+        return False
+
+    try:
+        table_name = getattr(main_table, "table_name", "") or ""
+        looks_like_file = isinstance(table_name, str) and table_name.lower().endswith(
+            (".xlsx", ".xls", ".csv", ".txt", ".bin")
+        )
+        connection_id = getattr(main_table, "connection_id", None)
+        if not looks_like_file or not connection_id:
+            return False
+
+        candidates = FileUpload.objects.filter(connection_id=connection_id)
+        if candidates.count() != 1:
+            return False
+
+        new_upload = candidates.first()
+        main_table.file_upload = new_upload
+        if hasattr(main_table, "display_name"):
+            main_table.display_name = new_upload.original_filename
+        if hasattr(main_table, "columns_info"):
+            main_table.columns_info = new_upload.columns_info
+
+        update_fields = ["file_upload"]
+        if hasattr(main_table, "display_name"):
+            update_fields.append("display_name")
+        if hasattr(main_table, "columns_info"):
+            update_fields.append("columns_info")
+        main_table.save(update_fields=update_fields)
+
+        # Если у датасета только одна таблица, пересобираем поля под новый файл
+        try:
+            if hasattr(dataset, "tables") and dataset.tables.count() == 1:
+                DataSetField.objects.filter(dataset=dataset).delete()
+                populate_initial_fields_from_file(dataset, new_upload, main_table)
+        except Exception as e:
+            logger.warning(f"_auto_bind_file_to_main_table: failed to rebuild fields: {e}")
+
+        return True
+    except Exception as e:
+        logger.warning(f"_auto_bind_file_to_main_table failed: {e}")
+        return False
+
+
 def _read_excel_table(path, sheet_name=None, row_limit=None):
     wb = load_workbook(filename=path, read_only=True, data_only=True)
     try:
@@ -733,7 +783,12 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
     
     # Определяем, является ли источник файловым
     is_file_source = main_table.file_upload_id is not None
-    
+
+    # Пытаемся автоматически восстановить файловый источник, если он потерян
+    if not is_file_source:
+        if _auto_bind_file_to_main_table(dataset, main_table):
+            is_file_source = True
+
     main_table_columns = None
     join_table_columns = {}
 
@@ -988,10 +1043,15 @@ def build_dataset_count_query(dataset, where_clause=None, search=None):
     
     # Определяем, является ли источник файловым
     is_file_source = main_table.file_upload_id is not None
+
+    # Пытаемся автоматически восстановить файловый источник, если он потерян
+    if not is_file_source:
+        if _auto_bind_file_to_main_table(dataset, main_table):
+            is_file_source = True
     
     main_table_columns = None
     join_table_columns = {}
-
+    
     if is_file_source:
         # Для файловых источников читаем данные напрямую из файла
         try:
