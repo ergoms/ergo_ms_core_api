@@ -77,7 +77,7 @@ class ChartRowsAPIView(APIView):
 
         params = chart.params or {}
         chart_fields = []
-        for section in ('x', 'y', 'y2', 'color', 'labels', 'sort', 'value', 'indicators', 'category'):
+        for section in ('x', 'y', 'y2', 'color', 'labels', 'sort', 'value', 'indicators', 'category', 'columns'):
             if section in params:
                 section_fields = params[section]
                 if isinstance(section_fields, list):
