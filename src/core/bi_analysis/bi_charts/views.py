@@ -100,9 +100,11 @@ def dataset_columns(request, pk: int):
     cols = []
     for f in fields:
         cols.append({
+            "id": f.id,
             "name": f.name,
             "type": f.type,
             "aggregation": f.aggregation,
+            "expression": (f.expression or "").strip(),
         })
 
     return Response({
