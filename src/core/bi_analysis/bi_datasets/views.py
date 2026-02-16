@@ -620,6 +620,7 @@ class DatasetColumnsAPIView(APIView):
                 "type": f.type,
                 "aggregation": f.aggregation,
                 "expression": (f.expression or "").strip(),
+                "category": f.category,
             })
 
         return Response({"columns": cols})

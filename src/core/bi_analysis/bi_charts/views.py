@@ -105,6 +105,7 @@ def dataset_columns(request, pk: int):
             "type": f.type,
             "aggregation": f.aggregation,
             "expression": (f.expression or "").strip(),
+            "category": f.category,
         })
 
     return Response({

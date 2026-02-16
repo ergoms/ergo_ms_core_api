@@ -74,6 +74,7 @@ class DataSetTableSerializer(serializers.ModelSerializer):
 
 class DataSetFieldSerializer(serializers.ModelSerializer):
     source_table_name = serializers.SerializerMethodField()
+    category = serializers.ReadOnlyField()
 
     class Meta:
         model = DataSetField
@@ -81,10 +82,10 @@ class DataSetFieldSerializer(serializers.ModelSerializer):
             'id', 'dataset', 'name',
             'source_table', 'source_table_name',
             'source_column', 'expression', 'type',
-            'aggregation', 'order', 'description'
+            'aggregation', 'order', 'description', 'category'
         ]
         read_only_fields = ['id', 'source_table',
-        'source_column', 'expression', 'order', 'source_table_name']
+        'source_column', 'expression', 'order', 'source_table_name', 'category']
 
     def get_source_table_name(self, obj):
         return obj.source_table.table_name if obj.source_table else None

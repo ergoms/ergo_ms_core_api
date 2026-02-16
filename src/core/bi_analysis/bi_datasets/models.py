@@ -212,6 +212,17 @@ class DataSetField(models.Model):
     order         = models.PositiveSmallIntegerField(default=0)
     description   = models.TextField(blank=True, default="")
 
+    @property
+    def category(self):
+        """
+        Определяет категорию поля:
+        - 'indicator' (показатель): нет агрегации или aggregation == 'none'
+        - 'measure' (измерение): есть агрегация и aggregation != 'none'
+        """
+        if not self.aggregation or self.aggregation == 'none':
+            return 'indicator'
+        return 'measure'
+
     class Meta:
         ordering = ['order', 'id']
 
