@@ -9,6 +9,7 @@ from openpyxl import load_workbook
 import logging
 
 from src.core.bi_analysis.bi_datasets.models import DataSetField, DataSetTable, FileUpload
+from src.core.bi_analysis.services.formula_to_sql import is_formula, formula_to_sql
 
 logger = logging.getLogger(__name__)
 
@@ -940,9 +941,25 @@ def build_dataset_query(dataset, select_fields=None, limit=None, offset=None, wh
             return f'col_{join_table_columns[table_id].index(source_column)}'
         return source_column
 
+    field_refs = {}
+    for f in dataset.fields.all().order_by('order'):
+        table_alias = table_aliases.get(f.source_table.id, main_alias)
+        col_ref = _col_ref(f.source_table.id, f.source_column)
+        field_refs[f.name] = sql.SQL('{}.{}').format(
+            sql.Identifier(table_alias),
+            sql.Identifier(col_ref)
+        )
+
     for out_idx, field in enumerate(fields):
         if field.expression:
-            field_expr = sql.SQL(field.expression)
+            if is_formula(field.expression):
+                field_expr, err = formula_to_sql(field.expression, field_refs, {})
+                if err:
+                    raise ValueError(f"Ошибка в формуле поля {field.name!r}: {err}")
+                if field_expr is None:
+                    raise ValueError(f"Ошибка в формуле поля {field.name!r}")
+            else:
+                field_expr = sql.SQL(field.expression)
         else:
             table_alias = table_aliases.get(field.source_table.id, main_alias)
             col_ref = _col_ref(field.source_table.id, field.source_column, fallback_out_idx=out_idx)

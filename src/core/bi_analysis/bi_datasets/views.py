@@ -762,6 +762,10 @@ class DatasetDraftPreviewView(APIView):
             # Получаем колонки из БД таблицы
             main_cols = introspect_columns(table_name)
         
+        # Получаем поля с формулами из запроса, если они переданы
+        formula_fields = data.get('fields', [])
+        formula_fields = [f for f in formula_fields if f.get('expression')] if formula_fields else []
+        
         # Формируем SELECT с уникальными алиасами (col_0, col_1, ...), чтобы избежать
         # неоднозначности при длинных именах колонок: в PostgreSQL идентификаторы обрезаются
         # до 63 байт (кириллица = 2 байта → ~31 символ), из‑за чего разные колонки могут
@@ -769,6 +773,11 @@ class DatasetDraftPreviewView(APIView):
         display_column_names = []
         select_parts = []
         col_idx = 0
+        
+        # Словарь для маппинга имени колонки на её алиас и таблицу (для построения field_refs)
+        col_to_ref = {}  # {col_name: (table_alias, col_ref)}
+        
+        # Добавляем все колонки из главной таблицы
         for col in main_cols:
             col_ref = f'col_{col_idx}' if is_main_file else col
             select_parts.append(sql.SQL('{}.{} AS {}').format(
@@ -777,6 +786,7 @@ class DatasetDraftPreviewView(APIView):
                 sql.Identifier(f'col_{col_idx}')
             ))
             display_column_names.append(col)
+            col_to_ref[col] = (main_alias, col_ref)
             col_idx += 1
 
         # Обрабатываем JOIN'ы
@@ -835,6 +845,7 @@ class DatasetDraftPreviewView(APIView):
                         sql.Identifier(f'col_{col_idx}')
                     ))
                     display_column_names.append(col)
+                    col_to_ref[col] = (tbl_alias, join_col_ref)
                     col_idx += 1
                     all_cols.add(col)
             
@@ -866,6 +877,63 @@ class DatasetDraftPreviewView(APIView):
             )
             join_clauses.append(join_clause)
         
+        num_table_cols = col_idx
+        has_aggregate_formula = False
+
+        # Обрабатываем поля с формулами, если они переданы
+        if formula_fields:
+            from src.core.bi_analysis.services.formula_to_sql import formula_to_sql, is_formula
+            
+            for f in formula_fields:
+                expr = (f.get('expression') or '')
+                if any(agg in expr.upper() for agg in ('SUM(', 'AVG(', 'COUNT(', 'MIN(', 'MAX(')):
+                    has_aggregate_formula = True
+                    break
+
+            # Строим field_refs для формул на основе колонок из таблиц
+            # Используем col_to_ref, который был построен при добавлении колонок
+            field_refs = {}
+            for col_name, (table_alias, col_ref) in col_to_ref.items():
+                field_refs[col_name] = sql.SQL('{}.{}').format(
+                    sql.Identifier(table_alias),
+                    sql.Identifier(col_ref)
+                )
+            
+            # Обрабатываем каждое поле с формулой
+            for formula_idx, formula_field in enumerate(formula_fields):
+                field_name = formula_field.get('name')
+                field_expression = formula_field.get('expression')
+                
+                if not field_name or not field_expression:
+                    continue
+                
+                try:
+                    if is_formula(field_expression):
+                        # Вычисляем формулу через formula_to_sql
+                        field_expr, err = formula_to_sql(field_expression, field_refs, {})
+                        if err:
+                            logger.warning(f"Ошибка в формуле поля {field_name!r}: {err}")
+                            continue
+                        if field_expr is None:
+                            logger.warning(f"Ошибка в формуле поля {field_name!r}: формула не вычислена")
+                            continue
+                    else:
+                        # Если это не формула, используем выражение как есть
+                        field_expr = sql.SQL(field_expression)
+                    
+                    # Добавляем вычисленное поле в SELECT
+                    select_parts.append(
+                        sql.SQL('{} AS {}').format(
+                            field_expr,
+                            sql.Identifier(f'formula_{formula_idx}')
+                        )
+                    )
+                    display_column_names.append(field_name)
+                    logger.info(f"Добавлено поле с формулой {field_name!r} в предпросмотр")
+                except Exception as e:
+                    logger.error(f"Ошибка обработки формулы поля {field_name!r}: {str(e)}", exc_info=True)
+                    continue
+        
         # Проверяем, что есть колонки для SELECT
         if not select_parts:
             logger.warning("Нет колонок для SELECT в запросе")
@@ -882,6 +950,10 @@ class DatasetDraftPreviewView(APIView):
         ]
         
         query_parts.extend(join_clauses)
+        
+        if has_aggregate_formula and num_table_cols > 0:
+            group_by_cols = [sql.Identifier(f'col_{i}') for i in range(num_table_cols)]
+            query_parts.append(sql.SQL('GROUP BY {}').format(sql.SQL(', ').join(group_by_cols)))
         
         # Добавляем OFFSET если есть
         if offset is not None and offset > 0:
@@ -901,6 +973,21 @@ class DatasetDraftPreviewView(APIView):
                 rows = cursor.fetchall()
             
             logger.info(f"Получено {len(rows)} строк, {len(display_column_names)} колонок")
+
+            # Опционально: вернуть только колонки из include_only_fields
+            # Формульные колонки всегда в конце, в порядке formula_fields — для стабильного порядка
+            include_only_fields = data.get('include_only_fields')
+            if include_only_fields and isinstance(include_only_fields, list):
+                formula_names_ordered = [f.get('name') for f in formula_fields if f.get('name')]
+                formula_names_set = set(formula_names_ordered)
+                name_to_idx = {name: i for i, name in enumerate(display_column_names)}
+                filtered_by_request = [n for n in include_only_fields if n in name_to_idx]
+                if filtered_by_request:
+                    source_cols = [c for c in filtered_by_request if c not in formula_names_set]
+                    formula_cols = [c for c in formula_names_ordered if c in filtered_by_request]
+                    display_column_names = source_cols + formula_cols
+                    indices = [name_to_idx[n] for n in display_column_names]
+                    rows = [[row[i] for i in indices] for row in rows]
 
             return Response({
                 "columns": display_column_names,

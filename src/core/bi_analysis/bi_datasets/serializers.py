@@ -150,12 +150,13 @@ class DatasetUpdateSerializer(serializers.ModelSerializer):
                     field_obj = instance.fields.filter(id=field_id).first()
                     if field_obj:
                         update_fields = []
-                        # Обновляем только изменяемые поля (source_table и source_column не изменяем для существующих полей)
-                        for attr in ['name', 'aggregation', 'type', 'description']:
+                        for attr in ['name', 'aggregation', 'type', 'description', 'expression']:
                             if attr in field_data:
-                                setattr(field_obj, attr, field_data[attr])
+                                val = field_data[attr]
+                                if attr == 'expression':
+                                    val = (val or '').strip() if val is not None else ''
+                                setattr(field_obj, attr, val)
                                 update_fields.append(attr)
-                        
                         if 'order' in field_data:
                             field_obj.order = field_data['order']
                             update_fields.append('order')
@@ -163,25 +164,30 @@ class DatasetUpdateSerializer(serializers.ModelSerializer):
                             field_obj.save(update_fields=update_fields)
                 else:
                     # Создаем новое поле, если его нет
-                    # Для создания нового поля нужны обязательные поля: name, source_table
-                    if field_data.get('name') and field_data.get('source_table'):
-                        # Извлекаем ID source_table
+                    # Для создания нужны name и source_table (для поля с формулой source_column может быть пустым)
+                    if field_data.get('name'):
                         source_table_data = field_data.get('source_table')
                         source_table_id = None
                         if isinstance(source_table_data, int):
                             source_table_id = source_table_data
-                        elif isinstance(source_table_data, dict) and 'id' in source_table_data:
+                        elif isinstance(source_table_data, dict) and source_table_data and 'id' in source_table_data:
                             source_table_id = source_table_data['id']
-                        
+                        if not source_table_id and instance.tables.exists():
+                            source_table_id = instance.tables.filter(order=0).values_list('id', flat=True).first()
                         if source_table_id:
+                            expr = (field_data.get('expression') or '').strip()
+                            source_col = field_data.get('source_column') or ''
+                            if expr and not source_col:
+                                source_col = field_data.get('name', '')
                             DataSetField.objects.create(
                                 dataset=instance,
                                 name=field_data.get('name'),
                                 aggregation=field_data.get('aggregation', 'none'),
                                 type=field_data.get('type', 'string'),
                                 description=field_data.get('description', ''),
-                                source_column=field_data.get('source_column'),
+                                source_column=source_col,
                                 source_table_id=source_table_id,
+                                expression=expr,
                                 order=field_data.get('order', idx)
                             )
         return instance

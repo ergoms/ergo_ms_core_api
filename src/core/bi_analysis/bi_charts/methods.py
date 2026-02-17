@@ -3,6 +3,7 @@ from django.db import connection
 from psycopg2 import sql
 from decimal import Decimal
 from src.core.bi_analysis.services.services import build_dataset_query, read_file_to_dataframe
+from src.core.bi_analysis.services.formula_to_sql import is_formula, formula_to_sql
 
 PG_NUMERIC = {
     'smallint', 'integer', 'bigint',
@@ -320,21 +321,39 @@ def get_rows_for_chart(dataset, chart_fields, filter_conditions=None):
         else:
             return col_expr, False
 
-    base_query, display_columns = build_dataset_query(dataset)
+    chart_names = [f.get('name') for f in chart_fields if f.get('name')]
+    formula_refs = set()
+    for f in chart_fields:
+        ds_f = ds_fields_map_full.get(f.get('name')) if f.get('name') else None
+        if ds_f and ds_f.expression and is_formula(ds_f.expression or ''):
+            formula_refs.update(re.findall(r'\[([^\]]+)\]', ds_f.expression or ''))
+    select_fields = list(
+        {n for n in chart_names if n in ds_fields_map_full}
+        | {r.strip() for r in formula_refs if r and str(r).strip() in ds_fields_map_full}
+    )
+    base_query, display_columns = build_dataset_query(
+        dataset, select_fields=select_fields if select_fields else None
+    )
     # Базовый запрос возвращает колонки out_0, out_1, ...; display_columns — порядок имён полей
     name_to_out = {name: f'out_{i}' for i, name in enumerate(display_columns)} if display_columns else {}
+    field_refs_for_formula = {
+        name: sql.Identifier(out_name) for name, out_name in name_to_out.items()
+    }
 
     for field in chart_fields:
         output_name = field.get('name')
-        if not output_name:
+        if not output_name or output_name not in name_to_out:
             continue
 
         ds_field = ds_fields_map_full.get(output_name)
+        out_col = name_to_out[output_name]
 
-        if ds_field and ds_field.expression:
-            col_expr = sql.SQL(ds_field.expression)
+        if ds_field and ds_field.expression and is_formula(ds_field.expression):
+            col_expr, err = formula_to_sql(ds_field.expression, field_refs_for_formula, {})
+            if err or col_expr is None:
+                raise ValueError(f"Ошибка в формуле поля {output_name!r}: {err or 'неизвестная ошибка'}")
         else:
-            col_expr = sql.Identifier(name_to_out.get(output_name, output_name))
+            col_expr = sql.Identifier(out_col)
         
         # Получаем агрегацию
         aggregation = field.get('aggregation', 'none')
