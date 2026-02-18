@@ -190,6 +190,17 @@ class DatasetUpdateSerializer(serializers.ModelSerializer):
                                 expression=expr,
                                 order=field_data.get('order', idx)
                             )
+        field_names = set(instance.fields.values_list('name', flat=True))
+        param_names = set()
+        for p in (instance.get_params_items() or []):
+            name = p.get('name') if isinstance(p, dict) else None
+            if name:
+                param_names.add(str(name).strip())
+        overlap = field_names & param_names
+        if overlap:
+            raise serializers.ValidationError(
+                {'non_field_errors': [f"Имена полей и параметров не должны совпадать: {', '.join(sorted(overlap))}."]}
+            )
         return instance
     
 class DatasetDetailSerializer(serializers.ModelSerializer):

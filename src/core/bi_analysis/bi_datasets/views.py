@@ -130,24 +130,33 @@ class DatasetListCreateView(generics.ListCreateAPIView):
                         obj.save(update_fields=update_fields)
         params_data = request_data.get('params') if isinstance(request_data, dict) else None
         if params_data is not None:
-            # поддержка формата из фронта: [{name,type,defaultValue,sourceUsage,...}]
+            field_names = set(dataset.fields.values_list('name', flat=True))
+            param_names = set()
+            items = []
+            for i, p in enumerate(params_data or []):
+                if not isinstance(p, dict):
+                    continue
+                name = p.get('name')
+                if name:
+                    param_names.add(str(name).strip())
+                items.append({
+                    'name': name,
+                    'type': p.get('type') or 'string',
+                    'default_value': p.get('defaultValue', p.get('default')),
+                    'source_usage': p.get('sourceUsage', False),
+                    'order': p.get('order', i),
+                    'description': p.get('description', ''),
+                })
+            overlap = field_names & param_names
+            if overlap:
+                raise ValidationError(
+                    {'params': f"Имена полей и параметров не должны совпадать: {', '.join(sorted(overlap))}."}
+                )
             try:
-                items = []
-                for i, p in enumerate(params_data or []):
-                    if not isinstance(p, dict):
-                        continue
-                    items.append({
-                        'name': p.get('name'),
-                        'type': p.get('type') or 'string',
-                        'default_value': p.get('defaultValue', p.get('default')),
-                        'source_usage': p.get('sourceUsage', False),
-                        'order': p.get('order', i),
-                        'description': p.get('description', ''),
-                    })
                 dataset.set_params_items(items)
             except Exception as e:
-                # не прерываем создание датасета из-за параметров
                 print(f"[DatasetListCreateView] params save failed: {e}")
+                raise
         
 class DatasetRemoveRelationView(APIView):
     """
@@ -370,6 +379,28 @@ class AddTableToDatasetView(APIView):
             "name": data_table.table_name,
             "display_name": file_upload.original_filename,
         })
+
+# ==============================================================================
+# Formula context — единая точка доступа для редактора формул (поля + параметры)
+# ==============================================================================
+
+class DatasetFormulaContextView(APIView):
+    """GET <pk>/formula-context/ — поля и параметры датасета для подстановки в формулы."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        dataset = Dataset.objects.filter(pk=pk, owner=request.user).first()
+        if not dataset:
+            return Response({"detail": "Not found"}, status=404)
+        fields = [
+            {"name": f.name, "type": f.type or "string", "aggregation": f.aggregation or "none"}
+            for f in dataset.fields.all().order_by("order", "id")
+        ]
+        params = []
+        for p in dataset.get_params_items():
+            params.append({"name": p.get("name", ""), "type": p.get("type") or "string"})
+        return Response({"fields": fields, "params": params})
+
 
 # ==============================================================================
 # DatasetViewSet (альтернатива generic views)

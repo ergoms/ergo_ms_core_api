@@ -2,7 +2,7 @@ from django.urls import path, include
 
 from src.core.bi_analysis.bi_datasets.views import DataSetFieldViewSet, DatasetParamViewSet
 from src.core.bi_analysis.bi_datasets.views import (
-DatasetDetailView, DatasetPreviewView, DatasetPreviewTaskStatusView,
+DatasetDetailView, DatasetFormulaContextView, DatasetPreviewView, DatasetPreviewTaskStatusView,
     DataSetTableViewSet, DataSetFieldViewSet,
     TempUploadView, FileUploadDetailView,
     FinalizeUploadView, XlsxSheetListView,
@@ -40,6 +40,7 @@ urlpatterns = [
 
     path('', DatasetListCreateView.as_view(), name='bi_datasets-list-create'),
     path('<int:pk>/', DatasetDetailView.as_view(), name='bi_datasets-detail'),
+    path('<int:pk>/formula-context/', DatasetFormulaContextView.as_view(), name='bi_datasets-formula-context'),
     path('<int:pk>/preview/', DatasetPreviewView.as_view(), name='bi_datasets-preview'),
     path('preview/task-status/', DatasetPreviewTaskStatusView.as_view(), name='bi_datasets-preview-task-status'),
     path('<int:pk>/rename_columns/', RenameDatasetColumnsView.as_view(), name='bi_datasets-rename-columns'),
