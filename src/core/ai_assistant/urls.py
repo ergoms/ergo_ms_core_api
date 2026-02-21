@@ -1,4 +1,4 @@
-from django.urls import path, re_path, include
+from django.urls import path, re_path
 from rest_framework.routers import DefaultRouter
 from .views import (
     UserFilesListView, BIQueryView, OllamaStatusView, ChartAnalysisView,
@@ -18,6 +18,5 @@ urlpatterns = [
     path('chart_analysis/', ChartAnalysisView.as_view(), name='ai-assistant-chart-analysis'),
     path('chat/', ChatView.as_view(), name='ai-assistant-chat'),
     path('chat/stream/', ChatStreamView.as_view(), name='ai-assistant-chat-stream'),
-    path('', include('src.core.ai_assistant.tp.urls')),
     re_path(r'^documents/download/(?P<file_path>.+)$', GeneratedDocumentDownloadView.as_view(), name='ai-assistant-document-download'),
 ] + router.urls

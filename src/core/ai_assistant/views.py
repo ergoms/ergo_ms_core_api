@@ -2444,10 +2444,6 @@ class ChatSessionViewSet(ViewSet, SwaggerSafeMixin):
             title=title,
             module=module
         )
-        if module == 'tp':
-            from src.core.ai_assistant.tp.views import create_tp_intro_message
-            create_tp_intro_message(session)
-        
         return Response({
             'success': True,
             'session': {
