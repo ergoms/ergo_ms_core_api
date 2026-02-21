@@ -179,23 +179,56 @@ def _inject_env_defaults(config: RuntimeLLMConfig) -> RuntimeLLMConfig:
     return config
 
 
-def build_runtime_config(overrides: Optional[Dict[str, Any]] = None) -> RuntimeLLMConfig:
+_FALLBACK_CONFIG = {
+    "provider": LLMProvider.OLLAMA,
+    "model": "llama2",
+    "base_url": "http://localhost:11434",
+    "request_timeout": 180.0,
+    "stream_timeout": 300.0,
+    "compute_device": ComputeDevice.GPU,
+    "concurrency_limit": 8,
+    "max_retries": 2,
+    "keep_alive": "10m",
+    "provider_config": {},
+    "device_config": {},
+}
+
+
+def build_runtime_config(
+    overrides: Optional[Dict[str, Any]] = None,
+    skip_env_injection: bool = False,
+) -> RuntimeLLMConfig:
     """
     Формирует итоговую конфигурацию с учётом environment и module-config.
-    
+
+    Args:
+        overrides: переопределения из module-config.
+        skip_env_injection: если True — не применять настройки ядра и env,
+            использовать только overrides с минимальными fallback-значениями.
+            Нужно для модулей с собственным settings (например, technical_process_analysis).
+
     Провайдер определяется через:
     1. Параметр overrides['provider']
-    2. Переменную окружения LLM_PROVIDER (ollama|llama_cpp)
+    2. Переменную окружения LLM_PROVIDER (ollama|llama_cpp) — только если skip_env_injection=False
     3. По умолчанию - ollama
     """
-    base_config = RuntimeLLMConfig()
-    config = base_config.copy_with_overrides(overrides)
-    config = _inject_env_defaults(config)
+    if skip_env_injection:
+        base_config = RuntimeLLMConfig(**_FALLBACK_CONFIG)
+        config = base_config.copy_with_overrides(overrides)
+        if config.base_url and not config.provider_config.get("base_url"):
+            config.provider_config["base_url"] = config.base_url
+        if config.compute_device == ComputeDevice.CPU:
+            config.device_config.setdefault("num_gpu", 0)
+        else:
+            config.device_config.setdefault("num_gpu", -1)
+    else:
+        base_config = RuntimeLLMConfig()
+        config = base_config.copy_with_overrides(overrides)
+        config = _inject_env_defaults(config)
 
-    # Если провайдер не был установлен явно, используем ollama по умолчанию
     if config.provider == LLMProvider.AUTO:
         config.provider = LLMProvider.OLLAMA
-    
+
     return config
 
 
