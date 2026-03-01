@@ -39,20 +39,14 @@ class BaseLLMClient:
         seed: Optional[int] = None,
         stream: bool = False,
         stream_callback: Optional[Callable[[str], None]] = None,
+        format: Optional[Any] = None,
     ) -> str:
         """
         Отправка сообщений в чат с сохранением контекста.
-        
+
         Args:
-            messages: Список сообщений в формате [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
-            num_predict: Максимальное количество токенов (опционально)
-            temperature: Температура (опционально)
-            seed: Seed для воспроизводимости результатов (опционально)
-            stream: Использовать streaming (опционально)
-            stream_callback: Callback для streaming (опционально)
-        
-        Returns:
-            Ответ модели
+            messages: Список сообщений [{"role": "user", "content": "..."}, ...]
+            format: Ollama structured output — "json" или JSON-схема (опционально)
         """
         raise NotImplementedError
 
@@ -101,6 +95,7 @@ class CompositeLLMClient(BaseLLMClient):
         seed: Optional[int] = None,
         stream: bool = False,
         stream_callback: Optional[Callable[[str], None]] = None,
+        format: Optional[Any] = None,
     ) -> str:
         client = self._clients[0]
         return client.chat(
@@ -110,6 +105,7 @@ class CompositeLLMClient(BaseLLMClient):
             seed=seed,
             stream=stream,
             stream_callback=stream_callback,
+            format=format,
         )
 
     def check_health(self) -> Dict[str, Any]:
@@ -333,9 +329,11 @@ class HttpxOllamaClient(BaseLLMClient):
         seed: Optional[int] = None,
         stream: bool = False,
         stream_callback: Optional[Callable[[str], None]] = None,
+        format: Optional[Any] = None,
     ) -> str:
         """
         Отправка сообщений в чат с сохранением контекста через /api/chat.
+        format: Ollama structured output — "json" или JSON-схема (опционально).
         """
         payload = {
             "model": self.model,
@@ -347,6 +345,8 @@ class HttpxOllamaClient(BaseLLMClient):
                 "top_p": 0.9,
             },
         }
+        if format is not None:
+            payload["format"] = format
         if num_predict is not None:
             payload["options"]["num_predict"] = num_predict
         if temperature is not None:
