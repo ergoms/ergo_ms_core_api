@@ -10,7 +10,10 @@
 
 import logging
 
-from django.core.management.commands.runserver import Command as RunserverCommand
+try:
+    from daphne.management.commands.runserver import Command as RunserverCommand
+except ImportError:
+    from django.core.management.commands.runserver import Command as RunserverCommand
 from django.core.management.base import CommandParser
 
 from django.conf import settings

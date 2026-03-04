@@ -129,12 +129,13 @@ class CMSUserMenuSerializer(ModelSerializer):
     class Meta:
         model = User
         fields = [
+            'id',
             'username',
             'email',
             'full_name',
             'initials_name',
         ]
-        read_only_fields = ['full_name', 'initials_name']
+        read_only_fields = ['id', 'full_name', 'initials_name']
 
     def get_full_name(self, obj):
         """
