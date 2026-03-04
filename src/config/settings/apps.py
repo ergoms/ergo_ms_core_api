@@ -39,6 +39,7 @@ ALL_MODULES = discover_installed_apps()
 # Определяем список установленных приложений
 INSTALLED_APPS = ALL_MODULES + [
     'daphne',
+    'channels',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -54,6 +55,12 @@ INSTALLED_APPS = ALL_MODULES + [
     'drf_yasg',
     'django_celery_beat',
 ]
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
+}
 
 # Определяем список middleware
 MIDDLEWARE = [

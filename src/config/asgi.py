@@ -15,4 +15,16 @@ from src.core.utils.auto_api.auto_config import get_env_deploy_type
 deploy_type = get_env_deploy_type()
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
 
-application = get_asgi_application()
+django_asgi_app = get_asgi_application()
+
+from channels.auth import AuthMiddlewareStack
+from channels.routing import ProtocolTypeRouter, URLRouter
+
+from src.core.messenger.routing import websocket_urlpatterns
+
+application = ProtocolTypeRouter({
+    "http": django_asgi_app,
+    "websocket": AuthMiddlewareStack(
+        URLRouter(websocket_urlpatterns)
+    ),
+})
