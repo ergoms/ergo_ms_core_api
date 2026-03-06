@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Миграция данных: заполнение базового меню из core модулей.
-Включает элементы из: cms, bi, ai-assistant, shortcodes, categories.
+Включает элементы из: cms, ai-assistant, shortcodes, categories.
 
 Порядок элементов определяется последовательностью создания.
 """
@@ -84,18 +84,6 @@ def populate_core_menu(apps, schema_editor):
         ('Создание категорий', 'PageCategoriesManager'),
         ('Создание тегов', 'TagsManager'),
     ], parent=page_categories)
-    
-    # === BI (фиксированный order=20) ===
-    bi = MenuMigrationHelper(apps, 'core/bi')
-    bi.clear_module_items()
-    
-    bi_menu = bi.create_group('BI', 'BI', icon='ChartSpline', order=20)
-    bi.create_offcanvas_batch([
-        ('Датасеты', 'datasets', 'Database'),
-        ('Подключения', 'connections', 'Plug'),
-        ('Чарты', 'charts', 'BarChart3'),
-        ('Дашборды', 'dashboards', 'LayoutDashboard'),
-    ], parent=bi_menu)
     
     # === AI Assistant (фиксированный order=30) ===
     ai = MenuMigrationHelper(apps, 'core/ai-assistant')
