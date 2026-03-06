@@ -11,7 +11,7 @@ api test_skills
 Или через утилиту ergoms:
 
 ```bash
-ergoms test_skills
+ergoms test-skills
 ```
 
 Эта команда автоматически проверит:

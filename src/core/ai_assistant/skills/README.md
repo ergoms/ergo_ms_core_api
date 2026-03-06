@@ -214,7 +214,7 @@ api test_skills
 
 ### Через утилиту ergoms
 ```bash
-ergoms test_skills
+ergoms test-skills
 ```
 
 ### Ручное тестирование
