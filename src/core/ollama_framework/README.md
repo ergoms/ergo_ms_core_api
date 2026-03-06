@@ -1,30 +1,21 @@
 # Модуль Ollama Framework
 
-Модуль для работы с LLM моделями в системе ERGO MS. Поддерживает работу с Ollama и llama.cpp.
+Модуль для работы с LLM моделями в системе ERGO MS. Поддерживает работу с Ollama.
 
-## Поддерживаемые провайдеры
+## Поддерживаемый провайдер
 
 ### Ollama
 - Простая установка и использование
 - Поддержка множества моделей из репозитория
 - Автоматическое управление памятью GPU
 
-### llama.cpp
-- Высокая производительность
-- Полный контроль над параметрами GPU
-- Поддержка GGUF моделей
-- OpenAI-совместимый API
-
-## Переключение между провайдерами
+## Настройка
 
 Переключение осуществляется через переменную окружения `LLM_PROVIDER`:
 
 ```bash
 # Использовать Ollama (по умолчанию)
 LLM_PROVIDER=ollama
-
-# Использовать llama.cpp
-LLM_PROVIDER=llama_cpp
 ```
 
 ## Возможности
@@ -35,7 +26,7 @@ LLM_PROVIDER=llama_cpp
 - Удаление моделей
 - Просмотр списка установленных моделей
 - Тестирование моделей
-- Получение информации о системе Ollama/llama.cpp
+- Получение информации о системе Ollama
 
 ### Чат с моделями
 
@@ -62,11 +53,7 @@ ollama_framework/
 │       ├── __init__.py
 │       ├── ollama.py             # Django команда для управления Ollama
 │       ├── install_ollama.py     # Установка Ollama
-│       ├── uninstall_ollama.py   # Удаление Ollama
-│       ├── install_llama_cpp.py  # Установка llama.cpp
-│       ├── start_llama_cpp.py    # Запуск llama.cpp сервера
-│       ├── stop_llama_cpp.py     # Остановка llama.cpp сервера
-│       └── uninstall_llama_cpp.py # Удаление llama.cpp
+│       └── uninstall_ollama.py   # Удаление Ollama
 └── migrations/
 ```
 
@@ -246,212 +233,6 @@ cmd ollama --interactive \
   --model llama2 \
   --system-prompt "Ты - креативный писатель" \
   --temperature 0.8
-```
-
-## llama.cpp
-
-### Установка llama.cpp
-
-```bash
-# Автоматическое определение GPU (CUDA/Vulkan/CPU)
-ergoms install-llama-cpp
-
-# С поддержкой NVIDIA CUDA
-ergoms install-llama-cpp-cuda
-
-# С поддержкой Vulkan (AMD/Intel GPU)
-ergoms install-llama-cpp-vulkan
-
-# Только CPU (без GPU ускорения)
-ergoms install-llama-cpp-cpu
-
-# Переустановка
-api install_llama_cpp --force
-```
-
-### Настройка llama.cpp через .env
-
-```bash
-# Переключение на llama.cpp
-LLM_PROVIDER=llama_cpp
-
-# URL сервера llama.cpp
-LLAMA_CPP_BASE_URL=http://localhost:8080
-
-# Путь к модели GGUF (относительно virtual_env/packages/models)
-LLAMA_CPP_MODEL=mistral-7b-instruct-v0.2.Q4_K_M.gguf
-
-# Количество слоёв на GPU (35 = ~7GB VRAM для 7B модели)
-LLAMA_CPP_GPU_LAYERS=35
-
-# Количество потоков CPU
-LLAMA_CPP_THREADS=8
-
-# Размер контекста
-LLAMA_CPP_CONTEXT_SIZE=4096
-
-# Размер батча
-LLAMA_CPP_BATCH_SIZE=512
-
-# Flash Attention (для CUDA, улучшает производительность)
-LLAMA_CPP_FLASH_ATTN=true
-
-# Заблокировать модель в RAM (предотвращает swap)
-LLAMA_CPP_MLOCK=false
-```
-
-### Запуск llama.cpp сервера
-
-```bash
-# Базовый запуск
-ergoms start-llama-cpp --model model.gguf
-
-# С указанием GPU слоёв
-ergoms start-llama-cpp --model model.gguf --gpu-layers 40
-
-# С Flash Attention
-ergoms start-llama-cpp --model model.gguf --flash-attn
-
-# В foreground режиме (для отладки)
-api start_llama_cpp --model model.gguf --foreground
-
-# Остановка сервера
-ergoms stop-llama-cpp
-```
-
-При успешном запуске в консоль выводится статистика:
-
-```
-=== llama.cpp Server Stats ===
-
-Model Configuration:
-  Context Size:    4096 tokens
-  Max Predict:     -1 tokens
-
-Generation Settings:
-  Temperature:     0.8
-  Top-K:           40
-  Top-P:           0.95
-
-Server:
-  Parallel Slots:  1
-  Status:          ok
-  Slots Idle:      1
-  Slots Active:    0
-```
-
-### Тестирование и мониторинг
-
-```bash
-# Информация о сервере
-ergoms llama-cpp-info
-
-# Проверка здоровья
-ergoms llama-cpp-health
-
-# Тестовый запрос с выводом статистики
-ergoms llama-cpp-test
-
-# Тестовый запрос с кастомным промптом
-api llama_cpp --prompt "Напиши код на Python" --max-tokens 512
-
-# Streaming режим
-api llama_cpp --prompt "Привет" --stream
-```
-
-Вывод статистики при запросе:
-
-```
-=== Generation Statistics ===
-
-Tokens:
-  Prompt Tokens:     12
-  Generated:         87
-  Total:             99
-
-Speed:
-  Prompt:            245.32 tok/s
-  Generation:        42.15 tok/s
-
-Time:
-  Prompt Eval:       48.9 ms
-  Generation:        2064.5 ms
-  Total:             2113.4 ms (2.11s)
-
-Status:
-  Truncated:         False
-  Stopped EOS:       True
-  Stopped Limit:     False
-```
-
-### Параметры запуска
-
-| Параметр | Описание | По умолчанию |
-|----------|----------|--------------|
-| `--model`, `-m` | Путь к GGUF модели | Из env `LLAMA_CPP_MODEL` |
-| `--host` | Хост сервера | 127.0.0.1 |
-| `--port`, `-p` | Порт сервера | 8080 |
-| `--gpu-layers`, `-ngl` | Слои на GPU | 35 |
-| `--threads`, `-t` | Потоки CPU | 8 |
-| `--context-size`, `-c` | Размер контекста | 4096 |
-| `--batch-size`, `-b` | Размер батча | 512 |
-| `--parallel`, `-np` | Параллельные запросы | 1 |
-| `--flash-attn`, `-fa` | Flash Attention | false |
-| `--mlock` | Блокировка в RAM | false |
-| `--foreground`, `-f` | Foreground режим | false |
-
-### Рекомендации по производительности
-
-#### Для NVIDIA GPU (CUDA)
-
-```bash
-# Установка с CUDA
-ergoms install-llama-cpp-cuda
-
-# Запуск с Flash Attention
-ergoms start-llama-cpp --model model.gguf --gpu-layers 40 --flash-attn
-
-# Env настройки
-LLAMA_CPP_GPU_LAYERS=40
-LLAMA_CPP_FLASH_ATTN=true
-LLAMA_CPP_BATCH_SIZE=1024
-```
-
-#### Для AMD/Intel GPU (Vulkan)
-
-```bash
-# Установка с Vulkan
-ergoms install-llama-cpp-vulkan
-
-# Запуск
-ergoms start-llama-cpp --model model.gguf --gpu-layers 35
-
-# Env настройки
-LLAMA_CPP_GPU_LAYERS=35
-```
-
-#### Только CPU
-
-```bash
-# Установка CPU версии
-ergoms install-llama-cpp-cpu
-
-# Запуск с оптимизацией потоков
-ergoms start-llama-cpp --model model.gguf --gpu-layers 0 --threads 16
-
-# Env настройки
-LLAMA_CPP_GPU_LAYERS=0
-LLAMA_CPP_THREADS=16
-```
-
-### Удаление llama.cpp
-
-```bash
-# Удалить только llama.cpp
-ergoms uninstall-llama-cpp
-
-# Удалить вместе с GGUF моделями
-api uninstall_llama_cpp --remove-models
 ```
 
 ## Конфигурация

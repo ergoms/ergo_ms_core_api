@@ -20,7 +20,6 @@ class LLMProvider(str, Enum):
 
     AUTO = "auto"
     OLLAMA = "ollama"
-    LLAMA_CPP = "llama_cpp"
 
 
 @dataclass
@@ -31,11 +30,10 @@ class RuntimeLLMConfig:
     provider_config – дополнительные параметры конкретного провайдера (API ключи и т.д.).
     device_config – дополнительные параметры для выбора устройства (например GPU id).
     
-    Поддерживаемые провайдеры:
+    Поддерживаемый провайдер:
     - ollama (по умолчанию) - Ollama сервер
-    - llama_cpp - llama.cpp сервер
     
-    Переключение через env: LLM_PROVIDER=ollama|llama_cpp
+    Переключение через env: LLM_PROVIDER=ollama
     """
 
     provider: LLMProvider = LLMProvider.AUTO
@@ -53,12 +51,6 @@ class RuntimeLLMConfig:
     keep_alive: str = getattr(settings, "AI_ASSISTANT_KEEP_ALIVE", "10m")
     provider_config: Dict[str, Any] = field(default_factory=dict)
     device_config: Dict[str, Any] = field(default_factory=dict)
-    
-    # Настройки llama.cpp
-    llama_cpp_gpu_layers: int = 35  # Количество слоёв на GPU
-    llama_cpp_threads: int = 8  # Количество потоков CPU
-    llama_cpp_context_size: int = 4096  # Размер контекста
-    llama_cpp_batch_size: int = 512  # Размер батча
 
     def copy_with_overrides(self, overrides: Optional[Dict[str, Any]] = None) -> "RuntimeLLMConfig":
         """Создает копию конфигурации с учётом переопределений из module-config."""
@@ -81,10 +73,6 @@ class RuntimeLLMConfig:
             "keep_alive": self.keep_alive,
             "provider_config": dict(self.provider_config),
             "device_config": dict(self.device_config),
-            "llama_cpp_gpu_layers": self.llama_cpp_gpu_layers,
-            "llama_cpp_threads": self.llama_cpp_threads,
-            "llama_cpp_context_size": self.llama_cpp_context_size,
-            "llama_cpp_batch_size": self.llama_cpp_batch_size,
         }
 
         provider_overrides: Dict[str, Any] = {}
@@ -102,7 +90,8 @@ class RuntimeLLMConfig:
                 provider_overrides[key] = value
 
         if isinstance(data["provider"], str):
-            data["provider"] = LLMProvider(data["provider"])
+            p = data["provider"].lower()
+            data["provider"] = LLMProvider.OLLAMA if p == "llama_cpp" else LLMProvider(p)
         if isinstance(data["compute_device"], str):
             data["compute_device"] = ComputeDevice(data["compute_device"])
 
@@ -118,7 +107,8 @@ def _inject_env_defaults(config: RuntimeLLMConfig) -> RuntimeLLMConfig:
     # Определяем провайдера из env
     env_provider = os.getenv("LLM_PROVIDER", "").lower()
     if env_provider == "llama_cpp":
-        config.provider = LLMProvider.LLAMA_CPP
+        # llama.cpp удалён — fallback на Ollama
+        config.provider = LLMProvider.OLLAMA
     elif env_provider == "ollama":
         config.provider = LLMProvider.OLLAMA
     
@@ -131,39 +121,6 @@ def _inject_env_defaults(config: RuntimeLLMConfig) -> RuntimeLLMConfig:
         env_model = os.getenv("OLLAMA_DEFAULT_MODEL")
         if env_model:
             config.model = env_model
-    
-    # Настройки для llama.cpp
-    if config.provider == LLMProvider.LLAMA_CPP:
-        env_base_url = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080")
-        config.base_url = env_base_url
-        
-        env_model = os.getenv("LLAMA_CPP_MODEL")
-        if env_model:
-            config.model = env_model
-        
-        # GPU layers
-        env_gpu_layers = os.getenv("LLAMA_CPP_GPU_LAYERS")
-        if env_gpu_layers:
-            config.llama_cpp_gpu_layers = int(env_gpu_layers)
-        
-        # Threads
-        env_threads = os.getenv("LLAMA_CPP_THREADS")
-        if env_threads:
-            config.llama_cpp_threads = int(env_threads)
-        
-        # Context size
-        env_ctx = os.getenv("LLAMA_CPP_CONTEXT_SIZE")
-        if env_ctx:
-            config.llama_cpp_context_size = int(env_ctx)
-        
-        # Batch size
-        env_batch = os.getenv("LLAMA_CPP_BATCH_SIZE")
-        if env_batch:
-            config.llama_cpp_batch_size = int(env_batch)
-        
-        # Добавляем настройки в device_config для llama.cpp
-        config.device_config["n_gpu_layers"] = config.llama_cpp_gpu_layers
-        config.device_config["n_threads"] = config.llama_cpp_threads
 
     if config.base_url and not config.provider_config.get("base_url"):
         config.provider_config["base_url"] = config.base_url
@@ -171,8 +128,6 @@ def _inject_env_defaults(config: RuntimeLLMConfig) -> RuntimeLLMConfig:
     # В зависимости от выбранного устройства заполняем device_config
     if config.compute_device == ComputeDevice.CPU:
         config.device_config.setdefault("num_gpu", 0)
-        if config.provider == LLMProvider.LLAMA_CPP:
-            config.device_config["n_gpu_layers"] = 0
     else:
         config.device_config.setdefault("num_gpu", -1)
 
@@ -209,7 +164,7 @@ def build_runtime_config(
 
     Провайдер определяется через:
     1. Параметр overrides['provider']
-    2. Переменную окружения LLM_PROVIDER (ollama|llama_cpp) — только если skip_env_injection=False
+    2. Переменную окружения LLM_PROVIDER (ollama) — только если skip_env_injection=False
     3. По умолчанию - ollama
     """
     if skip_env_injection:
