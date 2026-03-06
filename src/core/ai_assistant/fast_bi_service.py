@@ -254,7 +254,7 @@ class FastBIService:
 
     def _load_file_from_disk(self, path: Path) -> None:
         """Загружает файл с диска в self.df."""
-        from src.core.bi_analysis.bi_datasets.binary_storage import is_binary_file, read_from_binary
+        from modules.bi_analysis.api.bi_datasets.binary_storage import is_binary_file, read_from_binary
         
         if is_binary_file(str(path)) or path.suffix.lower() == ".bin":
             # Читаем из бинарного файла через Polars IPC

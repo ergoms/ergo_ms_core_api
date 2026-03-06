@@ -14,13 +14,20 @@ import json
 import math
 from datetime import datetime
 
-from src.core.bi_analysis.bi_datasets.models import FileUpload, Dataset
+try:
+    from modules.bi_analysis.api.bi_datasets.models import FileUpload, Dataset
+except ImportError:
+    FileUpload = None
+    Dataset = None
 from .fast_bi_service import FastBIService, DEFAULT_MODEL, OLLAMA_BASE_URL
 from .config import build_runtime_config
 from .llm_clients import build_llm_client, LLMClientError
 from .llm_utils import create_ollama_client as _create_ollama_client
 from .intent_detector import IntentDetector, UserIntent, detect_intent, select_chart_columns
-from src.core.bi_analysis.bi_charts.models import Chart
+try:
+    from modules.bi_analysis.api.bi_charts.models import Chart
+except ImportError:
+    Chart = None
 from src.core.utils.mixins import SwaggerSafeMixin
 from .models import ChatSession, ChatMessage, KnowledgeDocument, KnowledgeChunk
 from .skills import get_skills_manager
