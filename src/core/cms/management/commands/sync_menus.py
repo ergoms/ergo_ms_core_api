@@ -91,6 +91,11 @@ class Command(BaseCommand):
             type=str,
             help='Иконка Lucide для группы (при --module)',
         )
+        parser.add_argument(
+            '--clear',
+            action='store_true',
+            help='Удалить все пункты меню (кроме core/cms) перед синхронизацией',
+        )
 
     def handle(self, *args, **options):
         self.dry_run = options['dry_run']
@@ -98,6 +103,7 @@ class Command(BaseCommand):
         self.module_filter = options.get('module')
         self.group_name_override = options.get('name')
         self.group_icon_override = options.get('icon')
+        self.clear_all = options.get('clear', False)
 
         discoverer = ModuleDiscoverer()
         modules = discoverer.discover_client_route_modules()
@@ -119,6 +125,18 @@ class Command(BaseCommand):
 
         if self.list_only:
             self._list_modules(module_paths)
+            return
+
+        if self.clear_all and not self.module_filter:
+            if self.dry_run:
+                count = MenuItem.objects.exclude(module_source='core/cms').count()
+                self.stdout.write(f'  [dry-run] --clear: будет удалено {count} пунктов (кроме core/cms)')
+            else:
+                deleted, _ = MenuItem.objects.exclude(module_source='core/cms').delete()
+                self.stdout.write(
+                    self.style.WARNING(f'--clear: удалено {deleted} пунктов меню (кроме core/cms)')
+                )
+                self.stdout.write(self.style.SUCCESS('Готово. Для пересинхронизации запустите sync_menus без --clear.'))
             return
 
         self.stdout.write(self.style.SUCCESS('Синхронизация меню из routes.js...'))
