@@ -38,7 +38,7 @@ class CommandDiscovery:
 
             if not django.conf.settings.configured:
                 django.setup()
-            elif not getattr(apps, 'ready', False):
+            elif not apps.ready and not apps.loading:
                 django.setup()
 
             self._django_initialized = True
