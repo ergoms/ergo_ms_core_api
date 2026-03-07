@@ -1,4 +1,3 @@
-import mimetypes
 import os
 import json
 from django.utils import timezone
@@ -13,17 +12,12 @@ from .serializers import CategorySerializer
 from .models import UserAvatar
 from .serializers import UserAvatarSerializer
 from rest_framework.permissions import IsAuthenticated
-from django.http import FileResponse
-from rest_framework.views import APIView
-from django.conf import settings
 from django.forms.models import model_to_dict
 from .audit import log_audit
 from .models import AuditLog
 from .serializers import AuditLogSerializer
 from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.permissions import IsAdminUser
-
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .models import *
 from .serializers import *
@@ -172,54 +166,6 @@ class PermalinkSettingsViewSet(viewsets.ModelViewSet):
 class EmailSettingsViewSet(viewsets.ModelViewSet):
     queryset = EmailSettings.objects.all()
     serializer_class = EmailSettingsSerializer
-class FileViewSet(viewsets.ModelViewSet):
-    queryset = UploadedFile.objects.all()
-    serializer_class = UploadedFileSerializer
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
-
-    def create(self, request, *args, **kwargs):
-        file = request.FILES.get('file')
-        alt_name = request.data.get('alt_name', '')
-
-        if not file:
-            return Response({'error': 'Файл не передан'}, status=status.HTTP_400_BAD_REQUEST)
-
-        instance = UploadedFile.objects.create(file=file, alt_name=alt_name)
-        return Response(UploadedFileSerializer(instance).data, status=status.HTTP_201_CREATED)
-    
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        instance.file.delete(save=False)
-        self.perform_destroy(instance)
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    def download(self, request, pk=None):
-        """Позволяет скачать файл по id всем, кто знает ссылку."""
-        file_obj = self.get_object()
-        file_handle = file_obj.file.open('rb')
-        filename = file_obj.alt_name or file_obj.file.name.split('/')[-1]
-        response = FileResponse(file_handle, as_attachment=True, filename=filename)
-        return response
-class FileDownloadByNameView(APIView):
-    def get(self, request, filename, *args, **kwargs):
-        if '..' in filename or filename.startswith('/'):
-            return Response({'error': 'Invalid filename'}, status=status.HTTP_400_BAD_REQUEST)
-
-        upload_root = os.path.abspath(os.path.join(settings.MEDIA_ROOT, 'uploads'))
-        file_path   = os.path.abspath(os.path.join(upload_root, filename))
-
-        if not file_path.startswith(upload_root):
-            return Response({'error': 'Invalid path'}, status=status.HTTP_400_BAD_REQUEST)
-        if not os.path.exists(file_path):
-            return Response({'error': 'File not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        mime, _ = mimetypes.guess_type(file_path)
-        resp = FileResponse(open(file_path, 'rb'),
-                            as_attachment=False,
-                            filename=filename,
-                            content_type=mime or 'application/octet-stream')
-        resp['Content-Disposition'] = f'inline; filename="{filename}"'
-        return resp
-
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer

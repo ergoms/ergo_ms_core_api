@@ -247,18 +247,6 @@ class EmailSettings(models.Model):
 
     def __str__(self):
         return _("Email Settings")
-class UploadedFile(models.Model):
-    file = models.FileField(upload_to='uploads/')
-    uploaded_at = models.DateTimeField(auto_now_add=True)
-    alt_name = models.CharField(
-        "Альтернативное название",
-        max_length=255,
-        blank=True,
-        help_text="Понятное пользователю название файла"
-    )
-
-    def __str__(self):
-        return self.alt_name or self.file.name
 class Category(models.Model):
     name = models.CharField(max_length=255, verbose_name="Название категории")
     slug = models.SlugField(max_length=255, verbose_name="Slug", blank=True)
