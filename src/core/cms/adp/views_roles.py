@@ -738,7 +738,7 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
                 avatar = None
             avatar_url = None
             if avatar and avatar.image:
-                avatar_url = request.build_absolute_uri(avatar.image.url)
+                avatar_url = avatar.image.url
 
             serializer = AdminUserRoleInfoSerializer(instance={
                 'user_id': user.id,
