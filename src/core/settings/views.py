@@ -12,6 +12,7 @@ from .serializers import CategorySerializer
 from .models import UserAvatar
 from .serializers import UserAvatarSerializer
 from rest_framework.permissions import IsAuthenticated
+from src.core.utils.mixins import MediaApiFileMixin
 from django.forms.models import model_to_dict
 from .audit import log_audit
 from .models import AuditLog
@@ -173,7 +174,7 @@ class TagViewSet(viewsets.ModelViewSet):
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
 
-class UserAvatarViewSet(viewsets.ModelViewSet):
+class UserAvatarViewSet(MediaApiFileMixin, viewsets.ModelViewSet):
     queryset = UserAvatar.objects.all()
     serializer_class = UserAvatarSerializer
     permission_classes = [IsAuthenticated]
@@ -186,20 +187,20 @@ class UserAvatarViewSet(viewsets.ModelViewSet):
         return UserAvatarSerializer
     
     def get_queryset(self):
-        # Обходим проблему с генерацией swagger схемы для анонимных пользователей
         if getattr(self, 'swagger_fake_view', False):
             return UserAvatar.objects.none()
-        
-        # Проверяем, что пользователь аутентифицирован
         if not self.request.user.is_authenticated:
             return UserAvatar.objects.none()
-            
         return UserAvatar.objects.filter(user=self.request.user)
     
     def perform_create(self, serializer):
         if self.request.user.is_authenticated:
             UserAvatar.objects.filter(user=self.request.user).delete()
-            serializer.save(user=self.request.user)
+            file, file_path = self.get_file_or_path('image')
+            instance = serializer.save(user=self.request.user)
+            if file_path:
+                self.assign_file_field(instance, 'image', file_path=file_path)
+                instance.save()
     
     @action(detail=False, methods=['delete'], url_path='current')
     def delete_current(self, request):

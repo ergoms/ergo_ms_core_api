@@ -120,9 +120,12 @@ class TagSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'category']
 class UserAvatarSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(read_only=True)
+    image_path = serializers.CharField(write_only=True, required=False)
+
     class Meta:
         model = UserAvatar
-        fields = ['id', 'user', 'image', 'uploaded_at']
+        fields = ['id', 'user', 'image', 'image_path', 'uploaded_at']
+        extra_kwargs = {'image': {'required': False}}
 
 class UserAvatarListSerializer(serializers.ModelSerializer):
     """Легковесный сериализатор для списка аватаров (только URL изображения)"""

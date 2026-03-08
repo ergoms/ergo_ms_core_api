@@ -11,7 +11,8 @@ MAX_ATTACHMENT_SIZE_BYTES = MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
 
 
 class MessageAttachmentSerializer(serializers.ModelSerializer):
-    file = serializers.FileField(write_only=True)
+    file = serializers.FileField(write_only=True, required=False)
+    file_path = serializers.CharField(write_only=True, required=False)
     file_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -20,6 +21,7 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
             'id',
             'message',
             'file',
+            'file_path',
             'file_url',
             'original_filename',
             'file_size',
@@ -28,24 +30,42 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'original_filename', 'file_size', 'mime_type', 'file_url', 'created_at')
 
+    def validate(self, attrs):
+        if not attrs.get('file') and not attrs.get('file_path'):
+            raise serializers.ValidationError('Необходим file или file_path')
+        return attrs
+
     def validate_file(self, value):
-        if value.size > MAX_ATTACHMENT_SIZE_BYTES:
+        if value and value.size > MAX_ATTACHMENT_SIZE_BYTES:
             raise serializers.ValidationError(
                 f'Размер файла не должен превышать {MAX_ATTACHMENT_SIZE_MB} МБ'
             )
         return value
 
     def get_file_url(self, obj):
-        request = self.context.get('request')
-        if request and obj.file:
+        if obj.file:
             try:
-                return request.build_absolute_uri(obj.file.url)
+                return obj.file.url
             except Exception:
-                return obj.file.url if obj.file else None
-        return obj.file.url if obj.file else None
+                return None
+        return None
 
     def create(self, validated_data):
+        file_path = validated_data.pop('file_path', None)
         uploaded_file = validated_data.get('file')
+
+        if file_path:
+            import os
+            from django.core.files.storage import default_storage
+            validated_data.pop('file', None)
+            validated_data['original_filename'] = os.path.basename(file_path)
+            validated_data['file_size'] = default_storage.size(file_path) if default_storage.exists(file_path) else 0
+            validated_data['mime_type'] = ''
+            instance = super().create(validated_data)
+            instance.file.name = file_path
+            instance.save()
+            return instance
+
         validated_data['original_filename'] = uploaded_file.name
         validated_data['file_size'] = uploaded_file.size or 0
         validated_data['mime_type'] = getattr(uploaded_file, 'content_type', '') or ''
@@ -137,12 +157,11 @@ class MessageSerializer(serializers.ModelSerializer):
         full_name = user.get_full_name() if hasattr(user, 'get_full_name') else ''
         avatar_url = None
         request = self.context.get('request')
-        if request:
-            try:
-                if hasattr(user, 'avatar') and user.avatar and user.avatar.image:
-                    avatar_url = request.build_absolute_uri(user.avatar.image.url)
-            except Exception:
-                pass
+        try:
+            if hasattr(user, 'avatar') and user.avatar and user.avatar.image:
+                avatar_url = user.avatar.image.url
+        except Exception:
+            pass
         return {
             'id': user.id,
             'username': getattr(user, 'username', ''),

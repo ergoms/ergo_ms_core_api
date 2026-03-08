@@ -64,6 +64,23 @@ LOGS_ROOT = os.path.join(SYSTEM_DIR, 'logs')
 # Хранилище для статических файлов, использующее Whitenoise для сжатия и кэширования.
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
+STORAGES = {
+    'default': {
+        'BACKEND': 'src.core.utils.media_storage.MediaApiStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
+
 # Ограничения задач
 TASKS_MAX_ATTACHMENT_SIZE_MB = int(os.getenv('TASKS_MAX_ATTACHMENT_SIZE_MB', '25'))
 TASKS_MAX_ATTACHMENT_SIZE_BYTES = TASKS_MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
+
+# Media API (CDN / file server)
+MEDIA_API_HOST = os.getenv('MEDIA_API_HOST', 'localhost')
+MEDIA_API_PORT = int(os.getenv('MEDIA_API_PORT', '8003'))
+MEDIA_API_PROTOCOL = os.getenv('MEDIA_API_PROTOCOL', 'http')
+MEDIA_URL_EXPIRATION = int(os.getenv('MEDIA_URL_EXPIRATION', '3600'))
+MEDIA_UPLOAD_MAX_SIZE = int(os.getenv('MEDIA_UPLOAD_MAX_SIZE', '104857600'))
+MEDIA_UPLOAD_TOKEN_EXPIRATION = int(os.getenv('MEDIA_UPLOAD_TOKEN_EXPIRATION', '300'))

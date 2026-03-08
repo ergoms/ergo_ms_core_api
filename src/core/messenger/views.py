@@ -7,7 +7,7 @@ from rest_framework import permissions, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 
-from src.core.utils.mixins import SwaggerSafeMixin
+from src.core.utils.mixins import SwaggerSafeMixin, MediaApiFileMixin
 
 from .models import Message, MessageAttachment
 from .serializers import MessageAttachmentSerializer, MessageSerializer
@@ -89,7 +89,7 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
             logger.exception('Broadcast message_deleted failed')
 
 
-class MessageAttachmentViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
+class MessageAttachmentViewSet(MediaApiFileMixin, SwaggerSafeMixin, viewsets.ModelViewSet):
     serializer_class = MessageAttachmentSerializer
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser)

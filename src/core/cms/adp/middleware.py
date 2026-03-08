@@ -23,7 +23,6 @@ class URLPermissionMiddleware(MiddlewareMixin):
         '/api/adp/send-confirmation/',
         '/admin/',
         '/static/',
-        '/media/',
     ]
     
     def process_request(self, request):
