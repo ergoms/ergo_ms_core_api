@@ -9,6 +9,7 @@ from typing import Dict, Type
 
 from commands.base import PoetryCommand
 from commands.discovery import discovery
+from commands.merge_deps import MergeDepsCommand
 
 from src.config.settings.logger import LOGGING
 
@@ -24,13 +25,23 @@ logger.addHandler(console_handler)
 logger.setLevel(logging.INFO)
 
 
+_SCRIPT_COMMANDS: list[Type[PoetryCommand]] = [
+    MergeDepsCommand,
+]
+
+
 def get_commands() -> Dict[str, Type[PoetryCommand]]:
     """Получение всех доступных команд."""
     try:
-        return discovery.get_all()
+        commands = discovery.get_all()
     except Exception as e:
         logger.warning(f"Ошибка при загрузке команд: {e}")
-        return {}
+        commands = {}
+
+    for cmd_class in _SCRIPT_COMMANDS:
+        commands[cmd_class.poetry_command_name] = cmd_class
+
+    return commands
 
 
 def main():
