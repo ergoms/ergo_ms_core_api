@@ -129,6 +129,29 @@ class MergeDepsCommand(PoetryCommand):
                     results.append((module_dir.name, deps))
         return results
 
+    def _collect_all_sources(
+        self, project_root: Path, root_data: dict
+    ) -> List[dict]:
+        """
+        Собирает [[tool.poetry.source]] из корневого и всех модульных
+        pyproject.toml, дедуплицируя по полю 'name'.
+        """
+        seen: Dict[str, dict] = {}
+        for source in root_data.get("tool", {}).get("poetry", {}).get("source", []):
+            seen[source["name"]] = source
+        modules_dir = project_root / "modules"
+        if modules_dir.exists():
+            for module_dir in sorted(modules_dir.iterdir()):
+                config_path = module_dir / "pyproject.toml"
+                if not config_path.exists():
+                    continue
+                data = self._read_toml(config_path)
+                if not data:
+                    continue
+                for source in data.get("tool", {}).get("poetry", {}).get("source", []):
+                    seen.setdefault(source["name"], source)
+        return list(seen.values())
+
     # ------------------------------------------------------------------ #
     # Dependency merging                                                   #
     # ------------------------------------------------------------------ #
@@ -228,9 +251,11 @@ class MergeDepsCommand(PoetryCommand):
 
         print(f"Установка {len(missing)} пакетов через poetry: {', '.join(sorted(missing))}")
 
+        all_sources = self._collect_all_sources(project_root, root_data)
+
         tmp_dir = Path(tempfile.mkdtemp(prefix="ergo_merge_deps_"))
         try:
-            toml_content = self._build_merged_toml(root_data, merged_deps, project_root)
+            toml_content = self._build_merged_toml(root_data, merged_deps, project_root, all_sources)
             (tmp_dir / "pyproject.toml").write_text(toml_content, encoding="utf-8")
 
             # Копируем lock-файл: Poetry обновит его только для новых пакетов
@@ -276,15 +301,20 @@ class MergeDepsCommand(PoetryCommand):
     # ------------------------------------------------------------------ #
 
     def _build_merged_toml(
-        self, root_data: dict, merged_deps: dict, project_root: Path
+        self,
+        root_data: dict,
+        merged_deps: dict,
+        project_root: Path,
+        extra_sources: Optional[List[dict]] = None,
     ) -> str:
         """
         Генерирует содержимое объединённого pyproject.toml.
         Path-зависимости преобразуются в абсолютные пути, чтобы
         Poetry мог их разрешить из временной директории.
+        extra_sources — список source-записей из модульных pyproject.toml.
         """
         poetry_section = root_data.get("tool", {}).get("poetry", {})
-        sources: list = poetry_section.get("source", [])
+        sources: list = extra_sources if extra_sources is not None else poetry_section.get("source", [])
         build_system: dict = root_data.get("build-system", {})
 
         lines: List[str] = []
