@@ -48,7 +48,7 @@ def _get_cached_yaml(config_path: Path) -> Optional[Dict]:
 
 DB_ENGINES = {
     'postgresql': 'django.db.backends.postgresql',
-    'mysql': 'django.db.backends.mysql',
+    'mysql': 'mysql.connector.django',
     'sqlite': 'django.db.backends.sqlite3',
     'mssql': 'django.db.backends.sqlserver',
 }

@@ -48,7 +48,7 @@ BUILTIN_EXACT_IMPORT_MAP = {
 }
 
 BUILTIN_AMBIGUOUS_IMPORT_MAP = {
-    "mysql": {"mysqlclient", "mysql-connector-python"},
+    "mysql": {"mysql-connector-python"},
     "docx": {"docx", "python-docx"},
 }
 
