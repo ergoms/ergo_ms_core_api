@@ -172,10 +172,9 @@ def _is_lock_stale() -> bool:
         return True
 
 
-def _wait_for_warmup(timeout: float = 60) -> bool:
+def _wait_for_warmup() -> bool:
     """Ждёт завершения warmup другим процессом. Возвращает True если кэш стал валидным."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    while True:
         if not WARMUP_LOCK.exists():
             queues = read_queues_cache()
             if queues:
@@ -185,7 +184,6 @@ def _wait_for_warmup(timeout: float = 60) -> bool:
             _release_warmup_lock()
             return False
         time.sleep(0.5)
-    return False
 
 
 def ensure_caches() -> List[str]:
@@ -204,7 +202,6 @@ def ensure_caches() -> List[str]:
             result = subprocess.run(
                 [sys.executable, '-m', 'commands', 'warmup_caches'],
                 cwd=str(API_DIR.parent),
-                timeout=60,
                 env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'},
             )
             if result.returncode == 0:
