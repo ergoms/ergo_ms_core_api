@@ -15,11 +15,11 @@ from commands.base import PoetryCommand
 
 # Список встроенных команд Django (без загрузки Django)
 DJANGO_BUILTIN_COMMANDS = frozenset([
-    'changepassword', 'check', 'clearsessions', 'compilemessages', 'createcachetable',
-    'createsuperuser', 'dbshell', 'diffsettings', 'dumpdata', 'flush', 'inspectdb',
-    'loaddata', 'makemessages', 'makemigrations', 'migrate', 'runserver', 'sendtestemail',
-    'shell', 'showmigrations', 'sqlflush', 'sqlmigrate', 'sqlsequencereset',
-    'squashmigrations', 'startapp', 'startproject', 'test', 'testserver',
+    'changepassword', 'check', 'clearsessions', 'collectstatic', 'compilemessages',
+    'createcachetable', 'createsuperuser', 'dbshell', 'diffsettings', 'dumpdata',
+    'flush', 'inspectdb', 'loaddata', 'makemessages', 'makemigrations', 'migrate',
+    'runserver', 'sendtestemail', 'shell', 'showmigrations', 'sqlflush', 'sqlmigrate',
+    'sqlsequencereset', 'squashmigrations', 'startapp', 'startproject', 'test', 'testserver',
 ])
 
 
