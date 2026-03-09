@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 SCRIPT_DIR = Path(__file__).resolve().parent
 API_DIR = SCRIPT_DIR.parent
 PROJECT_ROOT = API_DIR.parent.parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
 MODULES_DIR = PROJECT_ROOT / 'modules'
 WORKERS_CONFIG = PROJECT_ROOT / 'celery_workers.yaml'
 CACHE_DIR = PROJECT_ROOT / 'virtual_env' / 'cache'
@@ -47,47 +49,15 @@ def is_celery_process(cmdline: list) -> bool:
 
 
 def get_modules_config_mtime() -> float:
-    """
-    Вычисляет max mtime по celery_config.py / celery_beat_config.py модулей.
-    Ловит реальные изменения в конфигурациях, а не только добавление/удаление модулей.
-    """
-    max_mtime = 0.0
-    if MODULES_DIR.exists():
-        max_mtime = MODULES_DIR.stat().st_mtime
-        for module_dir in MODULES_DIR.iterdir():
-            if not module_dir.is_dir():
-                continue
-            for cfg_name in ('celery_config.py', 'celery_beat_config.py'):
-                cfg = module_dir / cfg_name
-                if cfg.exists():
-                    max_mtime = max(max_mtime, cfg.stat().st_mtime)
-            api_cfg = module_dir / 'api' / 'celery_config.py'
-            if api_cfg.exists():
-                max_mtime = max(max_mtime, api_cfg.stat().st_mtime)
-    return max_mtime
+    """Max mtime по celery_config.py / celery_beat_config.py модулей."""
+    from src.core.utils.cache_fingerprint import get_modules_config_max_mtime
+    return get_modules_config_max_mtime(MODULES_DIR)
 
 
 def get_fingerprint() -> Dict[str, float]:
-    """Fingerprint для routes/queues кэша (celery_routes_queues.json)."""
-    result: Dict[str, float] = {}
-    if MODULES_DIR.exists():
-        result['modules'] = MODULES_DIR.stat().st_mtime
-        for module_dir in sorted(MODULES_DIR.iterdir()):
-            if not module_dir.is_dir():
-                continue
-            for cfg_name in ('celery_config.py', 'celery_beat_config.py'):
-                cfg = module_dir / cfg_name
-                if cfg.exists():
-                    key = str(cfg.relative_to(PROJECT_ROOT))
-                    result[key] = cfg.stat().st_mtime
-            api_cfg = module_dir / 'api' / 'celery_config.py'
-            if api_cfg.exists():
-                key = str(api_cfg.relative_to(PROJECT_ROOT))
-                result[key] = api_cfg.stat().st_mtime
-    core_path = PROJECT_ROOT / 'core'
-    if core_path.exists():
-        result['core'] = core_path.stat().st_mtime
-    return result
+    """Fingerprint для routes/queues кэша (celery_routes_queues.bin)."""
+    from src.core.utils.cache_fingerprint import get_celery_config_fingerprint
+    return get_celery_config_fingerprint(PROJECT_ROOT, MODULES_DIR)
 
 
 def _load_bin_cache(path: Path) -> Optional[Dict]:
@@ -103,17 +73,19 @@ def _load_bin_cache(path: Path) -> Optional[Dict]:
 
 def read_queues_cache() -> List[str]:
     """Читает список очередей из celery_queues.bin или celery_routes_queues.bin."""
+    from src.core.utils.cache_fingerprint import mtime_valid, fingerprint_equal
+
     data = _load_bin_cache(CACHE_FILE)
     if data is not None:
         stored_mtime = data.get('modules_mtime', 0)
         current_mtime = get_modules_config_mtime()
-        if stored_mtime >= current_mtime:
+        if mtime_valid(stored_mtime, current_mtime):
             queues = data.get('queues', [])
             if queues:
                 return queues
     data = _load_bin_cache(ROUTES_QUEUES_CACHE_FILE)
     if data is not None:
-        if data.get('fingerprint') == get_fingerprint():
+        if fingerprint_equal(data.get('fingerprint', {}), get_fingerprint()):
             queues = data.get('queues', {})
             if queues:
                 return sorted(queues.keys())
@@ -122,15 +94,17 @@ def read_queues_cache() -> List[str]:
 
 def cache_valid() -> bool:
     """Проверяет валидность кэша без загрузки Django."""
+    from src.core.utils.cache_fingerprint import mtime_valid, fingerprint_equal
+
     data = _load_bin_cache(CACHE_FILE)
     if data is not None:
         stored_mtime = data.get('modules_mtime', 0)
         current_mtime = get_modules_config_mtime()
-        if stored_mtime >= current_mtime and data.get('queues'):
+        if mtime_valid(stored_mtime, current_mtime) and data.get('queues'):
             return True
     data = _load_bin_cache(ROUTES_QUEUES_CACHE_FILE)
     if data is not None:
-        if data.get('fingerprint') == get_fingerprint() and data.get('queues'):
+        if fingerprint_equal(data.get('fingerprint', {}), get_fingerprint()) and data.get('queues'):
             return True
     return False
 
@@ -196,9 +170,9 @@ def ensure_caches() -> List[str]:
 
     if _acquire_warmup_lock():
         try:
-            print('Celery queues cache is empty. Populating via warmup_caches...')
+            print('Celery queues cache is empty. Populating via warmup_celery...')
             result = subprocess.run(
-                [sys.executable, '-m', 'commands', 'warmup_caches'],
+                [sys.executable, '-m', 'commands', 'warmup_celery'],
                 cwd=str(API_DIR.parent),
                 env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'},
             )

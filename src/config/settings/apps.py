@@ -7,7 +7,7 @@
 
 from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
 
-ALL_MODULES = get_discovered_apps()
+ALL_MODULES = get_discovered_apps(use_cache=True)
 
 # Определяем список установленных приложений
 INSTALLED_APPS = ALL_MODULES + [

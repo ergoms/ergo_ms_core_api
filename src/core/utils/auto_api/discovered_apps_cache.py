@@ -20,18 +20,41 @@ CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
 CACHE_FILE = CACHE_DIR / 'discovered_apps.bin'
 
 
+def _max_mtime_apps_py(root: Path) -> float:
+    """Max mtime всех apps.py в директории."""
+    max_mtime = 0.0
+    try:
+        for p in root.rglob('apps.py'):
+            if p.is_file():
+                try:
+                    max_mtime = max(max_mtime, p.stat().st_mtime)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return max_mtime
+
+
 def _get_dirs_fingerprint() -> dict:
-    """Собирает mtime директорий для проверки актуальности кэша."""
+    """
+    Fingerprint для проверки актуальности кэша discovered_apps.
+    Учитывает mtime директорий и всех apps.py — ловит добавление/изменение приложений.
+    """
     result = {}
     for name, path in [('core', CORE_DIR), ('modules', MODULES_DIR)]:
         p = Path(path)
         if p.exists():
             try:
-                result[name] = p.stat().st_mtime
+                dir_mtime = p.stat().st_mtime
+                apps_mtime = _max_mtime_apps_py(p)
+                result[f'{name}_dir'] = dir_mtime
+                result[f'{name}_apps'] = max(dir_mtime, apps_mtime)
             except OSError:
-                result[name] = 0
+                result[f'{name}_dir'] = 0
+                result[f'{name}_apps'] = 0
         else:
-            result[name] = 0
+            result[f'{name}_dir'] = 0
+            result[f'{name}_apps'] = 0
     return result
 
 
@@ -130,15 +153,18 @@ def get_discovered_apps(use_cache: Optional[bool] = None, fast_discovery: Option
         return _run_discovery_fast() if fast_discovery else _run_discovery()
 
     current_fingerprint = _get_dirs_fingerprint()
-    if _in_memory_cache is not None and _in_memory_cache[0] == current_fingerprint:
-        return _in_memory_cache[1]
+    if _in_memory_cache is not None:
+        from src.core.utils.cache_fingerprint import fingerprint_equal
+        if fingerprint_equal(_in_memory_cache[0], current_fingerprint):
+            return _in_memory_cache[1]
 
+    from src.core.utils.cache_fingerprint import fingerprint_equal
     from src.core.utils.cache_io import read_bin_cache
 
     data = read_bin_cache(CACHE_FILE)
     if data is not None:
         cached_fingerprint = data.get('fingerprint', {})
-        if cached_fingerprint == current_fingerprint:
+        if fingerprint_equal(cached_fingerprint, current_fingerprint):
             apps = data.get('apps')
             if apps is not None:
                 _in_memory_cache = (current_fingerprint, apps)

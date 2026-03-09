@@ -89,10 +89,14 @@ class PoetryCommand:
             project_path = os.path.join(os.path.dirname(__file__), '..', 'src')
             if project_path not in sys.path:
                 sys.path.insert(0, project_path)
-            
-            deploy_type = get_env_deploy_type()
-            os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
-            
+
+            warmup_commands = ('warmup_caches', 'warmup_celery')
+            if self.command_name in warmup_commands:
+                os.environ['DJANGO_SETTINGS_MODULE'] = 'src.config.patterns.warmup'
+            else:
+                deploy_type = get_env_deploy_type()
+                os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
+
             import django
             if not django.conf.settings.configured:
                 django.setup()

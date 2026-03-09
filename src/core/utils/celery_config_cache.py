@@ -100,27 +100,10 @@ BEAT_SCHEDULE_CACHE_FILE = CACHE_DIR / 'celery_beat_schedule.bin'
 
 def _get_fingerprint() -> Dict[str, float]:
     """Fingerprint на основе mtime конфигурационных файлов модулей."""
-    project_root = Path(settings.SYSTEM_DIR)
-    modules_dir = Path(settings.MODULES_DIR)
-    result: Dict[str, float] = {}
-    if modules_dir.exists():
-        result['modules'] = modules_dir.stat().st_mtime
-        for module_dir in sorted(modules_dir.iterdir()):
-            if not module_dir.is_dir():
-                continue
-            for cfg_name in ('celery_config.py', 'celery_beat_config.py'):
-                cfg = module_dir / cfg_name
-                if cfg.exists():
-                    key = str(cfg.relative_to(project_root))
-                    result[key] = cfg.stat().st_mtime
-            api_cfg = module_dir / 'api' / 'celery_config.py'
-            if api_cfg.exists():
-                key = str(api_cfg.relative_to(project_root))
-                result[key] = api_cfg.stat().st_mtime
-    core_path = project_root / 'core'
-    if core_path.exists():
-        result['core'] = core_path.stat().st_mtime
-    return result
+    from src.core.utils.cache_fingerprint import get_celery_config_fingerprint
+    return get_celery_config_fingerprint(
+        Path(settings.SYSTEM_DIR), Path(settings.MODULES_DIR)
+    )
 
 
 def write_routes_queues_cache(
@@ -147,12 +130,13 @@ def read_routes_queues_cache() -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]
     Читает routes и queues из кэша.
     Возвращает (routes, queues) или None если кэш невалиден.
     """
+    from src.core.utils.cache_fingerprint import fingerprint_equal
     from src.core.utils.cache_io import read_bin_cache
 
     data = read_bin_cache(CACHE_FILE)
     if data is None:
         return None
-    if data.get('fingerprint') != _get_fingerprint():
+    if not fingerprint_equal(data.get('fingerprint', {}), _get_fingerprint()):
         return None
     routes = data.get('routes')
     queues = data.get('queues')
@@ -179,12 +163,13 @@ def read_beat_schedule_cache() -> Optional[Dict[str, Dict[str, Any]]]:
     Читает расписание Beat из кэша.
     Возвращает schedule или None если кэш невалиден.
     """
+    from src.core.utils.cache_fingerprint import fingerprint_equal
     from src.core.utils.cache_io import read_bin_cache
 
     data = read_bin_cache(BEAT_SCHEDULE_CACHE_FILE)
     if data is None:
         return None
-    if data.get('fingerprint') != _get_fingerprint():
+    if not fingerprint_equal(data.get('fingerprint', {}), _get_fingerprint()):
         return None
     schedule = data.get('schedule')
     if schedule is not None:

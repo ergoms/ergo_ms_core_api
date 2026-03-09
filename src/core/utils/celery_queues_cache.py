@@ -18,21 +18,8 @@ CACHE_FILE = CACHE_DIR / 'celery_queues.bin'
 
 def _get_modules_config_mtime() -> float:
     """Max mtime по celery_config.py / celery_beat_config.py модулей."""
-    modules_dir = Path(settings.MODULES_DIR)
-    max_mtime = 0.0
-    if modules_dir.exists():
-        max_mtime = modules_dir.stat().st_mtime
-        for module_dir in modules_dir.iterdir():
-            if not module_dir.is_dir():
-                continue
-            for cfg_name in ('celery_config.py', 'celery_beat_config.py'):
-                cfg = module_dir / cfg_name
-                if cfg.exists():
-                    max_mtime = max(max_mtime, cfg.stat().st_mtime)
-            api_cfg = module_dir / 'api' / 'celery_config.py'
-            if api_cfg.exists():
-                max_mtime = max(max_mtime, api_cfg.stat().st_mtime)
-    return max_mtime
+    from src.core.utils.cache_fingerprint import get_modules_config_max_mtime
+    return get_modules_config_max_mtime(Path(settings.MODULES_DIR))
 
 
 def write_queues_cache(queues: Dict[str, Any]) -> None:
@@ -50,6 +37,7 @@ def write_queues_cache(queues: Dict[str, Any]) -> None:
 
 def read_queues_cache() -> List[str]:
     """Читает список очередей из кэша (для использования в Django-контексте)."""
+    from src.core.utils.cache_fingerprint import mtime_valid
     from src.core.utils.cache_io import read_bin_cache
 
     data = read_bin_cache(CACHE_FILE)
@@ -57,6 +45,6 @@ def read_queues_cache() -> List[str]:
         return []
     stored_mtime = data.get('modules_mtime', 0)
     current_mtime = _get_modules_config_mtime()
-    if stored_mtime >= current_mtime:
+    if mtime_valid(stored_mtime, current_mtime):
         return data.get('queues', [])
     return []
