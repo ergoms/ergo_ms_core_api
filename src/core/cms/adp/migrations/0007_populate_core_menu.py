@@ -84,18 +84,6 @@ def populate_core_menu(apps, schema_editor):
         ('Создание категорий', 'PageCategoriesManager'),
         ('Создание тегов', 'TagsManager'),
     ], parent=page_categories)
-    
-    # === AI Assistant (фиксированный order=30) ===
-    ai = MenuMigrationHelper(apps, 'core/ai-assistant')
-    ai.clear_module_items()
-    
-    ai_menu = ai.create_group('AI Hub', 'AIAssistantHub', icon='Bot', order=30)
-    ai.create_routes_batch([
-        ('Центр управления', 'AIAssistantHub', 'Bot'),
-        ('Чат', 'AIAssistantChat', 'MessageSquare'),
-        ('BI Анализ', 'AIAssistantBI', 'Database'),
-    ], parent=ai_menu)
-
 
 def reverse_populate_core_menu(apps, schema_editor):
     """Удаляет элементы меню из core модулей."""
