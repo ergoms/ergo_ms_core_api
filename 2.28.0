@@ -1,0 +1,6 @@
+  Разрешена версия: requests = ">=2.32.0"
+  (обновлена существующая запись)
+✓ Добавлено в modules\bi_analysis\pyproject.toml:
+    requests = ">=2.32.0"
+
+Для установки запустите: api install

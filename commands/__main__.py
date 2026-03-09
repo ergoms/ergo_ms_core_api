@@ -16,7 +16,7 @@ from typing import Dict, Type
 
 from commands.base import PoetryCommand
 from commands.discovery import discovery
-from commands.merge_deps import MergeDepsCommand
+from commands.install import InstallCommand
 from commands.module_add import ModuleAddCommand, ModuleListCommand, ModuleRemoveCommand
 
 from src.config.settings.logger import LOGGING
@@ -34,7 +34,7 @@ logger.setLevel(logging.INFO)
 
 
 _SCRIPT_COMMANDS: list[Type[PoetryCommand]] = [
-    MergeDepsCommand,
+    InstallCommand,
     ModuleAddCommand,
     ModuleRemoveCommand,
     ModuleListCommand,

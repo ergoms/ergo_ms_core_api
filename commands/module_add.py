@@ -1,11 +1,14 @@
 """
-Команда для добавления зависимости в pyproject.toml конкретного модуля.
+Команды для управления зависимостями модулей.
 
-Использование:
-    api module-add <модуль> <пакет>                  — добавить пакет (версия авторазрешается)
-    api module-add <модуль> <пакет> "<constraint>"   — добавить с явным ограничением
-    api module-add <модуль> <пакет> --install        — добавить и сразу установить
-    api module-list                                  — список модулей с pyproject.toml
+api module-add <модуль> <пакет>                  — добавить пакет (версия авторазрешается)
+api module-add <модуль> <пакет> "<constraint>"   — добавить с явным ограничением
+api module-add <модуль> <пакет> --install        — добавить и сразу установить
+api module-remove <модуль> <пакет>               — удалить пакет из модуля
+api module-list                                  — список модулей с pyproject.toml
+
+Зависимость записывается только в modules/<module>/pyproject.toml.
+Для применения изменений запустите: ergoms poetry install
 """
 
 import os
@@ -14,13 +17,24 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from commands.base import PoetryCommand
 
 
+def _find_project_root() -> Optional[Path]:
+    candidates = [
+        Path(os.getcwd()),
+        Path(__file__).resolve().parent.parent.parent.parent,
+    ]
+    for c in candidates:
+        if (c / "pyproject.toml").exists():
+            return c
+    return None
+
+
 class ModuleAddCommand(PoetryCommand):
-    """Добавляет зависимость в pyproject.toml конкретного модуля."""
+    """Добавляет зависимость в pyproject.toml модуля."""
 
     poetry_command_name = "module-add"
     script_command = "module-add"
@@ -43,7 +57,7 @@ class ModuleAddCommand(PoetryCommand):
         package = args[1]
         constraint = args[2] if len(args) >= 3 else None
 
-        project_root = self._find_project_root()
+        project_root = _find_project_root()
         if project_root is None:
             print("Ошибка: не удалось найти корневой pyproject.toml.")
             return 1
@@ -70,27 +84,14 @@ class ModuleAddCommand(PoetryCommand):
         print(f"    {package} = \"{constraint}\"")
 
         if install:
-            print("\nЗапуск установки через merge-deps --install...")
-            from commands.merge_deps import MergeDepsCommand
-            return MergeDepsCommand().run("--install")
+            print("\nЗапуск установки...")
+            from commands.install import InstallCommand
+            return InstallCommand().run()
 
-        print("\nДля установки запустите: api merge-deps --install")
+        print("\nДля установки запустите: ergoms poetry install")
         return 0
 
-    # ------------------------------------------------------------------ #
-
-    def _find_project_root(self) -> Optional[Path]:
-        candidates = [
-            Path(os.getcwd()),
-            Path(__file__).resolve().parent.parent.parent.parent,
-        ]
-        for c in candidates:
-            if (c / "pyproject.toml").exists():
-                return c
-        return None
-
     def _resolve_version(self, package: str) -> Optional[str]:
-        """Получает последнюю версию пакета через pip index versions."""
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "index", "versions", package],
@@ -98,11 +99,9 @@ class ModuleAddCommand(PoetryCommand):
                 text=True,
                 timeout=15,
             )
-            # pip output: "package (X.Y.Z)"
             match = re.search(r"\(([^)]+)\)", result.stdout)
             if match:
                 latest = match.group(1).split(",")[0].strip()
-                # Берём major.minor как нижнюю границу
                 parts = latest.split(".")
                 if len(parts) >= 2:
                     return f">={parts[0]}.{parts[1]}.0"
@@ -112,30 +111,21 @@ class ModuleAddCommand(PoetryCommand):
         return None
 
     def _add_to_toml(self, toml_path: Path, package: str, constraint: str) -> int:
-        """
-        Добавляет строку зависимости в [tool.poetry.dependencies].
-        Если пакет уже есть — обновляет его версию.
-        """
         try:
             text = toml_path.read_text(encoding="utf-8")
         except Exception as e:
             print(f"Ошибка чтения {toml_path}: {e}")
             return 1
 
-        # Проверяем существующую запись
         pkg_pattern = re.compile(
             rf'^{re.escape(package)}\s*=\s*.+$', re.MULTILINE | re.IGNORECASE
         )
         new_line = f'{package} = "{constraint}"'
 
         if pkg_pattern.search(text):
-            # Обновляем существующую
             updated = pkg_pattern.sub(new_line, text)
-            print(f"  (обновлена существующая запись)")
+            print("  (обновлена существующая запись)")
         else:
-            # Ищем конец секции [tool.poetry.dependencies] через lookahead:
-            # останавливаемся перед следующим заголовком (\n[) или концом файла.
-            # Это важно: [^\[] прерывался бы на [ внутри inline-таблиц.
             section_pattern = re.compile(
                 r'(\[tool\.poetry\.dependencies\].*?)(?=\n\s*\[|\Z)', re.DOTALL
             )
@@ -143,11 +133,9 @@ class ModuleAddCommand(PoetryCommand):
             if not match:
                 print(f"Ошибка: секция [tool.poetry.dependencies] не найдена в {toml_path}")
                 return 1
-
             section_end = match.end()
             updated = text[:section_end].rstrip() + "\n" + new_line + "\n" + text[section_end:]
 
-        # Верифицируем до записи
         try:
             tomllib.loads(updated)
         except Exception as e:
@@ -180,10 +168,12 @@ class ModuleAddCommand(PoetryCommand):
         print('  api module-add <модуль> <пакет> ">=1.0.0"       — явное ограничение')
         print("  api module-add <модуль> <пакет> --install       — добавить и установить")
         print("  api module-list                                  — список модулей")
+        print("")
+        print("  Для установки после добавления: ergoms poetry install")
 
 
 class ModuleRemoveCommand(PoetryCommand):
-    """Удаляет зависимость из pyproject.toml конкретного модуля."""
+    """Удаляет зависимость из pyproject.toml модуля."""
 
     poetry_command_name = "module-remove"
     script_command = "module-remove"
@@ -199,7 +189,7 @@ class ModuleRemoveCommand(PoetryCommand):
         module_name = args[0]
         package = args[1]
 
-        project_root = self._find_project_root()
+        project_root = _find_project_root()
         if project_root is None:
             print("Ошибка: не удалось найти корневой pyproject.toml.")
             return 1
@@ -211,16 +201,6 @@ class ModuleRemoveCommand(PoetryCommand):
 
         return self._remove_from_toml(module_toml, package, project_root)
 
-    def _find_project_root(self) -> Optional[Path]:
-        candidates = [
-            Path(os.getcwd()),
-            Path(__file__).resolve().parent.parent.parent.parent,
-        ]
-        for c in candidates:
-            if (c / "pyproject.toml").exists():
-                return c
-        return None
-
     def _remove_from_toml(self, toml_path: Path, package: str, project_root: Path) -> int:
         try:
             text = toml_path.read_text(encoding="utf-8")
@@ -228,7 +208,6 @@ class ModuleRemoveCommand(PoetryCommand):
             print(f"Ошибка чтения {toml_path}: {e}")
             return 1
 
-        # Ищем строку с пакетом (простая и inline-таблица)
         pkg_pattern = re.compile(
             rf'^{re.escape(package)}\s*=\s*.+\n?', re.MULTILINE | re.IGNORECASE
         )
@@ -238,13 +217,9 @@ class ModuleRemoveCommand(PoetryCommand):
             return 1
 
         updated = pkg_pattern.sub("", text)
-
-        # Убираем возможные двойные пустые строки
         updated = re.sub(r'\n{3,}', '\n\n', updated)
 
-        # Верифицируем TOML
         try:
-            import tomllib
             tomllib.loads(updated)
         except Exception as e:
             print(f"Ошибка: результирующий TOML невалиден: {e}")
@@ -256,8 +231,8 @@ class ModuleRemoveCommand(PoetryCommand):
             print(f"Ошибка записи {toml_path}: {e}")
             return 1
 
-        print(f"✓ Удалено из {toml_path.relative_to(project_root)}:")
-        print(f"    {package}")
+        print(f"✓ Удалено из {toml_path.relative_to(project_root)}: {package}")
+        print("\nДля применения изменений запустите: ergoms poetry install")
         return 0
 
 
@@ -268,11 +243,9 @@ class ModuleListCommand(PoetryCommand):
     script_command = "module-list"
 
     def run(self, *args) -> int:
-        candidates = [
-            Path(os.getcwd()),
-            Path(__file__).resolve().parent.parent.parent.parent,
-        ]
-        project_root = next((c for c in candidates if (c / "pyproject.toml").exists()), None)
+        args = [a for a in args if a]
+
+        project_root = _find_project_root()
         if project_root is None:
             print("Ошибка: не удалось найти корневой pyproject.toml.")
             return 1
@@ -282,6 +255,31 @@ class ModuleListCommand(PoetryCommand):
             print("Директория modules не найдена.")
             return 1
 
+        # If a module name is provided — show its deps in detail
+        if args:
+            return self._show_module(modules_dir, args[0], project_root)
+
+        # Core dependencies from root pyproject.toml
+        root_toml = project_root / "pyproject.toml"
+        if root_toml.exists():
+            try:
+                with open(root_toml, "rb") as f:
+                    root_data = tomllib.load(f)
+                core_deps = root_data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+                core_pkgs = {k: v for k, v in core_deps.items() if k != "python"}
+                if core_pkgs:
+                    print("\nЗависимости ядра:\n")
+                    max_name = max(len(k) for k in core_pkgs)
+                    for pkg, constraint in sorted(core_pkgs.items()):
+                        if isinstance(constraint, dict):
+                            constraint_str = constraint.get("version", str(constraint))
+                        else:
+                            constraint_str = str(constraint)
+                        print(f"  {pkg:<{max_name}}  {constraint_str}")
+            except Exception:
+                pass
+
+        # All modules with dep counts
         print("\nМодули с pyproject.toml:\n")
         found = 0
         for module_dir in sorted(modules_dir.iterdir()):
@@ -301,4 +299,30 @@ class ModuleListCommand(PoetryCommand):
                 print(f"  {module_dir.name:<35} (ошибка чтения)")
 
         print(f"\nВсего: {found} модулей")
+        return 0
+
+    def _show_module(self, modules_dir, module_name: str, project_root) -> int:
+        toml_path = modules_dir / module_name / "pyproject.toml"
+        if not toml_path.exists():
+            print(f"Ошибка: модуль '{module_name}' не найден или не имеет pyproject.toml.")
+            return 1
+
+        try:
+            with open(toml_path, "rb") as f:
+                data = tomllib.load(f)
+        except Exception as e:
+            print(f"Ошибка чтения {toml_path}: {e}")
+            return 1
+
+        deps = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+        pkgs = {k: v for k, v in deps.items() if k != "python"}
+
+        print(f"\n{module_name}  ({len(pkgs)} зависимостей)\n")
+        if pkgs:
+            max_name = max(len(k) for k in pkgs)
+            for pkg, constraint in sorted(pkgs.items()):
+                print(f"  {pkg:<{max_name}}  {constraint}")
+        else:
+            print("  (нет дополнительных зависимостей)")
+
         return 0
