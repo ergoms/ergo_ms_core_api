@@ -5,7 +5,7 @@
 чтобы избежать дублирования логики чтения кэша и fingerprint.
 """
 
-import json
+import pickle
 import os
 import subprocess
 import sys
@@ -19,8 +19,8 @@ PROJECT_ROOT = API_DIR.parent.parent
 MODULES_DIR = PROJECT_ROOT / 'modules'
 WORKERS_CONFIG = PROJECT_ROOT / 'celery_workers.yaml'
 CACHE_DIR = PROJECT_ROOT / 'virtual_env' / 'cache'
-CACHE_FILE = CACHE_DIR / 'celery_queues.json'
-ROUTES_QUEUES_CACHE_FILE = CACHE_DIR / 'celery_routes_queues.json'
+CACHE_FILE = CACHE_DIR / 'celery_queues.bin'
+ROUTES_QUEUES_CACHE_FILE = CACHE_DIR / 'celery_routes_queues.bin'
 WARMUP_LOCK = CACHE_DIR / 'warmup.lock'
 LOCK_MAX_AGE = 120
 
@@ -90,50 +90,48 @@ def get_fingerprint() -> Dict[str, float]:
     return result
 
 
+def _load_bin_cache(path: Path) -> Optional[Dict]:
+    """Загружает бинарный кэш (pickle). Возвращает None при ошибке."""
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    try:
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    except (pickle.PickleError, OSError, EOFError):
+        return None
+
+
 def read_queues_cache() -> List[str]:
-    """Читает список очередей из celery_queues.json или celery_routes_queues.json."""
-    if CACHE_FILE.exists():
-        try:
-            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            stored_mtime = data.get('modules_mtime', 0)
-            current_mtime = get_modules_config_mtime()
-            if stored_mtime >= current_mtime:
-                return data.get('queues', [])
-        except (json.JSONDecodeError, KeyError, OSError):
-            pass
-    if ROUTES_QUEUES_CACHE_FILE.exists():
-        try:
-            with open(ROUTES_QUEUES_CACHE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            if data.get('fingerprint') == get_fingerprint():
-                queues = data.get('queues', {})
-                return sorted(queues.keys()) if queues else []
-        except (json.JSONDecodeError, KeyError, OSError):
-            pass
+    """Читает список очередей из celery_queues.bin или celery_routes_queues.bin."""
+    data = _load_bin_cache(CACHE_FILE)
+    if data is not None:
+        stored_mtime = data.get('modules_mtime', 0)
+        current_mtime = get_modules_config_mtime()
+        if stored_mtime >= current_mtime:
+            queues = data.get('queues', [])
+            if queues:
+                return queues
+    data = _load_bin_cache(ROUTES_QUEUES_CACHE_FILE)
+    if data is not None:
+        if data.get('fingerprint') == get_fingerprint():
+            queues = data.get('queues', {})
+            if queues:
+                return sorted(queues.keys())
     return []
 
 
 def cache_valid() -> bool:
     """Проверяет валидность кэша без загрузки Django."""
-    if CACHE_FILE.exists():
-        try:
-            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            stored_mtime = data.get('modules_mtime', 0)
-            current_mtime = get_modules_config_mtime()
-            if stored_mtime >= current_mtime and data.get('queues'):
-                return True
-        except (json.JSONDecodeError, KeyError, OSError):
-            pass
-    if ROUTES_QUEUES_CACHE_FILE.exists():
-        try:
-            with open(ROUTES_QUEUES_CACHE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            if data.get('fingerprint') == get_fingerprint() and data.get('queues'):
-                return True
-        except (json.JSONDecodeError, KeyError, OSError):
-            pass
+    data = _load_bin_cache(CACHE_FILE)
+    if data is not None:
+        stored_mtime = data.get('modules_mtime', 0)
+        current_mtime = get_modules_config_mtime()
+        if stored_mtime >= current_mtime and data.get('queues'):
+            return True
+    data = _load_bin_cache(ROUTES_QUEUES_CACHE_FILE)
+    if data is not None:
+        if data.get('fingerprint') == get_fingerprint() and data.get('queues'):
+            return True
     return False
 
 

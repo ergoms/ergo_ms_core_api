@@ -1,7 +1,7 @@
 """
 Прогрев кэшей только при необходимости.
 
-Проверяет celery_queues.json / celery_routes_queues.json без Django.
+Проверяет celery_queues.bin / celery_routes_queues.bin без Django.
 Если кэш валиден — выход за миллисекунды. Иначе — вызывает warmup_caches (Django).
 """
 

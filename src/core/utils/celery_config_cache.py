@@ -1,11 +1,9 @@
 """
 Кэш конфигурации Celery: маршруты/очереди и расписание Beat.
 
-- celery_routes_queues.json — CeleryModuleManager (routes, queues)
-- celery_beat_schedule.json — CeleryBeatModuleManager (schedule)
+- celery_routes_queues.bin — CeleryModuleManager (routes, queues)
+- celery_beat_schedule.bin — CeleryBeatModuleManager (schedule)
 """
-
-import json
 import logging
 from datetime import timedelta
 from pathlib import Path
@@ -96,8 +94,8 @@ def _deserialize_schedule(data: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str
     return result
 
 CACHE_DIR = Path(settings.VIRTUAL_ENV_DIR) / 'cache'
-CACHE_FILE = CACHE_DIR / 'celery_routes_queues.json'
-BEAT_SCHEDULE_CACHE_FILE = CACHE_DIR / 'celery_beat_schedule.json'
+CACHE_FILE = CACHE_DIR / 'celery_routes_queues.bin'
+BEAT_SCHEDULE_CACHE_FILE = CACHE_DIR / 'celery_beat_schedule.bin'
 
 
 def _get_fingerprint() -> Dict[str, float]:
@@ -130,21 +128,18 @@ def write_routes_queues_cache(
     queues: Dict[str, Any],
 ) -> None:
     """Сохраняет маршруты и очереди в файловый кэш с fingerprint."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    from src.core.utils.cache_io import write_bin_cache
+
     data = {
         'fingerprint': _get_fingerprint(),
         'routes': routes,
         'queues': queues,
     }
-    try:
-        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=0)
+    if write_bin_cache(CACHE_FILE, data):
         logger.debug(
-            'celery_routes_queues.json: записано %d маршрутов, %d очередей',
+            'celery_routes_queues.bin: записано %d маршрутов, %d очередей',
             len(routes), len(queues),
         )
-    except OSError as e:
-        logger.warning('Не удалось записать celery_routes_queues.json: %s', e)
 
 
 def read_routes_queues_cache() -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
@@ -152,36 +147,31 @@ def read_routes_queues_cache() -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]
     Читает routes и queues из кэша.
     Возвращает (routes, queues) или None если кэш невалиден.
     """
-    if not CACHE_FILE.exists():
+    from src.core.utils.cache_io import read_bin_cache
+
+    data = read_bin_cache(CACHE_FILE)
+    if data is None:
         return None
-    try:
-        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if data.get('fingerprint') != _get_fingerprint():
-            return None
-        routes = data.get('routes')
-        queues = data.get('queues')
-        if routes is not None and queues is not None:
-            return (routes, queues)
-    except (json.JSONDecodeError, KeyError, OSError):
-        pass
+    if data.get('fingerprint') != _get_fingerprint():
+        return None
+    routes = data.get('routes')
+    queues = data.get('queues')
+    if routes is not None and queues is not None:
+        return (routes, queues)
     return None
 
 
 def write_beat_schedule_cache(schedule: Dict[str, Dict[str, Any]]) -> None:
     """Сохраняет расписание Beat в файловый кэш с fingerprint."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    from src.core.utils.cache_io import write_bin_cache
+
     serialized = _serialize_schedule(schedule)
     data = {
         'fingerprint': _get_fingerprint(),
         'schedule': serialized,
     }
-    try:
-        with open(BEAT_SCHEDULE_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2)
-        logger.debug('celery_beat_schedule.json: записано %d задач', len(schedule))
-    except (OSError, TypeError) as e:
-        logger.warning('Не удалось записать celery_beat_schedule.json: %s', e)
+    if write_bin_cache(BEAT_SCHEDULE_CACHE_FILE, data):
+        logger.debug('celery_beat_schedule.bin: записано %d задач', len(schedule))
 
 
 def read_beat_schedule_cache() -> Optional[Dict[str, Dict[str, Any]]]:
@@ -189,16 +179,14 @@ def read_beat_schedule_cache() -> Optional[Dict[str, Dict[str, Any]]]:
     Читает расписание Beat из кэша.
     Возвращает schedule или None если кэш невалиден.
     """
-    if not BEAT_SCHEDULE_CACHE_FILE.exists():
+    from src.core.utils.cache_io import read_bin_cache
+
+    data = read_bin_cache(BEAT_SCHEDULE_CACHE_FILE)
+    if data is None:
         return None
-    try:
-        with open(BEAT_SCHEDULE_CACHE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if data.get('fingerprint') != _get_fingerprint():
-            return None
-        schedule = data.get('schedule')
-        if schedule is not None:
-            return _deserialize_schedule(schedule)
-    except (json.JSONDecodeError, KeyError, OSError):
-        pass
+    if data.get('fingerprint') != _get_fingerprint():
+        return None
+    schedule = data.get('schedule')
+    if schedule is not None:
+        return _deserialize_schedule(schedule)
     return None

@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 from pathlib import Path
@@ -10,7 +9,7 @@ from src.config.settings.base import MODULES_DIR, VIRTUAL_ENV_DIR
 logger = logging.getLogger(__name__)
 
 _ENV_CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
-_ENV_CACHE_FILE = _ENV_CACHE_DIR / 'modules_env.json'
+_ENV_CACHE_FILE = _ENV_CACHE_DIR / 'modules_env.bin'
 
 
 def _get_modules_env_mtime() -> float:
@@ -21,30 +20,25 @@ def _get_modules_env_mtime() -> float:
 
 
 def _read_env_cache() -> Optional[Dict[str, str]]:
-    if not _ENV_CACHE_FILE.exists():
+    from src.core.utils.cache_io import read_bin_cache
+
+    data = read_bin_cache(_ENV_CACHE_FILE)
+    if data is None:
         return None
-    try:
-        current_mtime = _get_modules_env_mtime()
-        with open(_ENV_CACHE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if data.get('modules_mtime') != current_mtime:
-            return None
-        return data.get('env_vars', {})
-    except (json.JSONDecodeError, KeyError, OSError):
+    if data.get('modules_mtime') != _get_modules_env_mtime():
         return None
+    return data.get('env_vars', {})
 
 
 def _write_env_cache(env_vars: Dict[str, str]) -> None:
-    try:
-        _ENV_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        with open(_ENV_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump({
-                'modules_mtime': _get_modules_env_mtime(),
-                'env_vars': env_vars,
-            }, f, indent=0)
+    from src.core.utils.cache_io import write_bin_cache
+
+    data = {
+        'modules_mtime': _get_modules_env_mtime(),
+        'env_vars': env_vars,
+    }
+    if write_bin_cache(_ENV_CACHE_FILE, data):
         logger.debug('Modules env: сохранено в кэш (%d переменных)', len(env_vars))
-    except OSError as e:
-        logger.warning('Modules env: не удалось сохранить кэш: %s', e)
 
 def _find_env_files(configs_dir: str) -> List[Tuple[str, str]]:
     """

@@ -5,8 +5,6 @@
 списка приложений в файл. Discovery выполняется только при изменении
 структуры core/ или modules/. Сканирование core/ и modules/ — параллельно.
 """
-
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +17,7 @@ from src.core.utils.auto_api.auto_config import ModuleDiscoverer
 logger = logging.getLogger('utils')
 
 CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
-CACHE_FILE = CACHE_DIR / 'discovered_apps.json'
+CACHE_FILE = CACHE_DIR / 'discovered_apps.bin'
 
 
 def _get_dirs_fingerprint() -> dict:
@@ -135,31 +133,23 @@ def get_discovered_apps(use_cache: Optional[bool] = None, fast_discovery: Option
     if _in_memory_cache is not None and _in_memory_cache[0] == current_fingerprint:
         return _in_memory_cache[1]
 
-    if CACHE_FILE.exists():
-        try:
-            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            cached_fingerprint = data.get('fingerprint', {})
-            if cached_fingerprint == current_fingerprint:
-                apps = data['apps']
+    from src.core.utils.cache_io import read_bin_cache
+
+    data = read_bin_cache(CACHE_FILE)
+    if data is not None:
+        cached_fingerprint = data.get('fingerprint', {})
+        if cached_fingerprint == current_fingerprint:
+            apps = data.get('apps')
+            if apps is not None:
                 _in_memory_cache = (current_fingerprint, apps)
                 logger.debug('Discovered apps: загружено из кэша')
                 return apps
-        except (json.JSONDecodeError, KeyError, OSError) as e:
-            logger.debug('Discovered apps: кэш повреждён, пересоздаём: %s', e)
 
     apps = _run_discovery_fast() if fast_discovery else _run_discovery()
-    try:
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(
-                {'fingerprint': current_fingerprint, 'apps': apps},
-                f,
-                indent=0,
-            )
+    from src.core.utils.cache_io import write_bin_cache
+
+    if write_bin_cache(CACHE_FILE, {'fingerprint': current_fingerprint, 'apps': apps}):
         logger.info('Discovered apps: сохранено в кэш (%d приложений)', len(apps))
-    except OSError as e:
-        logger.warning('Discovered apps: не удалось сохранить кэш: %s', e)
 
     _in_memory_cache = (current_fingerprint, apps)
     return apps

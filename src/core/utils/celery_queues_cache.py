@@ -1,11 +1,9 @@
 """
-Кэш списка Celery-очередей (celery_queues.json).
+Кэш списка Celery-очередей (celery_queues.bin).
 
 Записывается при warmup_caches, читается скриптами запуска (start_celery_worker.py)
 без загрузки Django для минимального времени старта.
 """
-
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List
@@ -15,7 +13,7 @@ from django.conf import settings
 logger = logging.getLogger('celery.cache')
 
 CACHE_DIR = Path(settings.VIRTUAL_ENV_DIR) / 'cache'
-CACHE_FILE = CACHE_DIR / 'celery_queues.json'
+CACHE_FILE = CACHE_DIR / 'celery_queues.bin'
 
 
 def _get_modules_config_mtime() -> float:
@@ -39,31 +37,26 @@ def _get_modules_config_mtime() -> float:
 
 def write_queues_cache(queues: Dict[str, Any]) -> None:
     """Записывает список очередей и mtime для валидации скриптами запуска."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    from src.core.utils.cache_io import write_bin_cache
+
     queue_names = sorted(queues.keys()) if queues else []
     data = {
         'queues': queue_names,
         'modules_mtime': _get_modules_config_mtime(),
     }
-    try:
-        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=0)
-        logger.debug('celery_queues.json: записано %d очередей', len(queue_names))
-    except OSError as e:
-        logger.warning('Не удалось записать celery_queues.json: %s', e)
+    if write_bin_cache(CACHE_FILE, data):
+        logger.debug('celery_queues.bin: записано %d очередей', len(queue_names))
 
 
 def read_queues_cache() -> List[str]:
     """Читает список очередей из кэша (для использования в Django-контексте)."""
-    if not CACHE_FILE.exists():
+    from src.core.utils.cache_io import read_bin_cache
+
+    data = read_bin_cache(CACHE_FILE)
+    if data is None:
         return []
-    try:
-        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        stored_mtime = data.get('modules_mtime', 0)
-        current_mtime = _get_modules_config_mtime()
-        if stored_mtime >= current_mtime:
-            return data.get('queues', [])
-    except (json.JSONDecodeError, KeyError, OSError):
-        pass
+    stored_mtime = data.get('modules_mtime', 0)
+    current_mtime = _get_modules_config_mtime()
+    if stored_mtime >= current_mtime:
+        return data.get('queues', [])
     return []
