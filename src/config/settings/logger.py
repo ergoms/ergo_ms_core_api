@@ -7,24 +7,9 @@ import os
 
 from src.config.settings.base import LOGS_ROOT
 
-import warnings
-from sklearn.exceptions import InconsistentVersionWarning
-
-# Отключаем предупреждения scikit-learn о несовместимости версий
-warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
-
-# Создаем директорию для логов, если она не существует
+# Создаём директорию для логов (быстро). Проверка записи отложена —
+# при ошибке записи handler вызовет исключение при первом emit.
 os.makedirs(LOGS_ROOT, exist_ok=True)
-
-# Проверяем права на запись
-log_file = os.path.join(LOGS_ROOT, 'debug.log')
-try:
-    with open(log_file, 'a') as f:
-        # Записываем пустую строку в файл
-        f.write('')
-except Exception as e:
-    print(f"ОШИБКА: Невозможно записать в файл лога {log_file}: {str(e)}")
-    raise
 
 # Конфигурация логирования для Django-приложения.
 LOGGING = {
@@ -112,28 +97,6 @@ LOGGING = {
             'backupCount': 5,
             'delay': True,
         },
-
-        # Специальные обработчики для разнесения логов по файлам
-        'video_analysis_file': {
-            'level': 'DEBUG',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(LOGS_ROOT, 'video_analysis.log'),
-            'formatter': 'verbose',
-            'encoding': 'utf-8',
-            'maxBytes': 10*1024*1024,  # 10MB
-            'backupCount': 5,
-            'delay': True,
-        },
-        'porosity_tasks_file': {
-            'level': 'DEBUG',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(LOGS_ROOT, 'porosity_tasks.log'),
-            'formatter': 'verbose',
-            'encoding': 'utf-8',
-            'maxBytes': 10*1024*1024,  # 10MB
-            'backupCount': 5,
-            'delay': True,
-        },
         
         'celery_error_console': {
             'level': 'ERROR',
@@ -211,30 +174,11 @@ LOGGING = {
             'propagate': False,
         },
         
-        'celery.task.porosity_analysis': {
-            'handlers': ['porosity_tasks_file', 'console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-        
-        'celery.task.video_analysis': {
-            'handlers': ['video_analysis_file', 'console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-        
         # Логгеры для модулей Celery
         'celery.module': {
             'handlers': ['celery_tasks_file', 'console', 'celery_error_console'],
             'level': 'DEBUG',
             'propagate': True,
-        },
-        
-        # Логгер для модуля video_analysis
-        'video_analysis': {
-            'handlers': ['video_analysis_file', 'console'],
-            'level': 'DEBUG',
-            'propagate': False,
         },
         
         'celery.beat.module': {

@@ -1,13 +1,50 @@
+import json
 import logging
-
 import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from collections import OrderedDict
 
-from src.config.settings.base import MODULES_DIR
+from src.config.settings.base import MODULES_DIR, VIRTUAL_ENV_DIR
 
 logger = logging.getLogger(__name__)
+
+_ENV_CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
+_ENV_CACHE_FILE = _ENV_CACHE_DIR / 'modules_env.json'
+
+
+def _get_modules_env_mtime() -> float:
+    try:
+        return MODULES_DIR.stat().st_mtime if MODULES_DIR.exists() else 0
+    except OSError:
+        return 0
+
+
+def _read_env_cache() -> Optional[Dict[str, str]]:
+    if not _ENV_CACHE_FILE.exists():
+        return None
+    try:
+        current_mtime = _get_modules_env_mtime()
+        with open(_ENV_CACHE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if data.get('modules_mtime') != current_mtime:
+            return None
+        return data.get('env_vars', {})
+    except (json.JSONDecodeError, KeyError, OSError):
+        return None
+
+
+def _write_env_cache(env_vars: Dict[str, str]) -> None:
+    try:
+        _ENV_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(_ENV_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump({
+                'modules_mtime': _get_modules_env_mtime(),
+                'env_vars': env_vars,
+            }, f, indent=0)
+        logger.debug('Modules env: сохранено в кэш (%d переменных)', len(env_vars))
+    except OSError as e:
+        logger.warning('Modules env: не удалось сохранить кэш: %s', e)
 
 def _find_env_files(configs_dir: str) -> List[Tuple[str, str]]:
     """
@@ -125,43 +162,43 @@ def _merge_env_variables(env_files: List[Tuple[str, str]]) -> Dict[str, Tuple[st
     return merged_vars
 
 
-def collect_env_files_from_all_sources() -> Dict[str, str]:
+def collect_env_files_from_all_sources(use_cache: Optional[bool] = None) -> Dict[str, str]:
     """
-    Собирает все .env файлы из всех источников и возвращает объединённый словарь переменных.
-    
-    Источники:
-    - Папка modules и все её подпапки (ergo_ms/modules/)
-    
-    Возвращает:
-        Dict[str, str]: Словарь переменных окружения {ключ: значение}
+    Собирает .env файлы из modules. Кэш по mtime modules/.
+    Отключить: MODULES_ENV_USE_CACHE=false.
     """
+    if use_cache is None:
+        use_cache = os.environ.get('MODULES_ENV_USE_CACHE', 'true').lower() in ('1', 'true', 'yes')
+
+    if use_cache:
+        cached = _read_env_cache()
+        if cached is not None:
+            logger.debug('Modules env: загружено из кэша')
+            return cached
+
     try:
         modules_dir = os.path.abspath(MODULES_DIR)
-        
-        all_env_files = []
-        
-        # Собираем .env файлы из папки modules и всех её подпапок
-        modules_env_files = _find_env_files_in_directory(modules_dir, "modules")
-        all_env_files.extend(modules_env_files)
-        
+        all_env_files = _find_env_files_in_directory(modules_dir, "modules")
+
         if not all_env_files:
             logger.info("Не найдено ни одного .env файла в папке modules")
             return {}
-        
-        # Объединяем переменные
+
         merged_vars = _merge_env_variables(all_env_files)
-        
+
         if not merged_vars:
             logger.info("Не найдено ни одной переменной окружения в папке modules")
             return {}
-        
-        # Преобразуем в простой словарь {ключ: значение}
+
         env_dict = {key: value for key, (value, source) in merged_vars.items()}
-        
-        logger.info(f"✅ Загружено {len(env_dict)} переменных окружения из папки modules")
-        
+
+        if use_cache:
+            _write_env_cache(env_dict)
+
+        logger.info(f"Загружено {len(env_dict)} переменных окружения из modules")
+
         return env_dict
-        
+
     except Exception as e:
         logger.error(f"Ошибка при сборе .env файлов: {e}")
         return {}

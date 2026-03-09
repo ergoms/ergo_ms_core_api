@@ -73,10 +73,18 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--all',
-            default=True,
+            default=False,
             action='store_true',
             help='Остановить все запущенные worker\'ы'
         )
+
+    @staticmethod
+    def _is_celery_cmd(cmdline: list) -> bool:
+        """Проверяет, что cmdline — реальный процесс Celery, а не grep/cat и т.п."""
+        if len(cmdline) < 2:
+            return False
+        first = str(cmdline[0]).lower()
+        return 'python' in first or first.endswith(('celery', 'celery.exe'))
 
     def find_celery_worker(self, queues: Optional[str] = None, hostname: Optional[str] = None) -> Optional[psutil.Process]:
         """
@@ -92,17 +100,14 @@ class Command(BaseCommand):
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 cmdline = proc.info.get('cmdline') or []
+                if not self._is_celery_cmd(cmdline):
+                    continue
                 cmdline_str = ' '.join(cmdline)
                 cmdline_lower = [part.lower() for part in cmdline]
 
-                # Совпадение 1: стандартный процесс Celery worker
-                # Должны быть оба слова: 'celery' И 'worker'
-                is_celery_worker = ('celery' in cmdline_lower and 'worker' in cmdline_lower)
+                is_celery_worker = 'worker' in cmdline_lower
+                is_wrapper_worker = any('start_celery_worker' in part for part in cmdline_lower)
 
-                # Совпадение 2: процесс запуска через обертку "api start_celery_worker"
-                is_wrapper_worker = ('start_celery_worker' in cmdline_lower)
-
-                # Сначала отдаем приоритет реальному celery-процессу
                 if is_celery_worker:
                     # Если указаны очереди, проверяем, что worker слушает эти очереди
                     if queues:
@@ -161,14 +166,10 @@ class Command(BaseCommand):
                     continue
                     
                 cmdline = proc.info.get('cmdline') or []
-                if not cmdline:
+                if not self._is_celery_cmd(cmdline):
                     continue
-                    
-                cmdline_str = ' '.join(cmdline).lower()
 
-                # Совпадение: celery worker процесс
-                # Ищем "celery" и "worker" в командной строке
-                is_celery_worker = ('celery' in cmdline_str and 'worker' in cmdline_str)
+                is_celery_worker = 'worker' in [str(p).lower() for p in cmdline]
 
                 if is_celery_worker:
                     workers.append(proc)
@@ -196,17 +197,13 @@ class Command(BaseCommand):
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 cmdline = proc.info.get('cmdline') or []
-                if not cmdline:
+                if not self._is_celery_cmd(cmdline):
                     continue
-                    
-                cmdline_str = ' '.join(cmdline)
-                cmdline_lower = cmdline_str.lower()
 
-                # Проверяем что это celery worker
-                if 'celery' not in cmdline_lower or 'worker' not in cmdline_lower:
+                cmdline_str = ' '.join(cmdline)
+                if 'worker' not in [str(p).lower() for p in cmdline]:
                     continue
                 
-                # Проверяем hostname
                 if f'--hostname={hostname}' in cmdline_str or f'-n {hostname}' in cmdline_str:
                     workers.append(proc)
                     logger.debug(f"Найден worker с hostname={hostname}: PID={proc.pid}")

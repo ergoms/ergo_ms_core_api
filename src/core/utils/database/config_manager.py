@@ -11,13 +11,37 @@ from pathlib import Path
 from typing import Dict, Optional, List, Tuple
 from urllib.parse import quote_plus
 
-# Импорты для проверки подключения
-import psycopg2
-import mysql.connector
-import sqlite3
-import pyodbc
-
 logger = logging.getLogger('utils.database.config')
+
+_YAML_CACHE: Dict[Path, tuple] = {}
+
+
+def _get_cached_yaml(config_path: Path) -> Optional[Dict]:
+    """Читает databases.yaml с общим кэшем. Инвалидация по mtime."""
+    try:
+        resolved = config_path.resolve()
+        mtime = resolved.stat().st_mtime
+    except OSError:
+        return None
+    if resolved in _YAML_CACHE:
+        cached_mtime, cached_config = _YAML_CACHE[resolved]
+        if cached_mtime == mtime:
+            return cached_config
+    if not resolved.exists():
+        logger.warning(f"Файл конфигурации не найден: {config_path}")
+        return None
+    try:
+        with open(resolved, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+        if not config or 'databases' not in config:
+            logger.error("Неверный формат файла конфигурации")
+            return None
+        _YAML_CACHE[resolved] = (mtime, config['databases'])
+        logger.info(f"Загружена конфигурация из {config_path}")
+        return config['databases']
+    except Exception as e:
+        logger.error(f"Ошибка при чтении конфигурации: {e}")
+        return None
 
 
 # ==================== Константы ====================
@@ -51,30 +75,8 @@ class BaseDatabaseConfigLoader(ABC):
         self._loaded = False
     
     def _load_yaml_config(self) -> Optional[Dict]:
-        """
-        Загружает и парсит YAML конфигурацию.
-        
-        Returns:
-            Словарь с конфигурацией или None при ошибке
-        """
-        if not self.config_path.exists():
-            logger.warning(f"Файл конфигурации не найден: {self.config_path}")
-            return None
-        
-        try:
-            with open(self.config_path, 'r', encoding='utf-8') as file:
-                config = yaml.safe_load(file)
-            
-            if not config or 'databases' not in config:
-                logger.error("Неверный формат файла конфигурации")
-                return None
-            
-            logger.info(f"Успешно загружена конфигурация из {self.config_path}")
-            return config['databases']
-            
-        except Exception as e:
-            logger.error(f"Ошибка при чтении конфигурации: {str(e)}")
-            return None
+        """Загружает YAML через общий кэш (один файл — одно чтение)."""
+        return _get_cached_yaml(self.config_path)
     
     def load_config(self) -> Dict:
         """
@@ -147,6 +149,7 @@ class DatabaseConnectionTester:
     def test_postgresql(host: str, port: int, user: str, password: str, dbname: str) -> bool:
         """Тестирует подключение к PostgreSQL"""
         try:
+            import psycopg2
             connection = psycopg2.connect(
                 dbname=dbname,
                 user=user,
@@ -251,6 +254,7 @@ class DatabaseConnectionTester:
     def test_mysql(host: str, port: int, user: str, password: str, database: str) -> bool:
         """Тестирует подключение к MySQL"""
         try:
+            import mysql.connector
             connection = mysql.connector.connect(
                 database=database,
                 user=user,
@@ -269,6 +273,7 @@ class DatabaseConnectionTester:
     def test_sqlite(db_path: str) -> bool:
         """Тестирует подключение к SQLite"""
         try:
+            import sqlite3
             connection = sqlite3.connect(db_path, timeout=5)
             connection.close()
             return True
@@ -280,6 +285,7 @@ class DatabaseConnectionTester:
     def test_mssql(host: str, port: int, user: str, password: str, database: str) -> bool:
         """Тестирует подключение к MS SQL Server"""
         try:
+            import pyodbc
             connection_string = (
                 f"DRIVER={{ODBC Driver 17 for SQL Server}};"
                 f"SERVER={host},{port};"
@@ -503,29 +509,34 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
     def _find_active_section(self) -> Optional[str]:
         """
         Находит активную секцию по приоритетам.
-        
+
         Returns:
             Имя активной секции или None
         """
         available = self.get_available_sections()
-        
+
         for section in self.section_priorities:
             if section in available:
                 logger.info(f"{self.component_name}: Используется секция '{section}'")
                 return section
-        
-        logger.info(f"{self.component_name}: Ни одна из секций {self.section_priorities} не найдена")
+
         return None
     
-    def _get_local_sqlite_urls(self) -> Tuple[str, str]:
-        """Возвращает URLs для локального SQLite"""
+    def _get_local_sqlite_urls(self, *, log_reason: Optional[str] = None) -> Tuple[str, str]:
+        """
+        Возвращает URLs для локального SQLite.
+        log_reason: если задан, логирует одну строку вместо двух ('не найдена' + 'локальный SQLite').
+        """
         celery_dir = self.virtual_env_dir / 'celery'
         celery_dir.mkdir(parents=True, exist_ok=True)
         
         broker_url = f'sqla+sqlite:///{self.virtual_env_dir}/celery/celerydb.sqlite'
         result_backend = f'db+sqlite:///{self.virtual_env_dir}/celery/results.sqlite'
         
-        logger.info(f"{self.component_name}: Используется локальный SQLite")
+        if log_reason:
+            logger.info(f"{self.component_name}: {log_reason}, используется локальный SQLite")
+        else:
+            logger.info(f"{self.component_name}: Используется локальный SQLite")
         return broker_url, result_backend
     
     def _build_celery_urls(self, db_config: Dict) -> Tuple[str, str]:
@@ -608,9 +619,12 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
         
         # Находим активную секцию
         self.active_section = self._find_active_section()
-        
+
         if self.active_section is None:
-            broker_url, result_backend = self._get_local_sqlite_urls()
+            priorities = self.section_priorities
+            broker_url, result_backend = self._get_local_sqlite_urls(
+                log_reason=f"Ни одна из секций {priorities} не найдена"
+            )
             return {
                 'broker_url': broker_url,
                 'result_backend': result_backend,

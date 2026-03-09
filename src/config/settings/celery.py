@@ -22,7 +22,7 @@
 """
 
 import logging
-from core.api.src.config.settings.base import VIRTUAL_ENV_DIR, SYSTEM_DIR
+from src.config.settings.base import VIRTUAL_ENV_DIR, SYSTEM_DIR
 
 # Импортируем централизованный менеджер БД для Celery
 from src.core.utils.database.config_manager import CeleryDatabaseConfigLoader

@@ -26,6 +26,14 @@ class Command(BaseCommand):
     """
     help = 'Останавливает Celery beat scheduler'
 
+    @staticmethod
+    def _is_celery_cmd(cmdline: list) -> bool:
+        """Проверяет, что cmdline — реальный процесс Celery, а не grep/cat и т.п."""
+        if len(cmdline) < 2:
+            return False
+        first = str(cmdline[0]).lower()
+        return 'python' in first or first.endswith(('celery', 'celery.exe'))
+
     def find_celery_beat(self) -> Optional[psutil.Process]:
         """
         Ищет запущенный процесс Celery beat.
@@ -36,23 +44,19 @@ class Command(BaseCommand):
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 cmdline = proc.info.get('cmdline') or []
+                if not self._is_celery_cmd(cmdline):
+                    continue
                 cmdline_lower = [part.lower() for part in cmdline]
 
-                # Совпадение 1: стандартный процесс Celery beat
-                # Должны быть оба слова: 'celery' И 'beat'
-                is_celery_beat = ('celery' in cmdline_lower and 'beat' in cmdline_lower)
+                is_celery_beat = 'beat' in cmdline_lower
+                is_wrapper_beat = any('start_celery_beat' in part for part in cmdline_lower)
 
-                # Совпадение 2: процесс запуска через обертку "api start_celery_beat"
-                is_wrapper_beat = ('start_celery_beat' in cmdline_lower)
-
-                # Сначала отдаем приоритет реальному celery-процессу
                 if is_celery_beat:
                     logger.debug(
                         f"Найден процесс Celery beat: PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
                     )
                     return proc
 
-                # Если celery не найден, падаем обратно на обертку
                 if is_wrapper_beat:
                     logger.debug(
                         f"Найден процесс Celery beat (обертка): PID={proc.pid}, CMDLINE={' '.join(cmdline)}"

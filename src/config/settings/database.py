@@ -5,26 +5,33 @@
 """
 
 import logging.config
+import os
+import sys
 
 from src.config.settings.logger import LOGGING
 from src.config.settings.base import SYSTEM_DIR, RESOURCES_DIR
+from src.config.env import env
 
-# Импортируем централизованный менеджер БД
 from src.core.utils.database.config_manager import DjangoDatabaseConfigLoader
 
-# Явная инициализация логирования
 logging.config.dictConfig(LOGGING)
 
-# Настройка логгера
 logger = logging.getLogger('config.database')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Создаем загрузчик конфигурации Django БД
+_test_connections_env = env.bool('DATABASE_TEST_CONNECTIONS', default=True)
+_argv_lower = ' '.join(getattr(sys, 'argv', [])).lower()
+_is_autoreload_parent = (
+    ('runserver' in _argv_lower or 'dev' in _argv_lower)
+    and os.environ.get('RUN_MAIN') != 'true'
+)
+test_connections = _test_connections_env and not _is_autoreload_parent
+
 db_loader = DjangoDatabaseConfigLoader(
     system_dir=SYSTEM_DIR,
     resources_dir=RESOURCES_DIR,
-    test_connections=True  # Тестируем подключения при загрузке
+    test_connections=test_connections
 )
 
 # Загружаем конфигурацию БД

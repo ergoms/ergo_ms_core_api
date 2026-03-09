@@ -12,8 +12,8 @@
 import logging
 import os
 import sys
-from pathlib import Path
-from typing import Dict
+import threading
+from typing import Any, Dict
 
 from celery import Celery
 from django.conf import settings
@@ -30,10 +30,10 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", deploy_type)
 
 logger = logging.getLogger("config.celery")
 
-# Определяем тип процесса по аргументам командной строки
-argv_joined = " ".join(sys.argv)
-IS_BEAT = "beat" in argv_joined or "celery beat" in argv_joined
-IS_CELERY_PROCESS = any(token in argv_joined for token in ("celery", "worker", "beat"))
+# Определяем тип процесса по отдельным аргументам (не substring в объединённой строке)
+_argv_lower = {arg.lower() for arg in sys.argv}
+IS_BEAT = "beat" in _argv_lower
+IS_CELERY_PROCESS = bool(_argv_lower & {"worker", "beat"})
 
 # ---------------------------------------------------------------------------
 # СОЗДАНИЕ CELERY ПРИЛОЖЕНИЯ (ЛЁГКАЯ ОПЕРАЦИЯ)
@@ -61,12 +61,13 @@ def _setup_celery_logging() -> None:
     celery_logger = logging.getLogger("celery")
     celery_logger.setLevel(logging.DEBUG)
 
-    # Основной лог Celery
+    # Основной лог Celery (delay=True — файл создаётся при первом логе)
     fh_main = RotatingFileHandler(
         celery_log_file,
         maxBytes=10 * 1024 * 1024,
         backupCount=5,
         encoding="utf-8",
+        delay=True,
     )
     fh_main.setLevel(logging.DEBUG)
     fh_main.setFormatter(formatter)
@@ -80,6 +81,7 @@ def _setup_celery_logging() -> None:
         maxBytes=10 * 1024 * 1024,
         backupCount=5,
         encoding="utf-8",
+        delay=True,
     )
     fh_worker.setLevel(logging.DEBUG)
     fh_worker.setFormatter(formatter)
@@ -93,6 +95,7 @@ def _setup_celery_logging() -> None:
         maxBytes=10 * 1024 * 1024,
         backupCount=5,
         encoding="utf-8",
+        delay=True,
     )
     fh_beat.setLevel(logging.DEBUG)
     fh_beat.setFormatter(formatter)
@@ -106,6 +109,7 @@ def _setup_celery_logging() -> None:
         maxBytes=10 * 1024 * 1024,
         backupCount=5,
         encoding="utf-8",
+        delay=True,
     )
     fh_tasks.setLevel(logging.DEBUG)
     fh_tasks.setFormatter(formatter)
@@ -119,6 +123,7 @@ def _setup_celery_logging() -> None:
         maxBytes=5 * 1024 * 1024,
         backupCount=3,
         encoding="utf-8",
+        delay=True,
     )
     fh_broker.setLevel(logging.INFO)
     fh_broker.setFormatter(formatter)
@@ -165,8 +170,8 @@ if IS_CELERY_PROCESS:
     # Автообнаружение задач во всех приложениях
     celery_app.autodiscover_tasks(lambda: settings.INSTALLED_APPS)
 
-    # Модульная конфигурация Celery
-    MODULE_MANAGER = CeleryModuleManager()
+    # Модульная конфигурация Celery (без файлового кэша — нужны annotations, queue_limits)
+    MODULE_MANAGER = CeleryModuleManager(use_config_cache=False)
     logger.info(
         "Celery: загружены конфигурации модулей: %s",
         ", ".join(MODULE_MANAGER.get_modules_list()) or "нет модулей",
@@ -196,25 +201,35 @@ if IS_CELERY_PROCESS:
         MODULE_TASK_ROUTES["*"] = {"queue": "default"}
 
     # -----------------------------------------------------------------------
-    # Конфигурация для Worker (не Beat)
+    # Общая конфигурация для Worker и Beat
     # -----------------------------------------------------------------------
 
-    if not IS_BEAT and MODULE_MANAGER is not None:
-        celery_app.conf.update(
-            task_routes=MODULE_TASK_ROUTES,
-            task_default_queue="default",
-            task_queues=MODULE_TASK_QUEUES,
-            task_annotations=MODULE_MANAGER.get_all_task_annotations(),
-            task_acks_late=True,
-            worker_log_format="[%(asctime)s: %(levelname)s/%(processName)s] %(message)s",
-            worker_task_log_format=(
+    def _build_common_celery_config(
+        manager: 'CeleryModuleManager',
+        task_routes: Dict,
+        task_queues: Dict,
+    ) -> Dict[str, Any]:
+        config: Dict[str, Any] = {
+            "task_routes": task_routes,
+            "task_default_queue": "default",
+            "task_queues": task_queues,
+            "task_annotations": manager.get_all_task_annotations(),
+            "task_acks_late": True,
+            "worker_log_format": "[%(asctime)s: %(levelname)s/%(processName)s] %(message)s",
+            "worker_task_log_format": (
                 "[%(asctime)s: %(levelname)s/%(processName)s]"
                 "[%(task_name)s(%(task_id)s)] %(message)s"
             ),
-            worker_log_color=False,
-            worker_redirect_stdouts=False,
-            worker_redirect_stdouts_level="INFO",
-            **MODULE_MANAGER.get_additional_configs(),
+            "worker_log_color": False,
+            "worker_redirect_stdouts": False,
+            "worker_redirect_stdouts_level": "INFO",
+        }
+        config.update(manager.get_additional_configs())
+        return config
+
+    if not IS_BEAT and MODULE_MANAGER is not None:
+        celery_app.conf.update(
+            **_build_common_celery_config(MODULE_MANAGER, MODULE_TASK_ROUTES, MODULE_TASK_QUEUES),
         )
 
     # -----------------------------------------------------------------------
@@ -249,7 +264,6 @@ if IS_CELERY_PROCESS:
         except Exception as exc:
             logger.error("Beat: ошибка загрузки расписаний: %s", exc)
 
-    # Формируем конфиг Beat scheduler
     beat_scheduler_config: Dict = {}
     if IS_BEAT:
         if CELERY_BEAT_SCHEDULER:
@@ -269,73 +283,83 @@ if IS_CELERY_PROCESS:
         if MODULE_MANAGER is not None:
             celery_app.conf.update(
                 **beat_scheduler_config,
-                task_routes=MODULE_TASK_ROUTES,
-                task_default_queue="default",
-                task_queues=MODULE_TASK_QUEUES,
-                task_annotations=MODULE_MANAGER.get_all_task_annotations(),
-                task_acks_late=True,
-                worker_log_format="[%(asctime)s: %(levelname)s/%(processName)s] %(message)s",
-                worker_task_log_format=(
-                    "[%(asctime)s: %(levelname)s/%(processName)s]"
-                    "[%(task_name)s(%(task_id)s)] %(message)s"
-                ),
-                worker_log_color=False,
-                worker_redirect_stdouts=False,
-                worker_redirect_stdouts_level="INFO",
-                **MODULE_MANAGER.get_additional_configs(),
+                **_build_common_celery_config(MODULE_MANAGER, MODULE_TASK_ROUTES, MODULE_TASK_QUEUES),
             )
 
     # -----------------------------------------------------------------------
-    # Синхронизация задач Beat с БД (django-celery-beat)
+    # Синхронизация задач Beat с БД (django-celery-beat) — в фоне, не блокирует старт
     # -----------------------------------------------------------------------
 
     if IS_BEAT and CELERY_BEAT_SCHEDULER and CELERY_BEAT_SCHEDULER_DB_ALIAS and CELERY_BEAT_SCHEDULE:
-        try:
-            import django
-            from django.apps import apps
+        import threading
 
-            if not apps.ready:
-                django.setup()
+        def _run_beat_sync() -> None:
+            try:
+                import django
+                from django.apps import apps
 
-            from src.core.utils.celery_beat.sync import CeleryBeatSyncManager
+                if not apps.ready:
+                    django.setup()
 
-            logger.info("Beat: начало синхронизации задач с БД...")
-            logger.info(
-                "Beat: db_alias=%s, задач в конфиге=%d",
-                CELERY_BEAT_SCHEDULER_DB_ALIAS,
-                len(CELERY_BEAT_SCHEDULE),
-            )
+                from src.core.utils.celery_beat.sync import CeleryBeatSyncManager
 
-            sync_manager = CeleryBeatSyncManager(
-                config_schedule=CELERY_BEAT_SCHEDULE,
-                db_alias=CELERY_BEAT_SCHEDULER_DB_ALIAS,
-            )
-            sync_results = sync_manager.sync_all()
+                sync_manager = CeleryBeatSyncManager(
+                    config_schedule=CELERY_BEAT_SCHEDULE,
+                    db_alias=CELERY_BEAT_SCHEDULER_DB_ALIAS,
+                )
+                sync_results = sync_manager.sync_all()
+                logger.info(
+                    "Beat: синхронизация с БД завершена - создано: %s, обновлено: %s, удалено: %s",
+                    sync_results["created"],
+                    sync_results["updated"],
+                    sync_results["deleted"],
+                )
+            except Exception as exc:
+                logger.error("Beat: ошибка синхронизации задач с БД: %s", exc, exc_info=True)
 
-            logger.info(
-                "Beat: синхронизация завершена - создано: %s, обновлено: %s, удалено: %s",
-                sync_results["created"],
-                sync_results["updated"],
-                sync_results["deleted"],
-            )
-        except Exception as exc:
-            logger.error("Beat: ошибка синхронизации задач с БД: %s", exc, exc_info=True)
+        logger.info("Beat: запуск синхронизации с БД в фоне...")
+        _sync_thread = threading.Thread(target=_run_beat_sync, daemon=True)
+        _sync_thread.start()
 else:
-    # В процессе Django (runserver и т.д.): broker, result_backend и маршруты для apply_async
+    # В процессе Django (runserver и т.д.): broker, result_backend.
+    # Маршруты и очереди загружаются лениво при первом использовании Celery.
     try:
         if hasattr(settings, "CELERY_BROKER_URL"):
             celery_app.conf.broker_url = settings.CELERY_BROKER_URL
         if hasattr(settings, "CELERY_RESULT_BACKEND"):
             celery_app.conf.result_backend = settings.CELERY_RESULT_BACKEND
-        from src.core.utils.celery.manager import CeleryModuleManager
-        _django_module_manager = CeleryModuleManager()
-        celery_app.conf.task_routes = _django_module_manager.get_all_task_routes()
-        celery_app.conf.task_default_queue = "default"
-        celery_app.conf.task_queues = _django_module_manager.get_all_task_queues()
-        if "default" not in celery_app.conf.task_queues:
-            celery_app.conf.task_queues["default"] = {
-                "exchange": "default",
-                "routing_key": "default",
-            }
     except Exception:
         pass
+
+    _django_celery_lock = threading.Lock()
+    _django_celery_configured = False
+
+    def _ensure_celery_routes_configured() -> None:
+        global _django_celery_configured
+        if _django_celery_configured:
+            return
+        with _django_celery_lock:
+            if _django_celery_configured:
+                return
+            try:
+                from src.core.utils.celery.manager import CeleryModuleManager
+                manager = CeleryModuleManager()
+                celery_app.conf.task_routes = manager.get_all_task_routes()
+                celery_app.conf.task_default_queue = "default"
+                celery_app.conf.task_queues = manager.get_all_task_queues()
+                if "default" not in celery_app.conf.task_queues:
+                    celery_app.conf.task_queues["default"] = {
+                        "exchange": "default",
+                        "routing_key": "default",
+                    }
+                _django_celery_configured = True
+            except Exception as e:
+                logger.warning("Failed to configure Celery routes: %s", e)
+
+    _original_send_task = celery_app.send_task
+
+    def _send_task_patched(name, args=None, kwargs=None, **opts):
+        _ensure_celery_routes_configured()
+        return _original_send_task(name, args=args, kwargs=kwargs, **opts)
+
+    celery_app.send_task = _send_task_patched

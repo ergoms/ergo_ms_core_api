@@ -11,6 +11,7 @@ import os
 import sys
 
 from src.core.utils.auto_api.auto_config import get_env_deploy_type
+from src.core.utils.startup_timing import mark_start
 
 def main():
     """
@@ -21,6 +22,7 @@ def main():
     функцию execute_from_command_line из django.core.management и выполняет команду Django,
     переданную через аргументы командной строки.
     """
+    mark_start()
     deploy_type = get_env_deploy_type()
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
 

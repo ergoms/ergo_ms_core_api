@@ -9,6 +9,7 @@
 """
 
 import logging
+import sys
 
 try:
     from daphne.management.commands.runserver import Command as RunserverCommand
@@ -18,7 +19,43 @@ from django.core.management.base import CommandParser
 
 from django.conf import settings
 
+from src.core.utils.startup_timing import get_elapsed, get_elapsed_str
+
 logger = logging.getLogger('core.utils.commands')
+
+
+class _StreamTimingWrapper:
+    """Обёртка stdout/stderr для вывода времени готовности API при появлении 'Starting'."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._ready_printed = False
+
+    def _check_and_print_ready(self, data: str) -> None:
+        if self._ready_printed:
+            return
+        if 'Starting' not in data or ('server' not in data.lower() and 'development' not in data.lower()):
+            return
+        elapsed = get_elapsed()
+        suffix = 'ms' if elapsed < 1 else 's'
+        val = elapsed * 1000 if elapsed < 1 else elapsed
+        fmt = f'{val:.0f}{suffix}' if elapsed < 1 else f'{val:.2f}{suffix}'
+        try:
+            self._stream.write(f'\n>>> API ready (total startup time): {fmt}\n')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+        self._ready_printed = True
+
+    def write(self, data: str) -> None:
+        self._stream.write(data)
+        self._check_and_print_ready(data)
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
 
 class Command(RunserverCommand):
     """
@@ -49,7 +86,12 @@ class Command(RunserverCommand):
             **options: Именованные аргументы
         """
         logger.info('Запуск команды runserver')
-        
+        elapsed_msg = get_elapsed_str()
+        try:
+            self.stdout.write(self.style.SUCCESS(f'  API (runserver): Django fully loaded {elapsed_msg}'))
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            logger.info('API (runserver): Django fully loaded %s', elapsed_msg)
+
         if not options['addrport']:
             server_host = getattr(settings, 'SERVER_HOST', None)
             server_port = getattr(settings, 'SERVER_PORT', None)
@@ -66,7 +108,12 @@ class Command(RunserverCommand):
             logger.info(f'Используются пользовательские настройки: {options["addrport"]}')
         
         try:
-            super().handle(*args, **options)
+            orig_stdout = self.stdout
+            self.stdout = _StreamTimingWrapper(orig_stdout)
+            try:
+                super().handle(*args, **options)
+            finally:
+                self.stdout = orig_stdout
         except Exception as e:
             msg = f'Ошибка при запуске сервера: {str(e)}'
             logger.error(msg)

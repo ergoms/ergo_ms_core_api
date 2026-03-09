@@ -54,31 +54,22 @@ beat_scheduler_loader = CeleryDatabaseConfigLoader(
     component_name="Celery Beat Scheduler"
 )
 
-# Определяем, где хранить расписание
-db_alias = beat_scheduler_loader.get_django_db_alias()
+# Загружаем конфигурацию расписания один раз
+scheduler_config = beat_scheduler_loader.load_config()
+db_alias = scheduler_config['section'] if scheduler_config['mode'] == 'database' else None
 
 if db_alias is not None:
-    # Используем django-celery-beat для хранения расписания в БД
     CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
     CELERY_BEAT_SCHEDULER_DB_ALIAS = db_alias
     logger.info(f"Celery Beat: Расписание хранится в БД '{db_alias}' (django-celery-beat)")
 else:
-    # Используем локальный файл
     CELERY_BEAT_SCHEDULE_FILENAME = str(VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db")
     logger.info(f"Celery Beat: Расписание хранится в файле {CELERY_BEAT_SCHEDULE_FILENAME}")
 
-# Логируем активную конфигурацию
 if beat_broker_config['mode'] == 'database':
     logger.info(f"Celery Beat: Брокер использует БД '{beat_broker_config['section']}' ({beat_broker_config['engine']})")
 else:
     logger.info("Celery Beat: Брокер использует локальный SQLite режим")
-
-# Загружаем конфигурацию расписания, чтобы определить активную секцию
-scheduler_config = beat_scheduler_loader.load_config()
-if scheduler_config['mode'] == 'database' and scheduler_config.get('section'):
-    logger.info(f"Celery Beat: Расписание хранится в БД '{scheduler_config['section']}'")
-else:
-    logger.info("Celery Beat: Расписание хранится в локальном файле")
 
 # ==================== Расписание задач из модулей ====================
 

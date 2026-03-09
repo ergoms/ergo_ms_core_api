@@ -1,94 +1,118 @@
 """
 Модуль для автоматического обнаружения Django команд.
+
+Discovery выполняется без загрузки Django — по файловой системе и кэшу
+discovered_apps. Django загружается только при выполнении команды.
 """
 
 import os
 import sys
 
-from typing import Dict, List, Type, Optional
 from pathlib import Path
-
-import django
-from django.core.management import get_commands
-from django.apps import apps
+from typing import Dict, List, Optional, Type
 
 from commands.base import PoetryCommand
 
-from src.core.utils.auto_api.auto_config import get_env_deploy_type
+# Список встроенных команд Django (без загрузки Django)
+DJANGO_BUILTIN_COMMANDS = frozenset([
+    'changepassword', 'check', 'clearsessions', 'compilemessages', 'createcachetable',
+    'createsuperuser', 'dbshell', 'diffsettings', 'dumpdata', 'flush', 'inspectdb',
+    'loaddata', 'makemessages', 'makemigrations', 'migrate', 'runserver', 'sendtestemail',
+    'shell', 'showmigrations', 'sqlflush', 'sqlmigrate', 'sqlsequencereset',
+    'squashmigrations', 'startapp', 'startproject', 'test', 'testserver',
+])
+
+
+def _ensure_path() -> None:
+    """Добавляет api/ в sys.path для импорта src (без Django)."""
+    commands_dir = os.path.dirname(os.path.abspath(__file__))
+    api_dir = os.path.join(commands_dir, '..')
+    api_path = os.path.abspath(api_dir)
+    if api_path not in sys.path:
+        sys.path.insert(0, api_path)
+
+
+def _module_path_to_fs_path(app_module: str, core_dir: Path, modules_dir: Path) -> Optional[Path]:
+    """Преобразует путь модуля приложения в путь в файловой системе."""
+    if app_module.startswith('src.core.'):
+        rel = app_module.replace('src.core.', '').replace('.', os.sep)
+        path = core_dir / rel
+        return path if path.exists() else None
+    if app_module.startswith('modules.'):
+        parts = app_module.split('.')
+        if len(parts) < 3:
+            return None
+        module_name = parts[1]
+        rest = parts[3:] if len(parts) > 3 else []
+        path = modules_dir / module_name / 'api'
+        for p in rest:
+            path = path / p
+        return path if path.exists() else None
+    return None
+
+
+def _get_app_commands_from_fs(core_dir: Path, modules_dir: Path) -> List[str]:
+    """Сканирует приложения и собирает имена команд из management/commands/."""
+    commands: List[str] = []
+    seen: set = set()
+
+    try:
+        from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
+    except ImportError:
+        return []
+
+    for app_module in get_discovered_apps():
+        app_path = _module_path_to_fs_path(app_module, core_dir, modules_dir)
+        if not app_path or not app_path.is_dir():
+            continue
+        commands_dir = app_path / 'management' / 'commands'
+        if not commands_dir.exists():
+            continue
+        for f in commands_dir.glob('*.py'):
+            if f.name == '__init__.py':
+                continue
+            if f.name.startswith('_') or f.name.endswith('_'):
+                continue
+            name = f.stem
+            if name in ['__init__', '__pycache__']:
+                continue
+            if name not in seen:
+                seen.add(name)
+                commands.append(name)
+    return commands
+
+
+def _discover_commands_fast() -> Dict[str, str]:
+    """Discovery без Django: статический список + сканирование файлов."""
+    _ensure_path()
+    try:
+        from src.config.settings.base import CORE_DIR, MODULES_DIR
+    except ImportError:
+        return dict.fromkeys(DJANGO_BUILTIN_COMMANDS, 'builtin')
+
+    result = dict.fromkeys(DJANGO_BUILTIN_COMMANDS, 'builtin')
+    for name in _get_app_commands_from_fs(Path(CORE_DIR), Path(MODULES_DIR)):
+        if name not in result:
+            result[name] = 'custom'
+    return result
+
 
 class CommandDiscovery:
-    """Автоматическое обнаружение Django команд."""
-    
+    """
+    Обнаружение Django команд без загрузки Django.
+
+    Использует файловую систему и кэш discovered_apps.
+    Django загружается только при run() команды.
+    """
+
     def __init__(self):
         self._commands: Dict[str, Type[PoetryCommand]] = {}
-        self._django_initialized = False
-    
-    def _init_django(self):
-        """Инициализация Django."""
-        if self._django_initialized:
-            return
 
-        try:
-            project_path = os.path.join(os.path.dirname(__file__), '..', 'src')
-            if project_path not in sys.path:
-                sys.path.insert(0, project_path)
-
-            deploy_type = get_env_deploy_type()
-            os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
-
-            if not django.conf.settings.configured:
-                django.setup()
-            elif not apps.ready and not apps.loading:
-                django.setup()
-
-            self._django_initialized = True
-        except Exception as e:
-            print(f"Предупреждение: Не удалось инициализировать Django: {e}")
-    
-    def _get_builtin_commands(self) -> Dict[str, str]:
-        """Получение встроенных Django команд."""
-        self._init_django()
-        
-        try:
-            return get_commands()
-        except Exception as e:
-            print(f"Ошибка при получении Django команд: {e}")
-            return {}
-    
-    def _get_custom_commands(self) -> List[str]:
-        """Получение пользовательских команд из приложений."""
-        self._init_django()
-        
-        commands = []
-        
-        try:
-            for app_config in apps.get_app_configs():
-                app_path = Path(app_config.path)
-                commands_path = app_path / 'management' / 'commands'
-                
-                if commands_path.exists():
-                    for file_path in commands_path.glob('*.py'):
-                        if self._is_valid_command_file(file_path):
-                            commands.append(file_path.stem)
-        except Exception as e:
-            print(f"Ошибка при поиске пользовательских команд: {e}")
-        
-        return commands
-    
-    def _is_valid_command_file(self, file_path: Path) -> bool:
-        """Проверка, является ли файл валидной командой."""
-        return (
-            file_path.name != '__init__.py' and
-            not file_path.name.startswith('__') and
-            not file_path.name.endswith('_') and
-            file_path.stem not in ['__init__', '__pycache__']
-        )
-    
     def _create_command_class(self, name: str, is_custom: bool = False) -> Type[PoetryCommand]:
-        """Создание класса команды."""
+        """Создаёт класс-обёртку для команды."""
         class_name = f"{name.title().replace('_', '')}Command"
         docstring = f"Команда для '{name}' ({'пользовательская' if is_custom else 'встроенная'})."
-        
+
         return type(
             class_name,
             (PoetryCommand,),
@@ -96,41 +120,31 @@ class CommandDiscovery:
                 '__doc__': docstring,
                 'poetry_command_name': name,
                 'django_command_name': name,
-                '__init__': lambda self: super(type(self), self).__init__(name)
+                '__init__': lambda self, n=name: PoetryCommand.__init__(self, n),
             }
         )
-    
+
     def discover(self) -> Dict[str, Type[PoetryCommand]]:
-        """Обнаружение всех команд."""
-        commands = {}
-        
-        # Встроенные команды
-        builtin_commands = self._get_builtin_commands()
-        for name in builtin_commands:
-            if not name.startswith('_') and name not in ['__init__', '__pycache__']:
-                commands[name] = self._create_command_class(name, is_custom=False)
-        
-        # Пользовательские команды
-        custom_commands = self._get_custom_commands()
-        for name in custom_commands:
-            if name not in commands:
-                commands[name] = self._create_command_class(name, is_custom=True)
-        
-        self._commands = commands
-        return commands
-    
+        """Обнаружение команд без загрузки Django."""
+        raw = _discover_commands_fast()
+        self._commands = {}
+        for name, cmd_type in raw.items():
+            self._commands[name] = self._create_command_class(
+                name, is_custom=(cmd_type == 'custom')
+            )
+        return self._commands
+
     def get_command(self, name: str) -> Optional[Type[PoetryCommand]]:
-        """Получение команды по имени."""
+        """Возвращает класс команды по имени."""
         if not self._commands:
             self.discover()
         return self._commands.get(name)
-    
+
     def get_all(self) -> Dict[str, Type[PoetryCommand]]:
-        """Получение всех команд."""
+        """Возвращает все обнаруженные команды."""
         if not self._commands:
             self.discover()
         return self._commands.copy()
 
 
-# Глобальный экземпляр
-discovery = CommandDiscovery() 
+discovery = CommandDiscovery()

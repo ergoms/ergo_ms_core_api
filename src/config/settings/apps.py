@@ -1,40 +1,13 @@
 """
 Этот файл содержит настройки установленных приложений и middleware для Django-приложения.
 
-Он использует функцию `discover_installed_apps` для автоматического обнаружения приложений в указанных директориях
-и добавляет их в список установленных приложений. Также настраивает middleware, включая CORS middleware.
-
-Middleware (промежуточное ПО) в контексте Django — это компонент, который обрабатывает запросы и ответы в 
-процессе их прохождения через Django-приложение. Middleware позволяет выполнять различные задачи, такие 
-как аутентификация, логирование, обработка ошибок, кэширование и многое другое, без необходимости изменять 
-основной код приложения.
+Использует кэшированный discovery приложений (discovered_apps_cache) — результат
+сохраняется в файл и пересчитывается только при изменении core/ или modules/.
 """
 
-from src.core.utils.auto_api.auto_config import ModuleDiscoverer
-from src.config.settings.base import MODULES_DIR, CORE_DIR
+from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
 
-
-def discover_installed_apps() -> list[str]:
-    """
-    Ленивая обертка над ModuleDiscoverer.
-
-    ВАЖНО:
-    - Не выполняем discovery на уровне модуля settings, чтобы избежать
-      ранних импортов приложений во время `apps.populate()`.
-    - Вызывается Django только один раз при построении INSTALLED_APPS.
-    """
-    discoverer = ModuleDiscoverer()
-
-    core_apps: list[str] = []
-    discoverer._recursively_find_apps(str(CORE_DIR), 'src.core', core_apps)
-
-    module_apps: list[str] = []
-    discoverer._find_modules_apps(str(MODULES_DIR), module_apps)
-
-    return core_apps + module_apps
-
-
-ALL_MODULES = discover_installed_apps()
+ALL_MODULES = get_discovered_apps()
 
 # Определяем список установленных приложений
 INSTALLED_APPS = ALL_MODULES + [

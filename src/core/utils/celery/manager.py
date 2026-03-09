@@ -1,70 +1,73 @@
 """
 Менеджер для автоматического обнаружения и загрузки конфигураций Celery модулей.
+
+Использует discovered_apps и файловый кэш routes/queues — при валидном кэше
+импорт celery_config модулей не выполняется.
 """
 
 import importlib
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from typing import Dict, Any, List, Optional
-from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
 
-from src.config.settings.base import MODULES_DIR
 from src.core.utils.celery.base import CeleryModuleConfig
-from src.core.utils.auto_api.auto_config import ModuleDiscoverer, is_valid_module_name
+from src.core.utils.auto_api.auto_config import is_valid_module_name
+from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
+from src.core.utils.celery_config_cache import read_routes_queues_cache, write_routes_queues_cache
+
 
 class CeleryModuleManager:
     """
     Менеджер для управления конфигурациями Celery модулей.
-    Автоматически обнаруживает и загружает конфигурации всех модулей.
+    Загружает конфигурации модулей из кэшированного списка discovered_apps.
     """
     
-    def __init__(self):
+    def __init__(self, use_config_cache: bool = True):
         self.modules_configs: Dict[str, CeleryModuleConfig] = {}
         self.logger = logging.getLogger('celery.manager')
-        self._discover_modules()
+        self._routes: Optional[Dict[str, Any]] = None
+        self._queues: Optional[Dict[str, Any]] = None
+        if use_config_cache:
+            self._load_from_cache_or_modules()
+        else:
+            self._load_modules_from_cache()
     
-    def _discover_modules(self):
-        """Обнаруживает все Django приложения (модули) и загружает их конфигурации"""
-        # Получаем путь к директории модулей
-        modules_dir = MODULES_DIR
-        
-        if not modules_dir.exists():
-            self.logger.warning(f"Директория модулей не найдена: {modules_dir}")
+    def _load_from_cache_or_modules(self) -> None:
+        """Пробует загрузить routes/queues из кэша, иначе — из модулей."""
+        cached = read_routes_queues_cache()
+        if cached is not None:
+            self._routes, self._queues = cached
+            self.logger.debug('Celery: routes/queues загружены из кэша')
             return
-        
-        # Обнаруживаем Django приложения модулей через ModuleDiscoverer
-        discoverer = ModuleDiscoverer()
-        installed_apps: List[str] = []
-        discoverer._find_modules_apps(str(modules_dir), installed_apps)
-        
-        # Также ищем вложенные модули с tasks.py
-        nested_modules = self._discover_nested_modules(modules_dir)
-        
-        # Объединяем все найденные модули
-        all_modules = installed_apps + nested_modules
-        
-        for app_path in all_modules:
-            # Извлекаем имя модуля из полного пути
-            # Например: 'modules.porosity_analysis.api' -> 'porosity_analysis'
-            # Или: 'modules.education_materials_parser.fgos' -> 'fgos'
-            # Или: 'modules.impuls_analysis.api' -> 'impuls_analysis'
+        self._load_modules_from_cache()
+
+    def _load_modules_from_cache(self) -> None:
+        """Загружает конфигурации Celery для модулей из discovered_apps (параллельно)."""
+        all_apps = get_discovered_apps()
+        module_apps = [app for app in all_apps if app.startswith('modules.')]
+        items: List[Tuple[str, str]] = []
+        for app_path in module_apps:
             module_parts = app_path.split('.')
-            
-            # Если путь заканчивается на '.api', берем предпоследнюю часть
-            # Иначе берем последнюю часть
             if len(module_parts) >= 3 and module_parts[-1] == 'api':
-                module_name = module_parts[-2]  # Берем имя модуля перед 'api'
+                module_name = module_parts[-2]
             else:
-                module_name = module_parts[-1]  # Берем последнюю часть
-            
-            # Проверяем валидность имени модуля
+                module_name = module_parts[-1]
             if not is_valid_module_name(module_name):
                 self.logger.warning(f"Пропускаем модуль с невалидным именем: {module_name} (путь: {app_path})")
                 continue
-            
-            self._load_module_config(module_name, app_path)
-    
-    def _load_module_config(self, module_name: str, app_path: Optional[str] = None):
+            items.append((module_name, app_path))
+        max_workers = min(4, len(items) or 1)
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(self._load_module_config, name, path): name for name, path in items}
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    module_name, config_instance = result
+                    self.modules_configs[module_name] = config_instance
+        self._save_to_cache()
+
+    def _load_module_config(self, module_name: str, app_path: Optional[str] = None) -> Optional[Tuple[str, CeleryModuleConfig]]:
         """Загружает конфигурацию конкретного модуля"""
         # Формируем путь к конфигурации
         config_module_path = f'{app_path}.celery_config' if app_path else f'modules.{module_name}.celery_config'
@@ -84,24 +87,23 @@ class CeleryModuleManager:
                     break
             
             if config_class:
-                # Создаем экземпляр конфигурации
                 config_instance = config_class(module_name)
-                self.modules_configs[module_name] = config_instance
                 self.logger.debug(f"Успешно загружена конфигурация Celery для модуля {module_name}")
-                return
-            else:
-                # Отсутствие класса конфигурации - нормальная ситуация, используем дефолт
-                self.logger.debug(f"В модуле {config_module_path} не найден класс конфигурации Celery, создается дефолтная конфигурация")
-                self.modules_configs[module_name] = self._create_default_config(module_name, app_path)
-        except ImportError as e:
-            # Если файл конфигурации не найден - это нормальная ситуация, не все модули имеют celery_config
-            self.logger.debug(f"Модуль {module_name} не имеет celery_config (путь: {config_module_path}), создается дефолтная конфигурация")
-            self.modules_configs[module_name] = self._create_default_config(module_name, app_path)
+                return (module_name, config_instance)
+            self.logger.debug(f"В модуле {config_module_path} не найден класс конфигурации, используется дефолт")
+            return (module_name, self._create_default_config(module_name, app_path))
+        except ImportError:
+            self.logger.debug(f"Модуль {module_name} не имеет celery_config, создается дефолт")
+            return (module_name, self._create_default_config(module_name, app_path))
         except Exception as e:
             self.logger.error(f"Ошибка загрузки конфигурации модуля {module_name}: {e}", exc_info=True)
-            # При любой другой ошибке также создаем дефолтную конфигурацию
-            self.modules_configs[module_name] = self._create_default_config(module_name, app_path)
-    
+            return (module_name, self._create_default_config(module_name, app_path))
+
+    def _save_to_cache(self) -> None:
+        """Сохраняет routes/queues в кэш после загрузки модулей."""
+        if self.modules_configs:
+            write_routes_queues_cache(self.get_all_task_routes(), self.get_all_task_queues())
+
     def _create_default_config(self, module_name: str, app_path: Optional[str] = None) -> CeleryModuleConfig:
         """Создает базовую конфигурацию для модуля"""
         class DefaultModuleConfig(CeleryModuleConfig):
@@ -123,38 +125,19 @@ class CeleryModuleManager:
         
         return DefaultModuleConfig(module_name)
     
-    def _discover_nested_modules(self, modules_dir: Path) -> List[str]:
-        """Обнаруживает вложенные модули с файлами tasks.py"""
-        nested_modules = []
-        
-        def find_modules_with_tasks(current_dir: Path, base_path: str = ""):
-            """Рекурсивно ищет модули с файлами tasks.py"""
-            for item in current_dir.iterdir():
-                if item.is_dir() and not item.name.startswith('_'):
-                    # Проверяем наличие tasks.py
-                    tasks_file = item / 'tasks.py'
-                    if tasks_file.exists():
-                        # Формируем полный путь к модулю
-                        module_path = f"{base_path}.{item.name}" if base_path else f"modules.{item.name}"
-                        nested_modules.append(module_path)
-                        self.logger.debug(f"Найден вложенный модуль с tasks.py: {module_path}")
-                    
-                    # Рекурсивно обходим поддиректории
-                    new_base = f"{base_path}.{item.name}" if base_path else f"modules.{item.name}"
-                    find_modules_with_tasks(item, new_base)
-        
-        find_modules_with_tasks(modules_dir)
-        return nested_modules
-    
     def get_all_task_routes(self) -> Dict[str, str]:
-        """Собирает все маршруты задач из всех модулей"""
+        """Собирает все маршруты задач (из кэша или модулей)."""
+        if self._routes is not None:
+            return self._routes
         routes = {}
         for config in self.modules_configs.values():
             routes.update(config.get_task_routes())
         return routes
-    
+
     def get_all_task_queues(self) -> Dict[str, Dict[str, Any]]:
-        """Собирает все очереди задач из всех модулей"""
+        """Собирает все очереди задач (из кэша или модулей)."""
+        if self._queues is not None:
+            return self._queues
         queues = {}
         for config in self.modules_configs.values():
             queues.update(config.get_task_queues())
@@ -186,16 +169,15 @@ class CeleryModuleManager:
         return list(self.modules_configs.keys())
     
     def get_module_config(self, module_name: str) -> Optional[CeleryModuleConfig]:
-        """Возвращает конфигурацию конкретного модуля"""
+        """Возвращает конфигурацию конкретного модуля."""
         return self.modules_configs.get(module_name)
     
     def get_all_queue_limits(self) -> Dict[str, int]:
         """
-        Собирает лимиты параллелизма для всех очередей из всех модулей.
-        
-        Returns:
-            Dict[str, int]: Словарь {имя_очереди: max_concurrent_tasks}
+        Собирает лимиты параллелизма (только при загрузке из модулей, не из кэша).
         """
+        if self._routes is not None:
+            return {}
         limits = {}
         for module_name, config in self.modules_configs.items():
             max_concurrent = config.get_max_concurrent_tasks()

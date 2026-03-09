@@ -3,7 +3,14 @@
 """
 
 import sys
+import time
+
+_t0 = time.perf_counter()
+
 import logging
+from src.core.utils.startup_timing import set_start_time_if_earlier
+
+set_start_time_if_earlier(_t0)
 
 from typing import Dict, Type
 
