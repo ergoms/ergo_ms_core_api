@@ -86,12 +86,17 @@ class PoetryCommand:
     def _init_django(self):
         """Инициализация Django."""
         try:
-            project_path = os.path.join(os.path.dirname(__file__), '..', 'src')
+            commands_dir = os.path.dirname(os.path.abspath(__file__))
+            api_dir = os.path.dirname(commands_dir)
+            project_path = os.path.join(api_dir, 'src')
             if project_path not in sys.path:
                 sys.path.insert(0, project_path)
 
             warmup_commands = ('warmup_caches', 'warmup_celery')
             if self.command_name in warmup_commands:
+                project_root = os.path.abspath(os.path.join(api_dir, '..', '..'))
+                if project_root not in sys.path:
+                    sys.path.insert(0, project_root)
                 os.environ['DJANGO_SETTINGS_MODULE'] = 'src.config.patterns.warmup'
             else:
                 deploy_type = get_env_deploy_type()

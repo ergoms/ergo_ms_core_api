@@ -175,7 +175,7 @@ def ensure_caches() -> List[str]:
             print('Celery queues cache is empty/invalid. Populating via warmup_celery (Django warmup_celery команда)...')
             result = subprocess.run(
                 [sys.executable, '-m', 'commands', 'warmup_celery'],
-                cwd=str(API_DIR.parent),
+                cwd=str(API_DIR),
                 env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'},
             )
             if result.returncode == 0:
@@ -212,6 +212,9 @@ def run_celery_with_timing(
     env = os.environ.copy()
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUTF8'] = '1'
+    project_root = str(PROJECT_ROOT)
+    existing = env.get('PYTHONPATH', '')
+    env['PYTHONPATH'] = project_root + (os.pathsep + existing if existing else '')
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,

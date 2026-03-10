@@ -6,6 +6,7 @@
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -16,6 +17,7 @@ import yaml
 
 from _common import (
     API_DIR,
+    PROJECT_ROOT,
     WORKERS_CONFIG,
     ensure_caches,
     is_celery_process,
@@ -182,7 +184,13 @@ def main() -> int:
             queues_display = ','.join(queues) if queues else 'all'
             cmd = build_cmd(queues, hostname, w.get('loglevel', defaults.get('loglevel', 'info')), w.get('concurrency'))
             print(f"  Starting '{name}' ({hostname}) -> queues={queues_display}, concurrency={w.get('concurrency') or 'default'}")
-            proc = subprocess.Popen(cmd, cwd=str(API_DIR), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+            env = os.environ.copy()
+            env.setdefault('PYTHONPATH', '')
+            env['PYTHONPATH'] = str(PROJECT_ROOT) + (os.pathsep + env['PYTHONPATH'] if env['PYTHONPATH'] else '')
+            proc = subprocess.Popen(
+                cmd, cwd=str(API_DIR), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                start_new_session=True, env=env,
+            )
             procs.append(proc)
             time.sleep(0.3)
         if not procs:

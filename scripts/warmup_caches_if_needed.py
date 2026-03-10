@@ -31,8 +31,8 @@ def main() -> int:
     logger.info('warmup_caches_if_needed: кэш невалиден, запускаем Django команду warmup_caches')
     result = subprocess.run(
         [sys.executable, '-m', 'commands', 'warmup_caches'],
-        cwd=str(API_DIR.parent),
-        timeout=60,
+        cwd=str(API_DIR),
+        timeout=180,
         env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'},
     )
     if result.returncode == 0:
