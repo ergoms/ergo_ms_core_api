@@ -18,7 +18,9 @@ from typing import Optional, List, Dict, Any, cast
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandParser
+
 from src.config.settings.base import SYSTEM_DIR
+from src.core.utils.os_abstraction import get_os_abstraction
 
 logger = logging.getLogger('core.utils.commands')
 
@@ -84,7 +86,8 @@ class Command(BaseCommand):
         if len(cmdline) < 2:
             return False
         first = str(cmdline[0]).lower()
-        return 'python' in first or first.endswith(('celery', 'celery.exe'))
+        names = get_os_abstraction().process_executable_names('celery')
+        return 'python' in first or any(first.endswith(n) for n in names)
 
     def find_celery_worker(self, queues: Optional[str] = None, hostname: Optional[str] = None) -> Optional[psutil.Process]:
         """

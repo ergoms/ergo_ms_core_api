@@ -1,11 +1,13 @@
 import os
 import json
+from pathlib import Path
 
 from src.core.cms.models import CMSPage
 
+
 def get_config_base_path():
     """Получает базовый путь к конфигурациям"""
-    return (os.getcwd().replace('\\', '/')).replace('/api', '/client/src/config')
+    return str(Path.cwd().as_posix()).replace('/api', '/client/src/config')
 
 def extract_paths_from_routes_config():
     """Извлекает все пути из routes-config.json"""

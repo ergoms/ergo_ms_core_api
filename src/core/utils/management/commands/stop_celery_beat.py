@@ -15,6 +15,8 @@ from typing import Optional
 
 from django.core.management.base import BaseCommand
 
+from src.core.utils.os_abstraction import get_os_abstraction
+
 logger = logging.getLogger('core.utils.commands')
 
 class Command(BaseCommand):
@@ -32,7 +34,8 @@ class Command(BaseCommand):
         if len(cmdline) < 2:
             return False
         first = str(cmdline[0]).lower()
-        return 'python' in first or first.endswith(('celery', 'celery.exe'))
+        names = get_os_abstraction().process_executable_names('celery')
+        return 'python' in first or any(first.endswith(n) for n in names)
 
     def find_celery_beat(self) -> Optional[psutil.Process]:
         """

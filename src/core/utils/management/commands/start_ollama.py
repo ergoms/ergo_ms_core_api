@@ -24,6 +24,8 @@ from typing import Optional, List, Dict, Any
 
 from django.core.management.base import BaseCommand, CommandParser
 
+from src.core.utils.os_abstraction import get_os_abstraction
+
 logger = logging.getLogger('core.utils.commands')
 
 class Command(BaseCommand):
@@ -144,8 +146,7 @@ class Command(BaseCommand):
             'DEBUG': 'MAGENTA'
         }
         
-        # Форматируем источник (убираем путь, оставляем только имя файла)
-        source_short = source.split('/')[-1] if '/' in source else source.split('\\')[-1]
+        source_short = get_os_abstraction().basename_from_path(source)
         
         # Форматируем сообщение
         formatted_msg = msg

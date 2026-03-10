@@ -44,8 +44,10 @@ def is_celery_process(cmdline: list) -> bool:
     """Проверяет, что cmdline — реальный процесс Celery, а не grep/cat и т.п."""
     if len(cmdline) < 2:
         return False
+    from src.core.utils.os_abstraction import get_os_abstraction
     first = str(cmdline[0]).lower()
-    return 'python' in first or first.endswith(('celery', 'celery.exe'))
+    names = get_os_abstraction().process_executable_names('celery')
+    return 'python' in first or any(first.endswith(n) for n in names)
 
 
 def get_modules_config_mtime() -> float:

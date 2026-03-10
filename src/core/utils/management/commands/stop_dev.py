@@ -15,6 +15,8 @@ from typing import Optional
 
 from django.core.management.base import BaseCommand
 
+from src.core.utils.os_abstraction import get_os_abstraction
+
 logger = logging.getLogger('core.utils.commands')
 
 class Command(BaseCommand):
@@ -61,8 +63,7 @@ class Command(BaseCommand):
                 # и проверяем, что следующий элемент или часть строки содержит 'dev'
                 is_wrapper_dev = False
                 for i, part in enumerate(cmdline_lower):
-                    # Проверяем, что элемент заканчивается на 'api' или содержит 'api' как отдельное слово
-                    if part.endswith('api') or part.endswith('/api') or part.endswith('\\api'):
+                    if get_os_abstraction().path_ends_with(part, 'api'):
                         # Проверяем следующий элемент или всю строку после этого элемента
                         if i + 1 < len(cmdline_lower):
                             # Следующий элемент содержит 'dev'

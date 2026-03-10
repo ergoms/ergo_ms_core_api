@@ -35,8 +35,8 @@ def _ensure_path() -> None:
 def _module_path_to_fs_path(app_module: str, core_dir: Path, modules_dir: Path) -> Optional[Path]:
     """Преобразует путь модуля приложения в путь в файловой системе."""
     if app_module.startswith('src.core.'):
-        rel = app_module.replace('src.core.', '').replace('.', os.sep)
-        path = core_dir / rel
+        rel_parts = app_module.replace('src.core.', '').split('.')
+        path = core_dir.joinpath(*rel_parts)
         return path if path.exists() else None
     if app_module.startswith('modules.'):
         parts = app_module.split('.')
