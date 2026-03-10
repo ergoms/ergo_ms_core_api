@@ -34,6 +34,7 @@ def main() -> int:
         print('Celery beat is already running')
         return 0
 
+    print('Celery Beat bootstrap: подготавливаем кэш очередей/расписаний (warmup_celery при необходимости)...')
     ensure_caches()
 
     loglevel = 'info'
@@ -46,7 +47,7 @@ def main() -> int:
         sys.executable, '-m', 'celery', '-A', 'src', 'beat',
         f'--loglevel={loglevel}',
     ]
-    print('Starting Celery beat...')
+    print(f'Starting Celery beat (loglevel={loglevel})...')
     return run_celery_with_timing(
         cmd, str(API_DIR),
         ready_pattern='beat: Starting',

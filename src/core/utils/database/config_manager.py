@@ -15,6 +15,12 @@ logger = logging.getLogger('utils.database.config')
 
 _YAML_CACHE: Dict[Path, tuple] = {}
 
+# Глобальный кэш для уже обработанной Django-конфигурации БД внутри одного процесса.
+# Это делает инициализацию БД/логгинга идемпотентной: даже при повторных импортах
+# или создании нескольких DjangoDatabaseConfigLoader результат будет рассчитан один раз.
+_DJANGO_DATABASES_CACHE: Optional[Dict] = None
+_DJANGO_DATABASES_LOADED: bool = False
+
 
 def _get_cached_yaml(config_path: Path) -> Optional[Dict]:
     """Читает databases.yaml с общим кэшем. Инвалидация по mtime."""
@@ -37,7 +43,7 @@ def _get_cached_yaml(config_path: Path) -> Optional[Dict]:
             logger.error("Неверный формат файла конфигурации")
             return None
         _YAML_CACHE[resolved] = (mtime, config['databases'])
-        logger.info(f"Загружена конфигурация из {config_path}")
+        logger.debug(f"Загружена конфигурация из {config_path}")
         return config['databases']
     except Exception as e:
         logger.error(f"Ошибка при чтении конфигурации: {e}")
@@ -362,6 +368,27 @@ class DjangoDatabaseConfigLoader(BaseDatabaseConfigLoader):
         self.test_connections = test_connections
         self.connection_tester = DatabaseConnectionTester()
     
+    def load_config(self) -> Dict:
+        """
+        Загружает конфигурацию БД в формате Django, с глобальным кэшем на процесс.
+
+        Это предотвращает повторную обработку YAML и повторные тесты подключений
+        при многократном импорте настроек или создании нескольких загрузчиков.
+        """
+        global _DJANGO_DATABASES_CACHE, _DJANGO_DATABASES_LOADED
+
+        if _DJANGO_DATABASES_LOADED and _DJANGO_DATABASES_CACHE is not None:
+            return _DJANGO_DATABASES_CACHE
+
+        if not self._loaded:
+            self._raw_config = self._load_yaml_config()
+            self._loaded = True
+
+        databases = self._process_config(self._raw_config)
+        _DJANGO_DATABASES_CACHE = databases
+        _DJANGO_DATABASES_LOADED = True
+        return databases
+
     def _build_django_config(self, db_name: str, db_config: Dict) -> Dict:
         """
         Строит конфигурацию БД в формате Django.
@@ -451,7 +478,7 @@ class DjangoDatabaseConfigLoader(BaseDatabaseConfigLoader):
                 if self.test_connections:
                     engine = db_config.get('engine', 'postgresql').lower()
                     if self.connection_tester.test_connection(engine, db_config):
-                        logger.info(f"Успешное подключение к БД '{db_name}' (тип: {DB_ENGINES[engine]})")
+                        logger.debug(f"Успешное подключение к БД '{db_name}' (тип: {DB_ENGINES[engine]})")
                         databases[db_name] = django_config
                     else:
                         logger.error(f"Не удалось подключиться к БД '{db_name}'")
@@ -517,7 +544,7 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
 
         for section in self.section_priorities:
             if section in available:
-                logger.info(f"{self.component_name}: Используется секция '{section}'")
+                logger.debug(f"{self.component_name}: Используется секция '{section}'")
                 return section
 
         return None
@@ -587,7 +614,7 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
             logger.warning(f"{self.component_name}: Неподдерживаемый тип БД '{engine}'")
             return self._get_local_sqlite_urls()
         
-        logger.info(f"{self.component_name}: Настроена работа с {engine} БД ({host}:{port}/{name})")
+        logger.debug(f"{self.component_name}: Настроена работа с {engine} БД ({host}:{port}/{name})")
         return broker_url, result_backend
     
     def _process_config(self, raw_config: Optional[Dict]) -> Dict:

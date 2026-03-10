@@ -9,6 +9,7 @@
 """
 
 import logging
+import os
 import sys
 
 try:
@@ -85,12 +86,15 @@ class Command(RunserverCommand):
             *args: Позиционные аргументы
             **options: Именованные аргументы
         """
-        logger.info('Запуск команды runserver')
-        elapsed_msg = get_elapsed_str()
-        try:
-            self.stdout.write(self.style.SUCCESS(f'  API (runserver): Django fully loaded {elapsed_msg}'))
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            logger.info('API (runserver): Django fully loaded %s', elapsed_msg)
+        is_reloader_child = os.environ.get('RUN_MAIN') == 'true'
+        role = 'autoreload child (рабочий процесс)' if is_reloader_child else 'autoreload parent (launcher)'
+        logger.info('Запуск команды runserver (%s)', role)
+        if is_reloader_child:
+            elapsed_msg = get_elapsed_str()
+            try:
+                self.stdout.write(self.style.SUCCESS(f'  API (runserver): Django fully loaded {elapsed_msg}'))
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                logger.info('API (runserver): Django fully loaded %s', elapsed_msg)
 
         if not options['addrport']:
             server_host = getattr(settings, 'SERVER_HOST', None)

@@ -114,7 +114,10 @@ def main() -> int:
     config = load_workers_config()
     workers_config = config.get('workers', {})
     defaults = config.get('defaults', {})
+    print('Celery Worker bootstrap: читаем кэш очередей (warmup_celery при необходимости)...')
     all_queues = ensure_caches()
+    if all_queues:
+        print(f"Celery Worker bootstrap: в кэше {len(all_queues)} очередей ({', '.join(all_queues)})")
 
     if opts.list_workers:
         if not workers_config:
@@ -150,6 +153,7 @@ def main() -> int:
         concurrency = w.get('concurrency') or concurrency_opt
         loglevel = w.get('loglevel') or loglevel_opt
         print(f"\nStarting worker '{worker_name}': {w.get('description', '')}")
+        print(f"  Mode: config worker (--worker), hostname={hostname}, queues={','.join(queues) if queues else 'all'}, concurrency={concurrency or 'default'}")
     elif queues_opt or hostname_opt:
         if queues_opt:
             queue_list = [q.strip() for q in queues_opt.split(',')]
@@ -165,8 +169,10 @@ def main() -> int:
         concurrency = concurrency_opt
         loglevel = loglevel_opt
         print('\nStarting Celery worker')
+        print(f"  Mode: ad-hoc worker (CLI), hostname={hostname}, queues={','.join(queues) if queues else 'all'}, concurrency={concurrency or 'default'}")
     elif workers_config:
         procs = []
+        print('\nStarting Celery workers from celery_workers.yaml (multi-worker mode)...')
         for name, w in workers_config.items():
             queues = resolve_queues(w.get('queues'), all_queues)
             hostname = w.get('hostname', f'worker@{name}')
@@ -175,7 +181,7 @@ def main() -> int:
                 continue
             queues_display = ','.join(queues) if queues else 'all'
             cmd = build_cmd(queues, hostname, w.get('loglevel', defaults.get('loglevel', 'info')), w.get('concurrency'))
-            print(f"  Starting '{name}' ({hostname}) -> {queues_display}")
+            print(f"  Starting '{name}' ({hostname}) -> queues={queues_display}, concurrency={w.get('concurrency') or 'default'}")
             proc = subprocess.Popen(cmd, cwd=str(API_DIR), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
             procs.append(proc)
             time.sleep(0.3)
@@ -200,7 +206,7 @@ def main() -> int:
         hostname = f"worker@{'_'.join(queues or ['all'])[:50]}"
         concurrency = concurrency_opt
         loglevel = loglevel_opt
-        print('No celery_workers.yaml. Starting worker with all queues.')
+        print('No celery_workers.yaml. Starting single worker with all queues (no -Q if кэш пуст).')
 
     queues_display = ','.join(queues) if queues else 'all'
     if find_celery_worker(hostname=hostname):

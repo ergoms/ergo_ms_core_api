@@ -164,11 +164,15 @@ def ensure_caches() -> List[str]:
     queues = read_queues_cache()
     # Если кэш уже валиден (даже с 0 очередями) — не пытаемся заново греть Celery.
     if queues or cache_valid():
+        if queues:
+            print(f'Celery queues cache already valid: {len(queues)} queues, warmup_celery не требуется')
+        else:
+            print('Celery queues cache валиден, но очередей 0 (нет Celery-модулей), warmup_celery не требуется')
         return queues
 
     if _acquire_warmup_lock():
         try:
-            print('Celery queues cache is empty. Populating via warmup_celery...')
+            print('Celery queues cache is empty/invalid. Populating via warmup_celery (Django warmup_celery команда)...')
             result = subprocess.run(
                 [sys.executable, '-m', 'commands', 'warmup_celery'],
                 cwd=str(API_DIR.parent),
@@ -177,7 +181,7 @@ def ensure_caches() -> List[str]:
             if result.returncode == 0:
                 queues = read_queues_cache()
                 if cache_valid():
-                    print(f'Cache populated: {len(queues)} queues')
+                    print(f'Cache populated after warmup_celery: {len(queues)} queues')
                     return queues
             print('[WARNING] Could not populate cache, starting without -Q (all queues)')
         except Exception as e:
