@@ -100,11 +100,11 @@ def cache_valid() -> bool:
     if data is not None:
         stored_mtime = data.get('modules_mtime', 0)
         current_mtime = get_modules_config_mtime()
-        if mtime_valid(stored_mtime, current_mtime) and data.get('queues'):
+        if mtime_valid(stored_mtime, current_mtime):
             return True
     data = _load_bin_cache(ROUTES_QUEUES_CACHE_FILE)
     if data is not None:
-        if fingerprint_equal(data.get('fingerprint', {}), get_fingerprint()) and data.get('queues'):
+        if fingerprint_equal(data.get('fingerprint', {}), get_fingerprint()):
             return True
     return False
 
@@ -145,13 +145,10 @@ def _is_lock_stale() -> bool:
 
 
 def _wait_for_warmup() -> bool:
-    """Ждёт завершения warmup другим процессом. Возвращает True если кэш стал валидным."""
+    """Ждёт завершения warmup другим процессом. Возвращает True если кэш стал валидным (даже при 0 очередях)."""
     while True:
         if not WARMUP_LOCK.exists():
-            queues = read_queues_cache()
-            if queues:
-                return True
-            return False
+            return cache_valid()
         if _is_lock_stale():
             _release_warmup_lock()
             return False
@@ -165,7 +162,8 @@ def ensure_caches() -> List[str]:
     процесс загружал Django, остальные ждали результата.
     """
     queues = read_queues_cache()
-    if queues:
+    # Если кэш уже валиден (даже с 0 очередями) — не пытаемся заново греть Celery.
+    if queues or cache_valid():
         return queues
 
     if _acquire_warmup_lock():
@@ -178,7 +176,7 @@ def ensure_caches() -> List[str]:
             )
             if result.returncode == 0:
                 queues = read_queues_cache()
-                if queues:
+                if cache_valid():
                     print(f'Cache populated: {len(queues)} queues')
                     return queues
             print('[WARNING] Could not populate cache, starting without -Q (all queues)')
@@ -191,9 +189,8 @@ def ensure_caches() -> List[str]:
     print('Another process is populating cache, waiting...')
     if _wait_for_warmup():
         queues = read_queues_cache()
-        if queues:
-            print(f'Cache ready: {len(queues)} queues')
-            return queues
+        print(f'Cache ready: {len(queues)} queues')
+        return queues
     print('[WARNING] Cache wait timed out, starting without -Q (all queues)')
     return []
 
