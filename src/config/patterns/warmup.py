@@ -9,7 +9,6 @@
 import os
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'src.config.patterns.warmup')
-os.environ['DJANGO_SKIP_MIGRATIONS_CHECK'] = '1'
 
 from src.config.settings.base import CORE_DIR, MODULES_DIR, SYSTEM_DIR, VIRTUAL_ENV_DIR
 from src.config.settings.logger import LOGGING

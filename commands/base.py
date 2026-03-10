@@ -47,8 +47,12 @@ class PoetryCommand:
             from django.core.management import execute_from_command_line
             
             django_args = ['manage.py', self.command_name]
+            if self.command_name in ('warmup_caches', 'warmup_celery'):
+                django_args.append('--skip-checks')
             if args_str:
                 django_args.extend(args_str.split())
+
+
             
             print(f"Выполняется Django команда: {' '.join(django_args)}")
             execute_from_command_line(django_args)
