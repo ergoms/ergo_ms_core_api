@@ -1,8 +1,8 @@
 from django.contrib.auth import get_user_model
-from django.contrib.contenttypes.models import ContentType
 from rest_framework import serializers
 
 from .models import Message, MessageAttachment
+from .utils import get_content_type
 
 User = get_user_model()
 
@@ -137,10 +137,7 @@ class MessageSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'author', 'author_data', 'is_edited', 'reply_to_data', 'attachments', 'created_at', 'updated_at')
 
     def validate_content_type_name(self, value):
-        try:
-            ContentType.objects.get(model=value)
-        except ContentType.DoesNotExist:
-            raise serializers.ValidationError(f'Тип контента "{value}" не найден')
+        get_content_type(value)
         return value
 
     def validate(self, attrs):
@@ -176,6 +173,6 @@ class MessageSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         content_type_name = validated_data.pop('content_type_name')
-        ct = ContentType.objects.get(model=content_type_name)
+        ct = get_content_type(content_type_name)
         validated_data['content_type'] = ct
         return super().create(validated_data)

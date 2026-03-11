@@ -2,7 +2,6 @@ import logging
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from django.contrib.contenttypes.models import ContentType
 from rest_framework import permissions, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -11,6 +10,7 @@ from src.core.utils.mixins import SwaggerSafeMixin, MediaApiFileMixin
 
 from .models import Message, MessageAttachment
 from .serializers import MessageAttachmentSerializer, MessageSerializer
+from .utils import get_content_type
 
 logger = logging.getLogger('core.messenger')
 
@@ -35,11 +35,8 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
         object_id = self.request.query_params.get('object_id')
 
         if content_type_name and object_id:
-            try:
-                ct = ContentType.objects.get(model=content_type_name)
-                return queryset.filter(content_type=ct, object_id=object_id).order_by('created_at')
-            except ContentType.DoesNotExist:
-                return Message.objects.none()
+            ct = get_content_type(content_type_name)
+            return queryset.filter(content_type=ct, object_id=object_id).order_by('created_at')
 
         return Message.objects.none()
 
@@ -56,16 +53,22 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
         message = serializer.save(is_edited=True)
         self._broadcast(message, 'message_edited')
 
+    def _get_ct_name_for_group(self, content_type):
+        """Имя content_type для группы WebSocket (app_label.model)."""
+        if not content_type:
+            return ''
+        return f'{content_type.app_label}.{content_type.model}'
+
     def perform_destroy(self, instance):
         self._check_author(instance)
         message_id = instance.id
-        ct_name = instance.content_type.model if instance.content_type else ''
+        ct_name = self._get_ct_name_for_group(instance.content_type)
         object_id = instance.object_id
         instance.delete()
         self._broadcast_deleted(ct_name, object_id, message_id)
 
     def _broadcast(self, message, event_type):
-        ct_name = message.content_type.model if message.content_type else ''
+        ct_name = self._get_ct_name_for_group(message.content_type)
         group_name = f'messenger_{ct_name}_{message.object_id}'
         serialized = MessageSerializer(message, context={'request': self.request}).data
         try:
