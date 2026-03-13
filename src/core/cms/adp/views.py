@@ -1005,16 +1005,16 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
                 'status': 'Задача в очереди...'
             }
         elif task.state == 'PROGRESS':
-            # Получаем накопленные логи начиная с last_log_index
             all_logs = task.info.get('logs', [])
-            new_logs = all_logs[last_log_index:] if last_log_index < len(all_logs) else []
-            
-            # Если нет накопленных логов, отдаём last_log
-            if not new_logs and task.info.get('last_log'):
-                # Проверяем, не отправляли ли мы уже этот лог
-                if last_log_index == 0 or (all_logs and last_log_index < len(all_logs)):
-                    new_logs = [task.info.get('last_log')]
-            
+            logs_total = task.info.get('logs_total', len(all_logs))
+            # Логи в meta — только последние N; считаем срез для клиента по last_log_index
+            start = last_log_index - (logs_total - len(all_logs))
+            if start >= len(all_logs):
+                new_logs = []
+            else:
+                new_logs = all_logs[max(0, start):]
+            if not new_logs and task.info.get('last_log') and last_log_index < logs_total:
+                new_logs = [task.info.get('last_log')]
             response = {
                 'state': task.state,
                 'current': task.info.get('current', 0),
@@ -1023,6 +1023,7 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
                 'skipped': task.info.get('skipped', 0),
                 'progress': task.info.get('progress', 0),
                 'new_logs': new_logs,
+                'logs_total': logs_total,
                 'status': 'Обработка...'
             }
         elif task.state == 'SUCCESS':

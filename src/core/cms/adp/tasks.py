@@ -10,6 +10,23 @@ from django.contrib.auth.models import User
 
 logger = logging.getLogger('celery.core.cms.adp')
 
+MAX_LOGS_IN_META = 1000
+
+
+def _import_meta(current, total, created, skipped, progress, accumulated_logs, last_log):
+    logs = accumulated_logs[-MAX_LOGS_IN_META:].copy()
+    meta = {
+        'current': current,
+        'total': total,
+        'created': created,
+        'skipped': skipped,
+        'progress': progress,
+        'logs': logs,
+        'logs_total': len(accumulated_logs),
+        'last_log': last_log,
+    }
+    return meta
+
 
 @shared_task(bind=True, name='core.cms.adp.import_users')
 def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
@@ -94,15 +111,7 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
         accumulated_logs.append(start_log)
         self.update_state(
             state='PROGRESS',
-            meta={
-                'current': 0,
-                'total': total_rows,
-                'created': 0,
-                'skipped': 0,
-                'progress': 0,
-                'logs': accumulated_logs.copy(),
-                'last_log': start_log
-            }
+            meta=_import_meta(0, total_rows, 0, 0, 0, accumulated_logs, start_log)
         )
         
         # Обрабатываем каждую строку
@@ -151,15 +160,7 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
                     progress = int((index + 1) / total_rows * 100)
                     self.update_state(
                         state='PROGRESS',
-                        meta={
-                            'current': index + 1,
-                            'total': total_rows,
-                            'created': results['created'],
-                            'skipped': results['skipped'],
-                            'progress': progress,
-                            'logs': accumulated_logs.copy(),
-                            'last_log': log_entry
-                        }
+                        meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
                     )
                     continue
                 
@@ -179,15 +180,7 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
                     progress = int((index + 1) / total_rows * 100)
                     self.update_state(
                         state='PROGRESS',
-                        meta={
-                            'current': index + 1,
-                            'total': total_rows,
-                            'created': results['created'],
-                            'skipped': results['skipped'],
-                            'progress': progress,
-                            'logs': accumulated_logs.copy(),
-                            'last_log': log_entry
-                        }
+                        meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
                     )
                     continue
                 
@@ -203,15 +196,7 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
                     progress = int((index + 1) / total_rows * 100)
                     self.update_state(
                         state='PROGRESS',
-                        meta={
-                            'current': index + 1,
-                            'total': total_rows,
-                            'created': results['created'],
-                            'skipped': results['skipped'],
-                            'progress': progress,
-                            'logs': accumulated_logs.copy(),
-                            'last_log': log_entry
-                        }
+                        meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
                     )
                     continue
                 
@@ -227,15 +212,7 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
                     progress = int((index + 1) / total_rows * 100)
                     self.update_state(
                         state='PROGRESS',
-                        meta={
-                            'current': index + 1,
-                            'total': total_rows,
-                            'created': results['created'],
-                            'skipped': results['skipped'],
-                            'progress': progress,
-                            'logs': accumulated_logs.copy(),
-                            'last_log': log_entry
-                        }
+                        meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
                     )
                     continue
                 
@@ -285,15 +262,7 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
             progress = int((index + 1) / total_rows * 100)
             self.update_state(
                 state='PROGRESS',
-                meta={
-                    'current': index + 1,
-                    'total': total_rows,
-                    'created': results['created'],
-                    'skipped': results['skipped'],
-                    'progress': progress,
-                    'logs': accumulated_logs.copy(),
-                    'last_log': log_entry
-                }
+                meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
             )
         
         # Финальные результаты
@@ -304,15 +273,7 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
         accumulated_logs.append(final_log)
         self.update_state(
             state='PROGRESS',
-            meta={
-                'current': total_rows,
-                'total': total_rows,
-                'created': results['created'],
-                'skipped': results['skipped'],
-                'progress': 100,
-                'logs': accumulated_logs.copy(),
-                'last_log': final_log
-            }
+            meta=_import_meta(total_rows, total_rows, results['created'], results['skipped'], 100, accumulated_logs, final_log)
         )
         
         return {
