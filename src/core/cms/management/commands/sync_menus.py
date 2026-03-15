@@ -217,12 +217,12 @@ class Command(BaseCommand):
         if deleted:
             self.stdout.write(f'  {module_name}: удалено {deleted} старых пунктов')
 
-        # Создаём группу
+        # Создаём корневой пункт меню (маршрут с опциональным route_name)
         group = MenuItem.objects.create(
             name=group_name,
             route_name=root_route_name,
             icon=group_icon,
-            item_type='group',
+            item_type='route',
             parent=None,
             module_source=module_source,
             is_active=True,

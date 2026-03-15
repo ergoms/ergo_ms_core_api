@@ -68,7 +68,7 @@ class MenuMigrationHelper:
         
         Args:
             name: Название элемента
-            item_type: Тип ('route', 'group', 'offcanvas', 'external')
+            item_type: Тип ('route', 'offcanvas', 'external')
             route_name: Имя маршрута Vue
             icon: Название иконки Lucide
             parent: Родительский элемент
@@ -130,10 +130,10 @@ class MenuMigrationHelper:
         is_admin_only: bool = False,
         order: int = None,
     ):
-        """Создаёт элемент-группу."""
+        """Создаёт контейнер меню (тип route с опциональным route_name). Обратная совместимость API."""
         return self.create_item(
             name=name,
-            item_type='group',
+            item_type='route',
             route_name=route_name,
             icon=icon,
             parent=parent,

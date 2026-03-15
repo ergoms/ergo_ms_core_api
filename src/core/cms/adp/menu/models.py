@@ -16,7 +16,6 @@ class MenuItem(models.Model):
     """
     ITEM_TYPES = [
         ('route', 'Маршрут Vue'),
-        ('group', 'Группа'),
         ('offcanvas', 'Боковая панель'),
         ('external', 'Внешняя ссылка'),
     ]

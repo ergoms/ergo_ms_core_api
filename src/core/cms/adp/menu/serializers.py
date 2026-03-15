@@ -136,10 +136,6 @@ class MenuItemCreateSerializer(ModelSerializer):
     def validate(self, attrs):
         item_type = attrs.get('item_type', 'route')
         
-        # Валидация для маршрутов
-        if item_type == 'route' and not attrs.get('route_name'):
-            raise ValidationError({'route_name': 'Имя маршрута обязательно для типа "route"'})
-        
         # Валидация для offcanvas
         if item_type == 'offcanvas' and not attrs.get('page'):
             raise ValidationError({'page': 'Страница обязательна для типа "offcanvas"'})
