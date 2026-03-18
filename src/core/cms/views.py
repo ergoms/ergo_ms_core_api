@@ -11,6 +11,7 @@ from drf_yasg import openapi
 
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth.models import (Group, Permission, User)
+from django.shortcuts import get_object_or_404
 
 from src.core.utils.base.base_views import BaseAPIViewAuthMixin
 from src.core.cms.models import (
@@ -1064,8 +1065,11 @@ class AddUserGroup(BaseAPIViewAuthMixin):
                 access = True
                 break
         if(access or request.user.is_superuser):
+            username = request.data.get('username')
+            if not username:
+                return Response({'detail': 'username обязателен'}, status=status.HTTP_400_BAD_REQUEST)
+            user = get_object_or_404(User, username=username)
             if(request.user.is_superuser):
-                user = User.objects.get(username = request.data['username'])
                 for group_name in request.data['groups_name']:
                     group = Group.objects.get(name = group_name)
                     user.groups.add(group)
@@ -1075,7 +1079,6 @@ class AddUserGroup(BaseAPIViewAuthMixin):
                 for exp in exps:
                     if(exp.permission_mark.id==4):
                         catlist.append(exp.group_category)
-                user = User.objects.get(username = request.data['username'])
                 for group_name in request.data['groups_name']:
                     group = Group.objects.get(name = group_name)
                     exp_group = ExpandedGroup.objects.get(group=group)
@@ -1114,7 +1117,10 @@ class RemoveUserGroup(BaseAPIViewAuthMixin):
                 access = True
                 break
         if(access or request.user.is_superuser):
-            user = User.objects.get(id = request.data['user_id'])
+            user_id = request.data.get('user_id')
+            if user_id is None:
+                return Response({'detail': 'user_id обязателен'}, status=status.HTTP_400_BAD_REQUEST)
+            user = get_object_or_404(User, id=user_id)
             if(request.user.is_superuser):
                 for group_name in request.data['groups_name']:
                     group = Group.objects.get(name = group_name)
@@ -1163,7 +1169,10 @@ class RemoveUserPermission(BaseAPIViewAuthMixin):
                 access = True
                 break
         if(access or request.user.is_superuser):
-            user = User.objects.get(id = request.data['user_id'])
+            user_id = request.data.get('user_id')
+            if user_id is None:
+                return Response({'detail': 'user_id обязателен'}, status=status.HTTP_400_BAD_REQUEST)
+            user = get_object_or_404(User, id=user_id)
             if(request.user.is_superuser):
                 for permission_name in request.data['permissions_name']:
                     permission = Permission.objects.get(name = permission_name)
@@ -1213,7 +1222,10 @@ class AddUserPermission(BaseAPIViewAuthMixin):
                 access = True
                 break
         if(access or request.user.is_superuser):
-            user = User.objects.get(username = request.data['username'])
+            username = request.data.get('username')
+            if not username:
+                return Response({'detail': 'username обязателен'}, status=status.HTTP_400_BAD_REQUEST)
+            user = get_object_or_404(User, username=username)
             if(request.user.is_superuser):
                 for permission_name in request.data['permissions_name']:
                     permission = Permission.objects.get(name = permission_name)
