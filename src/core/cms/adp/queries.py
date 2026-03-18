@@ -118,19 +118,17 @@ def add_new_task(task_data):
     return (query, tuple(values))
 
 def get_users_by_name(name: str):
-    return tuple(
-        [
-            f"""
-            select
-                id,
-                username,
-                email,
-                first_name,
-                last_name
-            from
-                auth_user
-            where username = {name}
-            """,
-            tuple([name]),
-        ]
+    return (
+        """
+        select
+            id,
+            username,
+            email,
+            first_name,
+            last_name
+        from
+            auth_user
+        where username = %s
+        """,
+        (name,),
     )

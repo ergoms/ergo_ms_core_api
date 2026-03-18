@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from django.utils import timezone
 from rest_framework.response import Response
@@ -25,6 +26,16 @@ from .serializers import *
 
 from .models import AuditLog
 from .serializers import AuditLogSerializer
+
+
+def _safe_content_disposition_filename(name):
+    """Санитизирует имя файла для заголовка Content-Disposition (защита от response splitting)."""
+    if name is None:
+        return 'download'
+    s = re.sub(r'[\x00-\x1f\x7f"\\\r\n]', '', str(name).strip())
+    s = s[:200] if len(s) > 200 else s
+    return s or 'download'
+
 
 class GeneralSettingsViewSet(viewsets.ModelViewSet):
     queryset = GeneralSettings.objects.all()
@@ -109,7 +120,8 @@ class AppearanceSettingsViewSet(viewsets.ModelViewSet):
             json.dumps(export_data, indent=2, ensure_ascii=False),
             content_type='application/json; charset=utf-8'
         )
-        response['Content-Disposition'] = f'attachment; filename="{theme_name}.json"'
+        safe_filename = _safe_content_disposition_filename(theme_name) + '.json'
+        response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
         return response
     
     @action(detail=False, methods=['post'], url_path='import-theme')
@@ -317,8 +329,8 @@ class ThemeViewSet(viewsets.ModelViewSet):
             json.dumps(export_data, indent=2, ensure_ascii=False),
             content_type='application/json; charset=utf-8'
         )
-        safe_name = theme.name.replace(' ', '-').lower()
-        response['Content-Disposition'] = f'attachment; filename="{safe_name}.json"'
+        safe_name = _safe_content_disposition_filename(theme.name.replace(' ', '-').lower()) + '.json'
+        response['Content-Disposition'] = f'attachment; filename="{safe_name}"'
         return response
     
     @action(detail=False, methods=['post'], url_path='import')

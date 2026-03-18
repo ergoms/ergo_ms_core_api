@@ -4,10 +4,19 @@
 Этот файл содержит различные вспомогательные методы, которые используются в других частях модуля и приложения.
 """
 
+import re
 from typing import Dict, Tuple, Optional
 
 from django.core.mail import send_mail
 from django.conf import settings
+
+
+def _normalize_email_for_recipient(email: str) -> str:
+    """Удаляет из адреса символы, способные вызвать подмену заголовков (CRLF, управляющие)."""
+    if not email or not isinstance(email, str):
+        return ""
+    first_line = email.strip().splitlines()[0].strip()
+    return re.sub(r"[\r\n\x00-\x1f\x7f]", "", first_line)
 
 def parse_errors_to_dict(error_dict: Dict[str, list]) -> Dict[str, str]:
     """
@@ -51,7 +60,12 @@ def send_confirmation_email(email: str, code: str) -> Tuple[bool, Optional[str]]
         subject = "Код подтверждения ERGO MS"
         message = f"Ваш код подтверждения: {code}"
         from_email = default_from_email
-        recipient_list = [email]
+        normalized_email = _normalize_email_for_recipient(email)
+        if not normalized_email:
+            error_msg = "Недопустимый адрес получателя"
+            logger.warning(error_msg)
+            return False, error_msg
+        recipient_list = [normalized_email]
 
         send_mail(subject,
                   message, 

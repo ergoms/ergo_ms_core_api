@@ -1,3 +1,5 @@
+import os
+
 from django.core.files.storage import default_storage
 from rest_framework.exceptions import ValidationError
 
@@ -43,12 +45,23 @@ class MediaApiFileMixin:
         """
         Возвращает (file, None) при прямой загрузке
         или (None, path) при загрузке через media_api.
+        Путь проверяется на path traversal — допустимы только пути внутри MEDIA_ROOT.
         """
         file_path = self.request.data.get(f'{field_name}_path')
         if file_path:
-            if not default_storage.exists(file_path):
-                raise ValidationError({field_name: f'Файл не найден: {file_path}'})
-            return None, file_path
+            if not isinstance(file_path, str) or not file_path.strip():
+                raise ValidationError({field_name: 'Недопустимое значение пути к файлу'})
+            normalized = os.path.normpath(file_path.replace('\\', '/').lstrip('/'))
+            if normalized.startswith('..') or os.path.isabs(normalized):
+                raise ValidationError({field_name: 'Недопустимый путь к файлу'})
+            base_location = os.path.realpath(default_storage.location)
+            resolved = os.path.realpath(os.path.join(base_location, normalized))
+            if resolved != base_location and not resolved.startswith(base_location + os.sep):
+                raise ValidationError({field_name: 'Недопустимый путь к файлу'})
+            storage_name = normalized.replace(os.sep, '/')
+            if not default_storage.exists(storage_name):
+                raise ValidationError({field_name: f'Файл не найден: {storage_name}'})
+            return None, storage_name
         return self.request.FILES.get(field_name), None
 
     @staticmethod
