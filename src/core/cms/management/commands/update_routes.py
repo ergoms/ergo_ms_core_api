@@ -8,7 +8,7 @@ from src.core.cms.scripts import extract_paths_from_routes_config
 
 
 class Command(BaseCommand):
-    help = 'Обновляет роуты в базе данных на основе routes-config.json'
+    help = 'Обновляет роуты в базе данных на основе routes.js'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -31,11 +31,11 @@ class Command(BaseCommand):
         )
 
         try:
-            # Извлекаем пути из routes-config.json используя функцию из scripts.py
+            # Извлекаем пути из routes.js используя функцию из scripts.py
             paths_from_config = extract_paths_from_routes_config()
             
             if self.verbose:
-                self.stdout.write(f"📋 Найдено {len(paths_from_config)} путей в routes-config.json")
+                self.stdout.write(f"📋 Найдено {len(paths_from_config)} путей в routes.js")
             
             # Получаем текущие пути из БД
             existing_paths = set(CMSPage.objects.values_list('path', flat=True))

@@ -61,8 +61,6 @@ def remove_middle_name_field_safe(apps, schema_editor):
             except Exception as e:
                 # Если не удалось удалить (старая версия SQLite или поле уже удалено)
                 print(f"[INFO] Не удалось удалить поле {column_name}: {e}. Возможно, поле уже не существует или используется старая версия SQLite.")
-        else:
-            print(f"[INFO] Поле {column_name} не существует в таблице {table_name}. Пропускаем удаление.")
 
 
 def add_middle_name_field_back(apps, schema_editor):
