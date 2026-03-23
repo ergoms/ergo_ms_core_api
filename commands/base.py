@@ -8,7 +8,35 @@ import sys
 
 from typing import Optional
 
-from src.core.utils.auto_api.auto_config import get_env_deploy_type
+
+def _extract_test_module(args: list[str]) -> Optional[str]:
+    """
+    Извлекает имя модуля из аргументов команды test.
+    
+    Примеры:
+        ['modules.crm_remastered.api.tests.TestClass'] -> 'crm_remastered'
+        ['modules.lms.api.tests'] -> 'lms'
+        ['--keepdb', 'modules.tasks.api.tests'] -> 'tasks'
+        ['src.core.utils.tests'] -> None
+    """
+    for arg in args:
+        if arg.startswith('-'):
+            continue
+        if arg.startswith('modules.'):
+            parts = arg.split('.')
+            if len(parts) >= 2:
+                return parts[1]
+    return None
+
+
+def _get_deploy_type() -> str:
+    """Возвращает тип развертывания без загрузки Django."""
+    deploy_type = os.environ.get('API_DEPLOY_TYPE', 'development')
+    if deploy_type == 'development':
+        return 'src.config.patterns.local'
+    elif deploy_type == 'production':
+        return 'src.config.patterns.production'
+    return 'src.config.patterns.local'
 
 
 class PoetryCommand:
@@ -17,10 +45,12 @@ class PoetryCommand:
     poetry_command_name: Optional[str] = None
     django_command_name: Optional[str] = None
     script_command: Optional[str] = None
+    _test_args: list[str] = []
     
     def __init__(self, command_name: Optional[str] = None):
         """Инициализация команды."""
         self.command_name = command_name or self.django_command_name or self.script_command
+        self._test_args = []
 
         if not self.command_name:
             raise ValueError("Не указано имя команды для выполнения.")
@@ -30,7 +60,10 @@ class PoetryCommand:
 
     def run(self, *args) -> int:
         """Выполнение команды."""
-        args_str = " ".join(str(arg) for arg in args if arg)
+        self._test_args = list(args)
+        
+        filtered_args = [arg for arg in args if arg and arg != '--full']
+        args_str = " ".join(str(arg) for arg in filtered_args)
 
         if self.django_command_name:
             return self._run_django(args_str)
@@ -52,8 +85,6 @@ class PoetryCommand:
             if args_str:
                 django_args.extend(args_str.split())
 
-
-            
             print(f"Выполняется Django команда: {' '.join(django_args)}")
             execute_from_command_line(django_args)
             return 0
@@ -96,14 +127,17 @@ class PoetryCommand:
             if project_path not in sys.path:
                 sys.path.insert(0, project_path)
 
+            project_root = os.path.abspath(os.path.join(api_dir, '..', '..'))
+            if project_root not in sys.path:
+                sys.path.insert(0, project_root)
+
             warmup_commands = ('warmup_caches', 'warmup_celery')
             if self.command_name in warmup_commands:
-                project_root = os.path.abspath(os.path.join(api_dir, '..', '..'))
-                if project_root not in sys.path:
-                    sys.path.insert(0, project_root)
                 os.environ['DJANGO_SETTINGS_MODULE'] = 'src.config.patterns.warmup'
+            elif self.command_name == 'test':
+                self._init_test_settings()
             else:
-                deploy_type = get_env_deploy_type()
+                deploy_type = _get_deploy_type()
                 os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
 
             import django
@@ -111,3 +145,22 @@ class PoetryCommand:
                 django.setup()
         except Exception as e:
             print(f"Предупреждение: Не удалось инициализировать Django: {e}")
+
+    def _init_test_settings(self):
+        """Инициализация настроек для команды test."""
+        use_full = '--full' in self._test_args
+        
+        if use_full:
+            os.environ['TEST_FULL_APPS'] = '1'
+            deploy_type = _get_deploy_type()
+            os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
+            return
+        
+        target_module = _extract_test_module(self._test_args)
+        
+        if target_module:
+            os.environ['TEST_TARGET_MODULE'] = target_module
+            os.environ['DJANGO_SETTINGS_MODULE'] = 'src.config.patterns.test'
+        else:
+            deploy_type = _get_deploy_type()
+            os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)

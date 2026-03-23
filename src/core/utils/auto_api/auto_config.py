@@ -253,12 +253,21 @@ class ModuleDiscoverer:
             current_module (str): Текущий модуль.
             urlpatterns (list): Список для добавления найденных URL паттернов.
         """
-        # Сначала проверяем urls.py на текущем уровне
+        from django.conf import settings
+        installed_apps = getattr(settings, 'INSTALLED_APPS', [])
+        
+        app_base = current_module
+        if app_base not in installed_apps:
+            parts = current_module.split('.')
+            if len(parts) >= 3:
+                app_base = '.'.join(parts[:3])
+        
+        if app_base not in installed_apps:
+            return
+        
         urls_py_path = os.path.join(current_dir, 'urls.py')
         if os.path.exists(urls_py_path):
             try:
-                # Вычисляем маршрут на основе текущего модуля
-                # Удаляем 'modules.' из начала и заменяем '.api' на '/'
                 route_parts = current_module.replace('modules.', '').replace('.api', '').split('.')
                 route = '/'.join(route_parts) + '/'
                 

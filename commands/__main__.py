@@ -2,10 +2,37 @@
 Точка входа для выполнения Django команд через Poetry.
 """
 
+import os
 import sys
 import time
 
 _t0 = time.perf_counter()
+
+
+def _setup_test_env_early():
+    """
+    Устанавливает переменные окружения для тестов ДО загрузки настроек Django.
+    Должна вызываться до любых импортов из src.config.
+    """
+    if len(sys.argv) >= 2 and sys.argv[1] == 'test':
+        args = sys.argv[2:]
+        
+        if '--full' in args:
+            os.environ['TEST_FULL_APPS'] = '1'
+            return
+        
+        for arg in args:
+            if arg.startswith('-'):
+                continue
+            if arg.startswith('modules.'):
+                parts = arg.split('.')
+                if len(parts) >= 2:
+                    os.environ['TEST_TARGET_MODULE'] = parts[1]
+                    os.environ['DJANGO_SETTINGS_MODULE'] = 'src.config.patterns.test'
+                    return
+
+
+_setup_test_env_early()
 
 import logging
 from src.core.utils.startup_timing import set_start_time_if_earlier
@@ -21,7 +48,6 @@ from commands.module_add import ModuleAddCommand, ModuleListCommand, ModuleRemov
 
 from src.config.settings.logger import LOGGING
 
-# Настройка логгера
 logger = logging.getLogger('commands')
 formatter = logging.Formatter(
     fmt=LOGGING['formatters']['simple']['format'],
