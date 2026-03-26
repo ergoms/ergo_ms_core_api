@@ -1,4 +1,4 @@
-from src.config.settings.base import BASE_DIR
+from src.config.settings.base import BASE_DIR, SYSTEM_DIR
 from src.config.env import env
 import os
 import sys
@@ -9,8 +9,8 @@ try:
 except ImportError:
     notebook_default_url = '/tree'  # Using Jupyter
 
-# Путь к корневой директории проекта в Jupyter.
-PATH_TO_NOTEBOOK_DIR = BASE_DIR
+# Путь к директории notebooks в корне проекта.
+PATH_TO_NOTEBOOK_DIR = SYSTEM_DIR / 'notebooks'
 
 # Хост сервера jupyter, полученный из переменной окружения.
 API_JUPYTER_HOST = env.str('API_JUPYTER_HOST', default='localhost')
@@ -60,25 +60,20 @@ SHELL_PLUS_PRE_IMPORTS = [
     ('textwrap', ('dedent', 'indent', 'shorten')),
     ('time', ('sleep',)),
     ('urllib.parse', ('quote_plus', 'urlencode', 'urljoin', 'urlparse', 'urlsplit', 'urlunparse')),
+    ('pandas', ('DataFrame', 'Series', 'read_csv', 'read_excel', 'read_json')),
+    ('numpy', ('array', 'arange', 'linspace', 'zeros', 'ones')),
 ]
 
 # Настройки для автоматической инициализации Django в Jupyter
 def setup_django_for_jupyter():
-    """
-    Настройка Django для работы в Jupyter notebooks
-    """
+    """Настройка Django для работы в Jupyter notebooks (ручной вызов из .py скриптов)."""
     import django
-    from django.conf import settings
-    
-    # Добавляем путь к проекту в sys.path
-    project_root = str(BASE_DIR)
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    
-    # Устанавливаем переменную окружения для Django
+
+    for path in [str(SYSTEM_DIR), str(BASE_DIR)]:
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'src.config.patterns.development')
-    
-    # Инициализируем Django
     django.setup()
-    
+
     return django
