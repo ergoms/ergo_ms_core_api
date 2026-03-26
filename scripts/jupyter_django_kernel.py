@@ -31,6 +31,7 @@ def _setup_paths():
 def _setup_django():
     """Инициализирует Django с development-настройками."""
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'src.config.patterns.development')
+    os.environ['DJANGO_ALLOW_ASYNC_UNSAFE'] = 'true'
     import django
     django.setup()
 
