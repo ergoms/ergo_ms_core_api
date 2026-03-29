@@ -11,8 +11,9 @@ from rest_framework.serializers import (
     ListField,
 )
 
-from src.core.cms.adp.models import Role, RoleGroup, UserRole
+from src.core.cms.adp.models import Role, RoleGroup
 from src.core.cms.adp.serializers import RoleSerializer, RoleGroupSerializer
+from .access import user_can_see_menu_item
 from .models import MenuItem, MenuSeparator, MenuAccessLog
 
 
@@ -59,47 +60,40 @@ class MenuItemTreeSerializer(ModelSerializer):
         ]
     
     def get_children(self, obj):
-        # Получаем контекст с информацией о пользователе
         user = self.context.get('user')
         children = obj.children.filter(is_active=True).order_by('order')
-        
+
         if user:
-            # Фильтруем по правам доступа
             children = self._filter_by_access(children, user)
-        
-        return MenuItemTreeSerializer(children, many=True, context=self.context).data
-    
+
+        data = MenuItemTreeSerializer(children, many=True, context=self.context).data
+        return self._prune_empty_folder_nodes(data)
+
+    def _prune_empty_folder_nodes(self, nodes):
+        """Убирает папки без маршрута, у которых не осталось детей после фильтрации."""
+        if not nodes:
+            return []
+        result = []
+        for node in nodes:
+            raw_children = node.get('children') or []
+            if raw_children:
+                raw_children = self._prune_empty_folder_nodes(raw_children)
+            if raw_children:
+                node = dict(node)
+                node['children'] = raw_children
+            route_name = node.get('route_name')
+            if not route_name and not raw_children:
+                continue
+            result.append(node)
+        return result
+
     def _filter_by_access(self, items, user):
-        """Фильтрует элементы меню по правам доступа пользователя"""
-        if user.is_superuser:
-            return items
-        
+        """Фильтрует элементы меню по правам доступа пользователя."""
         filtered_ids = []
         for item in items:
-            # Проверяем admin_only
-            if item.is_admin_only:
-                # Проверяем, является ли пользователь администратором
-                user_role = UserRole.objects.filter(user=user, is_active=True).first()
-                if not user_role or user_role.role.role_type != 'admin':
-                    continue
-            
-            # Проверяем allowed_roles
-            if item.allowed_roles.exists():
-                user_role = UserRole.objects.filter(user=user, is_active=True).first()
-                if not user_role or not item.allowed_roles.filter(id=user_role.role.id).exists():
-                    continue
-            
-            # Проверяем allowed_role_groups
-            if item.allowed_role_groups.exists():
-                user_role = UserRole.objects.filter(user=user, is_active=True).first()
-                if not user_role:
-                    continue
-                user_groups = user_role.role_groups.all()
-                if not item.allowed_role_groups.filter(id__in=user_groups).exists():
-                    continue
-            
-            filtered_ids.append(item.id)
-        
+            if user_can_see_menu_item(item, user):
+                filtered_ids.append(item.id)
+
         return items.filter(id__in=filtered_ids)
 
 
@@ -130,7 +124,7 @@ class MenuItemCreateSerializer(ModelSerializer):
             'name', 'route_name', 'icon', 'item_type',
             'page', 'external_url', 'parent', 'order',
             'is_active', 'is_admin_only', 'allowed_roles',
-            'allowed_role_groups', 'module_source'
+            'allowed_role_groups', 'module_source',
         ]
     
     def validate(self, attrs):
@@ -156,7 +150,7 @@ class MenuItemUpdateSerializer(ModelSerializer):
             'name', 'route_name', 'icon', 'item_type',
             'page', 'external_url', 'parent', 'order',
             'is_active', 'is_admin_only', 'allowed_roles',
-            'allowed_role_groups', 'module_source'
+            'allowed_role_groups', 'module_source',
         ]
 
 

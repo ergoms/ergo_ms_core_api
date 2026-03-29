@@ -11,6 +11,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from src.core.cms.adp.models import UserRole
+from .access import user_can_see_menu_item
 from .models import MenuItem, MenuSeparator, MenuAccessLog
 from .serializers import (
     MenuItemSerializer, MenuItemTreeSerializer, MenuSeparatorSerializer,
@@ -69,14 +70,12 @@ class UserMenuView(BaseMenuAPIView):
             is_active=True
         ).order_by('order')
         
-        # Фильтруем по правам доступа
         filtered_items = self._filter_menu_items(root_items, user)
-        
-        # Сериализуем с контекстом пользователя
+
         items_data = MenuItemTreeSerializer(
-            filtered_items, 
+            filtered_items,
             many=True,
-            context={'user': user}
+            context={'user': user},
         ).data
         
         # Получаем активные разделители
@@ -90,33 +89,11 @@ class UserMenuView(BaseMenuAPIView):
     
     def _filter_menu_items(self, items, user):
         """Фильтрует элементы меню по правам доступа"""
-        if user.is_superuser:
-            return items
-        
-        user_role = UserRole.objects.filter(user=user, is_active=True).first()
         filtered_ids = []
-        
         for item in items:
-            # Проверяем admin_only
-            if item.is_admin_only:
-                if not user_role or user_role.role.role_type != 'admin':
-                    continue
-            
-            # Проверяем allowed_roles (если пусто - доступно всем)
-            if item.allowed_roles.exists():
-                if not user_role or not item.allowed_roles.filter(id=user_role.role.id).exists():
-                    continue
-            
-            # Проверяем allowed_role_groups
-            if item.allowed_role_groups.exists():
-                if not user_role:
-                    continue
-                user_groups = user_role.role_groups.all()
-                if not item.allowed_role_groups.filter(id__in=user_groups.values_list('id', flat=True)).exists():
-                    continue
-            
-            filtered_ids.append(item.id)
-        
+            if user_can_see_menu_item(item, user):
+                filtered_ids.append(item.id)
+
         return items.filter(id__in=filtered_ids)
 
 
