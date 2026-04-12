@@ -69,8 +69,21 @@ class MenuItemTreeSerializer(ModelSerializer):
         data = MenuItemTreeSerializer(children, many=True, context=self.context).data
         return self._prune_empty_folder_nodes(data)
 
+    @staticmethod
+    def _is_leaf_without_route_but_visible(node):
+        """Лист без route_name: offcanvas (page) и external (url) — не пустые папки."""
+        item_type = node.get('item_type')
+        if item_type == 'offcanvas' and node.get('page'):
+            return True
+        if item_type == 'external' and node.get('external_url'):
+            return True
+        return False
+
     def _prune_empty_folder_nodes(self, nodes):
-        """Убирает папки без маршрута, у которых не осталось детей после фильтрации."""
+        """Убирает папки-маршруты без route_name, у которых не осталось детей после фильтрации.
+
+        Не удаляет листья offcanvas/external без route_name — у них навигация через page/url.
+        """
         if not nodes:
             return []
         result = []
@@ -83,6 +96,8 @@ class MenuItemTreeSerializer(ModelSerializer):
                 node['children'] = raw_children
             route_name = node.get('route_name')
             if not route_name and not raw_children:
+                if self._is_leaf_without_route_but_visible(node):
+                    result.append(node)
                 continue
             result.append(node)
         return result
