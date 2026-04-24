@@ -46,6 +46,7 @@ Module Bridge — единый механизм межмодульного вз�
 
 from .bridge import ModuleBridge, bridge
 from .exceptions import BridgeError, DuplicateProvider
+from .isolation import BridgeIsolationError, BridgeIsolationWarning
 from .transports import EventBus, LocalEventBus, LocalTransport, Transport
 
 __all__ = [
@@ -53,6 +54,8 @@ __all__ = [
     'bridge',
     'BridgeError',
     'DuplicateProvider',
+    'BridgeIsolationError',
+    'BridgeIsolationWarning',
     'Transport',
     'EventBus',
     'LocalTransport',

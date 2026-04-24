@@ -24,16 +24,9 @@ from typing import Iterable, Iterator
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-
-ALLOWED_PREFIXES = (
-    'src.core.',
-    'core.',
-    'django',
-    'rest_framework',
-    'drf_yasg',
-    'celery',
-    'channels',
-    'daphne',
+from src.core.integrations.isolation import (
+    ALLOWED_MODULE_PREFIXES as ALLOWED_PREFIXES,
+    find_modules_dir,
 )
 
 
@@ -97,7 +90,7 @@ class Command(BaseCommand):
         root: Path,
         scan_path: str | None,
     ) -> tuple[list[tuple[Path, str]], Path]:
-        modules_dir = self._find_modules_dir(root)
+        modules_dir = find_modules_dir(root)
         if modules_dir is None:
             raise CommandError('Не найдена корневая папка modules/.')
 
@@ -128,18 +121,6 @@ class Command(BaseCommand):
             if candidate.exists():
                 return candidate
         return (project_root / scan_path).resolve()
-
-    @staticmethod
-    def _find_modules_dir(root: Path) -> Path | None:
-        candidate = root
-        for _ in range(6):
-            target = candidate / 'modules'
-            if target.is_dir():
-                return target
-            if candidate.parent == candidate:
-                break
-            candidate = candidate.parent
-        return None
 
     @staticmethod
     def _iter_python_files(start: Path) -> Iterator[Path]:
