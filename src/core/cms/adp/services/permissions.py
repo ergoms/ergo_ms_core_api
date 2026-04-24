@@ -2,46 +2,65 @@
 Сервис для проверки прав доступа пользователей к ресурсам системы.
 """
 import re
+import warnings
+from functools import wraps
 from typing import List, Dict, Optional, Callable
 from django.contrib.auth.models import User
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
+from src.core.integrations import bridge
 
 
-# Реестр хуков для расширения проверки прав модулями
-# Ключ: имя хука, Значение: список callable
-_permission_hooks: Dict[str, List[Callable]] = {
-    'check_module_permission': [],  # Хуки для проверки прав модулей
-}
+PERMISSION_CHECK_EVENT = 'adp.permission_check'
 
 
 def register_permission_hook(hook_name: str, callback: Callable):
     """
-    Зарегистрировать хук для расширения проверки прав.
-    
-    Модули могут регистрировать свои хуки для добавления
-    дополнительной логики проверки прав.
-    
-    Args:
-        hook_name: Имя хука ('check_module_permission')
-        callback: Функция-обработчик
-        
-    Сигнатура callback для 'check_module_permission':
+    DEPRECATED: используйте `bridge.subscribe('adp.permission_check', handler)`.
+
+    Тонкий shim для обратной совместимости со старым API.
+    Поддерживает только hook_name='check_module_permission'.
+
+    Сигнатура callback (старый формат):
         def callback(user, module_name, permission_key, **kwargs) -> Optional[bool]
-        - Возвращает True если доступ разрешён
-        - Возвращает False если доступ запрещён
-        - Возвращает None если хук не применим (продолжить проверку)
+
+    Сигнатура подписчика bridge.subscribe:
+        def handler(*, user, module_name, permission_key, kwargs, **_) -> Optional[bool]
+
+    Адаптер ниже преобразует kwargs из event-формата в старый.
     """
-    if hook_name not in _permission_hooks:
-        _permission_hooks[hook_name] = []
-    
-    if callback not in _permission_hooks[hook_name]:
-        _permission_hooks[hook_name].append(callback)
+    if hook_name != 'check_module_permission':
+        warnings.warn(
+            f"register_permission_hook: unknown hook '{hook_name}', ignored",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return
+
+    warnings.warn(
+        "register_permission_hook is deprecated; "
+        "use bridge.subscribe('adp.permission_check', handler).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    @wraps(callback)
+    def _adapter(*, user, module_name, permission_key, kwargs=None, **_extra):
+        return callback(user, module_name, permission_key, **(kwargs or {}))
+
+    _adapter._wrapped_callback = callback  # type: ignore[attr-defined]
+    bridge.subscribe(PERMISSION_CHECK_EVENT, _adapter)
 
 
 def unregister_permission_hook(hook_name: str, callback: Callable):
-    """Удалить хук из реестра."""
-    if hook_name in _permission_hooks and callback in _permission_hooks[hook_name]:
-        _permission_hooks[hook_name].remove(callback)
+    """DEPRECATED: см. register_permission_hook."""
+    if hook_name != 'check_module_permission':
+        return
+    bus = bridge._event_bus
+    handlers = list(getattr(bus, '_subscribers', {}).get(PERMISSION_CHECK_EVENT, []))
+    for h in handlers:
+        if getattr(h, '_wrapped_callback', None) is callback:
+            bridge.unsubscribe(PERMISSION_CHECK_EVENT, h)
+            break
 
 
 class PermissionService:
@@ -395,18 +414,20 @@ class PermissionService:
         # Администраторы имеют доступ ко всему
         if PermissionService.is_admin(user):
             return True
-        
-        # Вызываем зарегистрированные хуки модулей
-        # Хуки могут добавлять контекстную логику (например, права в организации)
-        for hook in _permission_hooks.get('check_module_permission', []):
-            try:
-                result = hook(user, module_name, permission_key, **kwargs)
-                if result is not None:
-                    return result
-            except Exception:
-                # Игнорируем ошибки в хуках, продолжаем проверку
-                pass
-        
+
+        # Вызываем подписчиков события 'adp.permission_check'.
+        # Подписчики (например, organizations) добавляют контекстную логику.
+        # Первый non-None результат побеждает.
+        contextual = bridge.emit_first(
+            PERMISSION_CHECK_EVENT,
+            user=user,
+            module_name=module_name,
+            permission_key=permission_key,
+            kwargs=kwargs,
+        )
+        if contextual is not None:
+            return contextual
+
         user_role = PermissionService.get_user_role(user)
         if not user_role:
             return False

@@ -5,8 +5,9 @@ import logging
 import pandas as pd
 from celery import shared_task
 from django.db import transaction
-from django.db.models.signals import post_save
 from django.contrib.auth.models import User
+
+from src.core.integrations import bridge
 
 logger = logging.getLogger('celery.core.cms.adp')
 
@@ -37,7 +38,9 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
         self: Task instance (bind=True)
         file_content: Содержимое файла в байтах
         file_name: Имя файла для определения типа
-        skip_welcome_emails: Не отправлять приветственные письма
+        skip_welcome_emails: Подавлять создание LMS UserProfile при массовом импорте
+            (исторически называется так; фактически управляет событием
+            'core.bulk_user_create' на ModuleBridge)
     
     Returns:
         dict: Результаты импорта
@@ -218,14 +221,12 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
                 
                 # Создаём пользователя
                 with transaction.atomic():
-                    # Временно отключаем сигнал для пропуска приветственных писем
+                    # Подавляем создание LMS UserProfile при массовом импорте.
+                    # LMS подписан на 'core.bulk_user_create' через ModuleBridge
+                    # и сам отключает свой post_save-сигнал на время импорта.
                     if skip_welcome_emails:
-                        try:
-                            from modules.lms.api.signals import create_user_profile
-                            post_save.disconnect(create_user_profile, sender=User)
-                        except ImportError:
-                            pass
-                    
+                        bridge.emit('core.bulk_user_create', phase='start')
+
                     try:
                         user = User.objects.create_user(
                             username=username,
@@ -237,11 +238,7 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
                         )
                     finally:
                         if skip_welcome_emails:
-                            try:
-                                from modules.lms.api.signals import create_user_profile
-                                post_save.connect(create_user_profile, sender=User)
-                            except ImportError:
-                                pass
+                            bridge.emit('core.bulk_user_create', phase='end')
                 
                 results['created'] += 1
                 success_msg = f'Строка {index + 2}: создан "{last_name} {first_name}" ({username})'
