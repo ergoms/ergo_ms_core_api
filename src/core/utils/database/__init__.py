@@ -1,4 +1,4 @@
-from .main import QueryExecutor, OrderedDictQueryExecutor
+from .main import DjangoSAExecutor, OrderedDictQueryExecutor, QueryExecutor
 from .base import DBManagerInterface, SqlAlchemyManager
 from .config_manager import (
     BaseDatabaseConfigLoader,
@@ -10,6 +10,7 @@ from .config_manager import (
 __all__ = [
     'QueryExecutor',
     'OrderedDictQueryExecutor',
+    'DjangoSAExecutor',
     'DBManagerInterface',
     'SqlAlchemyManager',
     'BaseDatabaseConfigLoader',
