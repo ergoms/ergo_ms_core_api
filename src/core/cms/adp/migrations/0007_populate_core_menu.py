@@ -25,7 +25,6 @@ def populate_core_menu(apps, schema_editor):
     user_menu = cms.create_group('Личный кабинет', 'User', icon='CircleUserRound', order=0)
     cms.create_routes_batch([
         ('Профиль', 'Account'),
-        ('Безопасность', 'SecuritySettings'),
     ], parent=user_menu)
     
     # Настройки сайта (фиксированный order=10)
