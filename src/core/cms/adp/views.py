@@ -783,9 +783,9 @@ class UserProfileView(BaseAPIViewAuthMixin):
         
         if serializer.is_valid():
             serializer.save()
-            
-            # Возвращаем обновленные данные
-            user_serializer = CMSUserSerializer(request.user)
+
+            user = User.objects.select_related('adp_profile').get(pk=request.user.pk)
+            user_serializer = CMSUserSerializer(user)
             return Response(user_serializer.data, status=status.HTTP_200_OK)
         
         errors = parse_errors_to_dict(serializer.errors)
