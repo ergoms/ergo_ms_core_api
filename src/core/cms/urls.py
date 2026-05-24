@@ -36,6 +36,7 @@ urlpatterns = [
     path('remove_groups_permissions/', RemoveGroupPermission.as_view(), name='remove groups permissions'),
     path('get_permissions_by_category/', GetPermissionsByCategory.as_view(), name='get permissions by category'),
     path('get_user_name/', GetUserName.as_view(), name='get user name'),
+    path('users/<int:user_id>/public-info/', UserPublicInfoView.as_view(), name='user public info'),
     path('patch-all-project-pages', PatchAllProgectPages.as_view(), name='set all pages'),
     path('get-cms-pages', GetCMSPages.as_view(), name='get all pages'),
     path('put-cms-pages', UpdatePageLiminationType.as_view(), name='put all pages'),

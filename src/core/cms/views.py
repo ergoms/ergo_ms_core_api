@@ -24,6 +24,7 @@ from src.core.cms.models import (
     CMSPage,
     CMSPageComponent,
 )
+from src.core.settings.models import UserAvatar
 from src.core.cms.commands import GetUserExpandedPermissions
 from src.core.utils.auto_api.auto_config import ModuleDiscoverer
 
@@ -1267,6 +1268,51 @@ class GetUserName(BaseAPIViewAuthMixin):
             user.username,
             status=status.HTTP_200_OK
         )
+
+
+class UserPublicInfoView(BaseAPIViewAuthMixin):
+    """
+    Возвращает безопасные публичные данные пользователя по ID:
+    имя, фамилию, отчество, полное имя и URL аватара.
+    Используется UserAvatar.vue для рендера инициалов и градиента.
+    """
+
+    @swagger_auto_schema(
+        operation_description="Получение публичных данных пользователя по ID (имя, фамилия, аватар)",
+        responses={
+            200: "Публичные данные пользователя",
+            401: "Пользователь не авторизован",
+            404: "Пользователь не найден",
+        },
+    )
+    def get(self, request: Request, user_id: int):
+        user = User.objects.select_related('avatar').filter(id=user_id).first()
+        if user is None:
+            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        avatar_url = None
+        try:
+            avatar = getattr(user, 'avatar', None)
+            if avatar and avatar.image:
+                avatar_url = avatar.image.url
+        except UserAvatar.DoesNotExist:
+            avatar_url = None
+
+        first_name = (user.first_name or '').strip()
+        last_name = (user.last_name or '').strip()
+        middle_name = (getattr(user, 'middle_name', '') or '').strip()
+
+        full_name = ' '.join(p for p in [last_name, first_name, middle_name] if p) or user.username
+
+        return Response({
+            'user_id': user.id,
+            'username': user.username,
+            'first_name': first_name,
+            'last_name': last_name,
+            'middle_name': middle_name,
+            'full_name': full_name,
+            'avatar_url': avatar_url,
+        }, status=status.HTTP_200_OK)
 
 class GetGroupsByCategory(BaseAPIViewAuthMixin):
     @swagger_auto_schema(

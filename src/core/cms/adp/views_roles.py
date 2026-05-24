@@ -745,6 +745,8 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
                 'username': user.username,
                 'email': user.email or '',
                 'full_name': full_name,
+                'first_name': user.first_name or '',
+                'last_name': user.last_name or '',
                 'date_joined': user.date_joined,
                 'role': role,
                 'role_groups': list(role_groups),

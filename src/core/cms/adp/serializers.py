@@ -343,6 +343,8 @@ class AdminUserRoleInfoSerializer(Serializer):
     username = CharField()
     email = CharField(allow_blank=True)
     full_name = CharField(allow_blank=True)
+    first_name = CharField(allow_blank=True, required=False)
+    last_name = CharField(allow_blank=True, required=False)
     date_joined = DateTimeField(allow_null=True, required=False)
     role = RoleSerializer(allow_null=True)
     role_groups = RoleGroupSerializer(many=True)
