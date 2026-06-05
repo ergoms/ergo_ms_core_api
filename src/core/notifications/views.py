@@ -1,3 +1,7 @@
+from datetime import timedelta
+
+from django.db.models import Q
+from django.utils import timezone
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -36,6 +40,14 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         source_module = self.request.query_params.get('source_module')
         if source_module:
             qs = qs.filter(source_module=source_module)
+
+        if self.request.query_params.get('inbox') == 'sidebar':
+            week_ago = timezone.now() - timedelta(days=7)
+            qs = qs.filter(
+                Q(is_read=False)
+                | Q(is_read=True, read_at__gte=week_ago)
+                | Q(is_read=True, read_at__isnull=True, created_at__gte=week_ago)
+            )
 
         return qs
 
