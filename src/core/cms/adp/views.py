@@ -826,12 +826,15 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
         return Response(security_data, status=status.HTTP_200_OK)
     
     @swagger_auto_schema(
-        operation_description="Обновление настроек безопасности.",
+        operation_description=(
+            "Обновление настроек безопасности. "
+            "Поле email_notifications устарело: управление каналами уведомлений — "
+            "через PATCH /notifications/preferences/ (панель «Уведомления»)."
+        ),
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
                 'two_factor_enabled': openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                'email_notifications': openapi.Schema(type=openapi.TYPE_BOOLEAN),
                 'push_notifications': openapi.Schema(type=openapi.TYPE_BOOLEAN),
                 'sms_notifications': openapi.Schema(type=openapi.TYPE_BOOLEAN),
                 'profile_visibility': openapi.Schema(type=openapi.TYPE_STRING),
@@ -846,15 +849,16 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
     def put(self, request):
         # Создаем профиль если его нет
         profile, created = UserProfile.objects.get_or_create(user=request.user)
-        
-        # Обновляем только переданные поля
-        for field in ['two_factor_enabled', 'email_notifications', 'push_notifications', 
+
+        # email_notifications исключён: источник истины — NotificationPreference
+        # (sentinel-строка '*'/'*'), редактируется через панель «Уведомления».
+        for field in ['two_factor_enabled', 'push_notifications',
                       'sms_notifications', 'profile_visibility']:
             if field in request.data:
                 setattr(profile, field, request.data[field])
-        
+
         profile.save()
-        
+
         return Response({"message": "Настройки безопасности обновлены."}, status=status.HTTP_200_OK)
 
 

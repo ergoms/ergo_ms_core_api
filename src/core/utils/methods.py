@@ -10,6 +10,8 @@ from typing import Dict, Tuple, Optional
 from django.core.mail import send_mail
 from django.conf import settings
 
+from src.core.utils.smtp_errors import format_smtp_error
+
 
 def _normalize_email_for_recipient(email: str) -> str:
     """Удаляет из адреса символы, способные вызвать подмену заголовков (CRLF, управляющие)."""
@@ -76,27 +78,8 @@ def send_confirmation_email(email: str, code: str) -> Tuple[bool, Optional[str]]
         return True, None
         
     except Exception as e:
-        error_str = str(e)
-        error_type = type(e).__name__
-        
-        # Более информативные сообщения об ошибках
-        if "SMTPAuthenticationError" in error_type or "535" in error_str:
-            error_msg = (
-                "Ошибка аутентификации SMTP. Проверьте:\n"
-                "1. Правильность EMAIL_HOST_USER и EMAIL_HOST_PASSWORD в .env\n"
-                "2. Для Gmail/Mail.ru может потребоваться пароль приложения вместо обычного пароля\n"
-                "3. Убедитесь, что EMAIL_USE_TLS настроен правильно"
-            )
-        elif "SMTPConnectError" in error_type or "Connection refused" in error_str:
-            error_msg = (
-                "Не удалось подключиться к SMTP серверу. Проверьте:\n"
-                "1. Правильность EMAIL_HOST и EMAIL_PORT в .env\n"
-                "2. Доступность SMTP сервера"
-            )
-        else:
-            error_msg = f"Ошибка отправки email: {error_str}"
-        
-        logger.error(f"SMTP Error ({error_type}): {error_msg}", exc_info=True)
+        error_msg = format_smtp_error(e)
+        logger.error('SMTP Error (%s): %s', type(e).__name__, error_msg, exc_info=True)
         return False, error_msg
     
 def convert_snake_to_camel(snake_text: str) -> str:

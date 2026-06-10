@@ -70,6 +70,11 @@ class Notification(models.Model):
         verbose_name='Ключ идемпотентности',
     )
     is_read = models.BooleanField(default=False, verbose_name='Прочитано')
+    in_app_visible = models.BooleanField(
+        default=True,
+        verbose_name='Показывать в клиенте',
+        help_text='False — email-only уведомление: запись хранит данные для письма, но не отображается в inbox',
+    )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name='Создано')
     read_at = models.DateTimeField(blank=True, null=True, verbose_name='Прочитано в')
 
@@ -93,3 +98,102 @@ class Notification(models.Model):
 
     def __str__(self):
         return f'[{self.level}] {self.title} -> user_id={self.recipient_id}'
+
+
+class NotificationPreference(models.Model):
+    """Per-event/per-channel предпочтение пользователя.
+
+    Sentinel-строка (source_module='*', event_key='*') — глобальный
+    master-switch канала. Отсутствие записи означает default из каталога
+    событий (bridge.all('notifications.event_definitions')).
+    """
+
+    CHANNEL_IN_APP = 'in_app'
+    CHANNEL_EMAIL = 'email'
+    CHANNEL_CHOICES = (
+        (CHANNEL_IN_APP, 'В клиенте'),
+        (CHANNEL_EMAIL, 'По эл. почте'),
+    )
+
+    GLOBAL_KEY = '*'
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='core_notification_preferences',
+        verbose_name='Пользователь',
+    )
+    source_module = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        verbose_name='Модуль-источник',
+    )
+    event_key = models.CharField(max_length=128, verbose_name='Ключ события')
+    channel = models.CharField(
+        max_length=16,
+        choices=CHANNEL_CHOICES,
+        verbose_name='Канал',
+    )
+    enabled = models.BooleanField(verbose_name='Включено')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
+
+    class Meta:
+        verbose_name = 'Настройка уведомлений'
+        verbose_name_plural = 'Настройки уведомлений'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'source_module', 'event_key', 'channel'],
+                name='uniq_user_event_channel_pref',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'channel'], name='core_notif_pref_user_idx'),
+        ]
+
+    def __str__(self):
+        state = 'on' if self.enabled else 'off'
+        return f'{self.user_id}:{self.source_module}.{self.event_key}[{self.channel}]={state}'
+
+
+class NotificationEmailDelivery(models.Model):
+    """Журнал email-доставки уведомления.
+
+    OneToOne к Notification гарантирует идемпотентность: одно уведомление —
+    максимум одно письмо (получатель у уведомления один).
+    """
+
+    STATUS_PENDING = 'pending'
+    STATUS_SENT = 'sent'
+    STATUS_FAILED = 'failed'
+    STATUS_SKIPPED = 'skipped'
+    STATUS_CHOICES = (
+        (STATUS_PENDING, 'Ожидает'),
+        (STATUS_SENT, 'Отправлено'),
+        (STATUS_FAILED, 'Ошибка'),
+        (STATUS_SKIPPED, 'Пропущено'),
+    )
+
+    notification = models.OneToOneField(
+        Notification,
+        on_delete=models.CASCADE,
+        related_name='email_delivery',
+        verbose_name='Уведомление',
+    )
+    recipient_email = models.EmailField(verbose_name='Email получателя')
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        verbose_name='Статус',
+    )
+    sent_at = models.DateTimeField(blank=True, null=True, verbose_name='Отправлено в')
+    error_message = models.TextField(blank=True, default='', verbose_name='Ошибка')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создано')
+
+    class Meta:
+        verbose_name = 'Email-доставка уведомления'
+        verbose_name_plural = 'Email-доставки уведомлений'
+
+    def __str__(self):
+        return f'email->{self.recipient_email} [{self.status}] notif={self.notification_id}'

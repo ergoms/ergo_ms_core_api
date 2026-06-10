@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from src.core.utils.mixins import SwaggerSafeMixin
 
 from .models import Notification
+from .preferences import PreferencePanelService
 from .serializers import NotificationSerializer
 from .services import NotificationService
 
@@ -30,7 +31,7 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         if self.is_swagger_fake_view():
             return Notification.objects.none()
 
-        qs = Notification.objects.filter(recipient=self.request.user)
+        qs = Notification.objects.filter(recipient=self.request.user, in_app_visible=True)
 
         is_read = self.request.query_params.get('is_read')
         if is_read is not None:
@@ -72,4 +73,24 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             'success': True,
             'updated': updated,
             'unread_count': 0,
+        })
+
+    @action(detail=False, methods=['get', 'patch'], url_path='preferences')
+    def preferences(self, request):
+        """Настройки уведомлений текущего пользователя.
+
+        GET — секции каталога (модули/категории/события) с эффективными
+        значениями каналов + глобальные master-switch.
+        PATCH — batch-изменения: {'global': {channel: bool}, 'items': [
+            {'source_module', 'event_key', 'channel', 'enabled'}]}.
+        """
+        if request.method == 'GET':
+            return Response(PreferencePanelService.build_sections(request.user))
+
+        payload = request.data if isinstance(request.data, dict) else {}
+        updated = PreferencePanelService.apply_patch(request.user, payload)
+        return Response({
+            'success': True,
+            'updated': updated,
+            'global': PreferencePanelService.get_global_switches(request.user.pk),
         })

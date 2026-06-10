@@ -20,6 +20,8 @@ class InAppChannel:
     def deliver(self, notification, *, created: bool) -> None:
         if not created:
             return
+        if not notification.in_app_visible:
+            return
 
         try:
             from ..serializers import NotificationSerializer

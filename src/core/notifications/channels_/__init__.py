@@ -8,10 +8,12 @@
 """
 
 from .base import NotificationChannel
+from .email import EmailChannel
 from .in_app import InAppChannel
 
 _REGISTRY: dict[str, NotificationChannel] = {
     'in_app': InAppChannel(),
+    'email': EmailChannel(),
 }
 
 
@@ -25,4 +27,4 @@ def register_channel(name: str, channel: NotificationChannel, *, override: bool 
     _REGISTRY[name] = channel
 
 
-__all__ = ['NotificationChannel', 'InAppChannel', 'get_channels', 'register_channel']
+__all__ = ['NotificationChannel', 'InAppChannel', 'EmailChannel', 'get_channels', 'register_channel']

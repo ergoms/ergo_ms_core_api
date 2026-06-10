@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from .channels_ import get_channels
 from .models import Notification
+from .preferences import PreferenceResolver
 
 logger = logging.getLogger('core.notifications')
 
@@ -60,6 +61,18 @@ class NotificationService:
             logger.warning('NotificationService.dispatch: пустой/некорректный title')
             return None
 
+        enabled_channels = PreferenceResolver.get_enabled_channels(
+            recipient_id,
+            source_module=source_module or '',
+            event_key=event_key or '',
+        )
+        if not any(enabled_channels.values()):
+            logger.debug(
+                'NotificationService.dispatch: подавлено настройками user=%s %s.%s',
+                recipient_id, source_module, event_key,
+            )
+            return None
+
         defaults = {
             'title': title,
             'body': body or '',
@@ -70,6 +83,8 @@ class NotificationService:
             'link_url': link_url or '',
             'route': route,
             'meta': meta or {},
+            # email-only уведомление хранит данные для письма, но скрыто из inbox
+            'in_app_visible': enabled_channels.get('in_app', True),
         }
 
         if idempotency_key:
@@ -109,11 +124,15 @@ class NotificationService:
 
     @staticmethod
     def mark_all_read(user) -> int:
-        return Notification.objects.filter(recipient=user, is_read=False).update(
+        return Notification.objects.filter(
+            recipient=user, is_read=False, in_app_visible=True,
+        ).update(
             is_read=True,
             read_at=timezone.now(),
         )
 
     @staticmethod
     def unread_count(user) -> int:
-        return Notification.objects.filter(recipient=user, is_read=False).count()
+        return Notification.objects.filter(
+            recipient=user, is_read=False, in_app_visible=True,
+        ).count()
