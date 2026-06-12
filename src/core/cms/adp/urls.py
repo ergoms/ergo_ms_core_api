@@ -33,6 +33,9 @@ from src.core.cms.adp.views_roles import (
     ModulePermissionListView,
     ModulePermissionDetailView,
     AdminUserRoleListView,
+    AdminUserDetailView,
+    AdminUserAvatarView,
+    AdminUserResetPasswordView,
 )
 
 urlpatterns = [
@@ -71,6 +74,13 @@ urlpatterns = [
     path('module-permissions/', ModulePermissionListView.as_view(), name='module_permissions'),
     path('module-permissions/<int:permission_id>/', ModulePermissionDetailView.as_view(), name='module_permission_detail'),
     path('admin-users/', AdminUserRoleListView.as_view(), name='admin_users'),
+    path('admin-users/<int:user_id>/', AdminUserDetailView.as_view(), name='admin_user_detail'),
+    path('admin-users/<int:user_id>/avatar/', AdminUserAvatarView.as_view(), name='admin_user_avatar'),
+    path(
+        'admin-users/<int:user_id>/reset-password/',
+        AdminUserResetPasswordView.as_view(),
+        name='admin_user_reset_password',
+    ),
     path('import-users/', ImportUsersView.as_view(), name='import_users'),
     path('import-users/status/<str:task_id>/', ImportUsersTaskStatusView.as_view(), name='import_users_status'),
     

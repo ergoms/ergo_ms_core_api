@@ -222,6 +222,18 @@ class PermissionService:
             return True
         
         return False
+
+    @staticmethod
+    def can_manage_users_as_global_admin(user: User) -> bool:
+        """Суперпользователь или активная глобальная роль администратора."""
+        if getattr(user, 'is_superuser', False):
+            return True
+        user_role = PermissionService.get_user_role(user)
+        return bool(
+            user_role
+            and user_role.is_active
+            and PermissionService._is_admin_role(user_role.role)
+        )
     
     @staticmethod
     def check_url_access(user: User, url_path: str) -> bool:

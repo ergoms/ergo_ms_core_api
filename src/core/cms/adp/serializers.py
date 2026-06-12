@@ -61,34 +61,68 @@ class UserLoginSerializer(Serializer):
     password = CharField(write_only=True)
 
 
+def validate_new_password_pair(attrs):
+    """Общая валидация пары new_password / confirm_password."""
+    new_password = attrs.get('new_password', '')
+    confirm_password = attrs.get('confirm_password', '')
+
+    if new_password != confirm_password:
+        raise ValidationError('Новый пароль и подтверждение не совпадают.')
+
+    if len(new_password) < 8:
+        raise ValidationError('Пароль должен содержать минимум 8 символов.')
+
+    if not any(c.islower() for c in new_password):
+        raise ValidationError('Пароль должен содержать хотя бы одну букву в нижнем регистре.')
+
+    if not any(c.isdigit() for c in new_password):
+        raise ValidationError('Пароль должен содержать хотя бы одну цифру.')
+
+    return attrs
+
+
 class ChangePasswordSerializer(Serializer):
     current_password = CharField(write_only=True, style={'input_type': 'password'})
     new_password = CharField(write_only=True, style={'input_type': 'password'})
     confirm_password = CharField(write_only=True, style={'input_type': 'password'})
 
     def validate(self, attrs):
-        if attrs['new_password'] != attrs['confirm_password']:
-            raise ValidationError("Новый пароль и подтверждение не совпадают.")
-        
-        # Проверка минимальной длины пароля
-        if len(attrs['new_password']) < 8:
-            raise ValidationError("Пароль должен содержать минимум 8 символов.")
-        
-        # Проверка на наличие хотя бы одной строчной буквы
-        if not any(c.islower() for c in attrs['new_password']):
-            raise ValidationError("Пароль должен содержать хотя бы одну букву в нижнем регистре.")
-        
-        # Проверка на наличие хотя бы одной цифры
-        if not any(c.isdigit() for c in attrs['new_password']):
-            raise ValidationError("Пароль должен содержать хотя бы одну цифру.")
-        
-        return attrs
+        return validate_new_password_pair(attrs)
 
     def validate_current_password(self, value):
         user = self.context['request'].user
         if not authenticate(username=user.username, password=value):
             raise ValidationError("Неверный текущий пароль.")
         return value
+
+
+class AdminResetUserPasswordSerializer(Serializer):
+    new_password = CharField(
+        required=False,
+        allow_blank=True,
+        write_only=True,
+        style={'input_type': 'password'},
+    )
+    confirm_password = CharField(
+        required=False,
+        allow_blank=True,
+        write_only=True,
+        style={'input_type': 'password'},
+    )
+
+    def validate(self, attrs):
+        new_password = (attrs.get('new_password') or '').strip()
+        confirm_password = (attrs.get('confirm_password') or '').strip()
+
+        if not new_password and not confirm_password:
+            return attrs
+
+        if not new_password or not confirm_password:
+            raise ValidationError('Укажите новый пароль и подтверждение.')
+
+        attrs['new_password'] = new_password
+        attrs['confirm_password'] = confirm_password
+        return validate_new_password_pair(attrs)
 
 
 class UserDeviceSerializer(ModelSerializer):
@@ -254,6 +288,14 @@ class RoleGroupSerializer(ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
+class RoleListMinimalSerializer(ModelSerializer):
+    """Минимальный сериализатор роли для списка пользователей (id, name)."""
+
+    class Meta:
+        model = Role
+        fields = ['id', 'name']
+
+
 class RoleGroupMinimalSerializer(ModelSerializer):
     """Минимальный сериализатор для выбора ролевой группы (id, name, parent_role_name)."""
     parent_role_name = CharField(source='parent_role.name', read_only=True)
@@ -261,6 +303,14 @@ class RoleGroupMinimalSerializer(ModelSerializer):
     class Meta:
         model = RoleGroup
         fields = ['id', 'name', 'parent_role_name']
+
+
+class RoleGroupListMinimalSerializer(ModelSerializer):
+    """Минимальный сериализатор ролевой группы для списка пользователей (id, name)."""
+
+    class Meta:
+        model = RoleGroup
+        fields = ['id', 'name']
 
 
 class PolicySerializer(ModelSerializer):
@@ -346,6 +396,6 @@ class AdminUserRoleInfoSerializer(Serializer):
     first_name = CharField(allow_blank=True, required=False)
     last_name = CharField(allow_blank=True, required=False)
     date_joined = DateTimeField(allow_null=True, required=False)
-    role = RoleSerializer(allow_null=True)
-    role_groups = RoleGroupSerializer(many=True)
+    role = RoleListMinimalSerializer(allow_null=True)
+    role_groups = RoleGroupListMinimalSerializer(many=True)
     avatar_url = CharField(allow_blank=True, allow_null=True, required=False)

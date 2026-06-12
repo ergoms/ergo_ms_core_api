@@ -4,14 +4,17 @@ Views для управления ролями, политиками и прав
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from django.contrib.auth.models import User
+from django.db.models import Prefetch, Q
 
 from src.core.settings.models import UserAvatar
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
-from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
+from src.core.utils.mixins import MediaApiFileMixin
+from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission, UserProfile, UserDevice
 from src.core.cms.adp.serializers import (
     RoleSerializer,
     RoleGroupSerializer,
@@ -21,8 +24,163 @@ from src.core.cms.adp.serializers import (
     ModulePermissionSerializer,
     UserPermissionsSerializer,
     AdminUserRoleInfoSerializer,
+    CMSUserSerializer,
+    UpdateUserProfileSerializer,
+    AdminResetUserPasswordSerializer,
 )
 from src.core.cms.adp.services.permissions import PermissionService
+from src.config.settings.auth import IS_DEVELOPMENT
+from src.core.utils.methods import (
+    parse_errors_to_dict,
+    generate_secure_random_password,
+    send_admin_password_reset_notification,
+)
+
+
+ADMIN_FORBIDDEN_MESSAGE = 'Доступ запрещен. Требуются права администратора.'
+
+
+def _admin_user_forbidden_response():
+    return Response(
+        {'error': ADMIN_FORBIDDEN_MESSAGE},
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _require_global_admin(request):
+    if not PermissionService.can_manage_users_as_global_admin(request.user):
+        return _admin_user_forbidden_response()
+    return None
+
+
+def _get_user_avatar_url(user):
+    try:
+        avatar = user.avatar
+    except UserAvatar.DoesNotExist:
+        avatar = None
+    if avatar and avatar.image:
+        return avatar.image.url
+    return None
+
+
+def _revoke_user_auth(user):
+    UserDevice.objects.filter(user=user).update(is_active=False)
+
+    try:
+        from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+
+        for outstanding in OutstandingToken.objects.filter(user=user):
+            BlacklistedToken.objects.get_or_create(token=outstanding)
+    except Exception:
+        pass
+
+
+def _apply_system_password_reset(user):
+    generated_password = generate_secure_random_password()
+    try:
+        user.set_password(generated_password)
+        user.save(update_fields=['password'])
+    finally:
+        del generated_password
+
+
+def _is_manual_password_reset_request(request):
+    if not IS_DEVELOPMENT:
+        return False
+    new_password = (request.data.get('new_password') or '').strip()
+    confirm_password = (request.data.get('confirm_password') or '').strip()
+    return bool(new_password and confirm_password)
+
+
+def _build_admin_user_full_name(user):
+    name_parts = [user.last_name, user.first_name]
+    middle_name = getattr(user, 'middle_name', None)
+    if middle_name:
+        name_parts.append(middle_name)
+    return " ".join(part for part in name_parts if part and str(part).strip()) or user.username
+
+
+def _get_active_user_role_from_prefetch(user):
+    active_roles = getattr(user, '_active_roles', None)
+    return active_roles[0] if active_roles else None
+
+
+def _build_admin_user_list_item(user, user_role=None):
+    if user_role is None:
+        user_role = _get_active_user_role_from_prefetch(user)
+
+    role = user_role.role if user_role else None
+    role_groups = list(user_role.role_groups.all()) if user_role else []
+
+    return {
+        'user_id': user.id,
+        'username': user.username,
+        'email': user.email or '',
+        'full_name': _build_admin_user_full_name(user),
+        'first_name': user.first_name or '',
+        'last_name': user.last_name or '',
+        'date_joined': user.date_joined,
+        'role': role,
+        'role_groups': role_groups,
+        'avatar_url': _get_user_avatar_url(user),
+    }
+
+
+def _parse_admin_users_pagination(request):
+    try:
+        page = max(1, int(request.query_params.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+
+    try:
+        page_size = min(100, max(1, int(request.query_params.get('page_size', 12))))
+    except (TypeError, ValueError):
+        page_size = 12
+
+    search = (request.query_params.get('search') or '').strip()
+    return page, page_size, search
+
+
+def _get_admin_users_queryset(search=''):
+    active_roles_qs = (
+        UserRole.objects
+        .filter(is_active=True)
+        .select_related('role')
+        .prefetch_related('role_groups')
+    )
+
+    users_qs = (
+        User.objects
+        .select_related('avatar')
+        .prefetch_related(
+            Prefetch('user_roles', queryset=active_roles_qs, to_attr='_active_roles')
+        )
+        .order_by('last_name', 'first_name', 'username')
+    )
+
+    if search:
+        users_qs = users_qs.filter(
+            Q(username__icontains=search)
+            | Q(email__icontains=search)
+            | Q(first_name__icontains=search)
+            | Q(last_name__icontains=search)
+        )
+
+    return users_qs
+
+
+def _build_admin_user_detail(user):
+    user_role = PermissionService.get_user_role(user)
+    role = user_role.role if user_role else None
+    role_groups = list(user_role.role_groups.all()) if user_role else []
+
+    data = CMSUserSerializer(user).data
+    data['user_id'] = user.id
+    data['role'] = RoleSerializer(role).data if role else None
+    data['role_groups'] = RoleGroupSerializer(role_groups, many=True).data
+    data['avatar_url'] = _get_user_avatar_url(user)
+    data['password_reset_mode'] = 'manual' if IS_DEVELOPMENT else 'system'
+    return data
 
 
 class RoleListView(BaseAPIViewAuthMixin, BaseAPIView):
@@ -443,11 +601,9 @@ class UserRoleAssignView(BaseAPIViewAuthMixin, BaseAPIView):
     )
     def post(self, request):
         """Назначить роль пользователю"""
-        if not PermissionService.is_admin(request.user):
-            return Response(
-                {'error': 'Доступ запрещен. Требуются права администратора.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
         
         user_id = request.data.get('user_id')
         role_id = request.data.get('role_id')
@@ -708,50 +864,270 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
     permission_classes = [IsAuthenticated]
     
     @swagger_auto_schema(
-        operation_description="Получить список пользователей и их ролей",
+        operation_description=(
+            "Получить список пользователей и их ролей. "
+            "Поддерживает пагинацию (page, page_size) и поиск (search)."
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                'page',
+                openapi.IN_QUERY,
+                description='Номер страницы (по умолчанию 1)',
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+            openapi.Parameter(
+                'page_size',
+                openapi.IN_QUERY,
+                description='Размер страницы (по умолчанию 12, максимум 100)',
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+            openapi.Parameter(
+                'search',
+                openapi.IN_QUERY,
+                description='Поиск по username, email, имени и фамилии',
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+        ],
         responses={200: AdminUserRoleInfoSerializer(many=True)}
     )
     def get(self, request):
-        if not PermissionService.is_admin(request.user):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        page, page_size, search = _parse_admin_users_pagination(request)
+        users_qs = _get_admin_users_queryset(search)
+        total = users_qs.count()
+        offset = (page - 1) * page_size
+        users = list(users_qs[offset:offset + page_size])
+
+        items = [_build_admin_user_list_item(user) for user in users]
+        serializer = AdminUserRoleInfoSerializer(items, many=True)
+
+        return Response({
+            'users': serializer.data,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+        })
+
+
+class AdminUserDetailView(BaseAPIViewAuthMixin, BaseAPIView):
+    """
+    Получение и обновление профиля пользователя администратором.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _get_target_user(self, user_id):
+        try:
+            return User.objects.select_related('adp_profile').get(pk=user_id)
+        except User.DoesNotExist:
+            return None
+
+    @swagger_auto_schema(
+        operation_description="Получить полный профиль пользователя (для админ-панели)",
+        responses={200: CMSUserSerializer()},
+    )
+    def get(self, request, user_id):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        user = self._get_target_user(user_id)
+        if not user:
             return Response(
-                {'error': 'Доступ запрещен. Требуются права администратора.'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
             )
-        
-        users = User.objects.select_related('adp_profile', 'avatar').all().order_by('last_name', 'first_name', 'middle_name', 'username')
-        result = []
 
-        for user in users:
-            user_role = PermissionService.get_user_role(user)
-            role = user_role.role if user_role else None
-            role_groups = user_role.role_groups.all() if user_role else RoleGroup.objects.none()
+        UserProfile.objects.get_or_create(user=user)
+        return Response(_build_admin_user_detail(user), status=status.HTTP_200_OK)
 
-            # Формат: Фамилия Имя Отчество
-            name_parts = [user.last_name, user.first_name]
-            if user.middle_name:
-                name_parts.append(user.middle_name)
-            full_name = " ".join(part for part in name_parts if part and part.strip()) or user.username
+    @swagger_auto_schema(
+        operation_description="Обновить профиль пользователя (для админ-панели)",
+        request_body=UpdateUserProfileSerializer,
+        responses={200: CMSUserSerializer(), 400: 'Ошибка валидации данных.'},
+    )
+    def put(self, request, user_id):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
 
-            try:
-                avatar = user.avatar
-            except UserAvatar.DoesNotExist:
-                avatar = None
-            avatar_url = None
-            if avatar and avatar.image:
-                avatar_url = avatar.image.url
+        user = self._get_target_user(user_id)
+        if not user:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-            serializer = AdminUserRoleInfoSerializer(instance={
-                'user_id': user.id,
-                'username': user.username,
-                'email': user.email or '',
-                'full_name': full_name,
-                'first_name': user.first_name or '',
-                'last_name': user.last_name or '',
-                'date_joined': user.date_joined,
-                'role': role,
-                'role_groups': list(role_groups),
-                'avatar_url': avatar_url,
-            })
-            result.append(serializer.data)
-        
-        return Response({'users': result})
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        serializer = UpdateUserProfileSerializer(profile, data=request.data, partial=True)
+
+        if serializer.is_valid():
+            serializer.save()
+            user = User.objects.select_related('adp_profile').get(pk=user_id)
+            return Response(_build_admin_user_detail(user), status=status.HTTP_200_OK)
+
+        errors = parse_errors_to_dict(serializer.errors)
+        return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AdminUserAvatarView(MediaApiFileMixin, BaseAPIViewAuthMixin, BaseAPIView):
+    """
+    Загрузка и удаление аватара пользователя администратором.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def _get_target_user(self, user_id):
+        try:
+            return User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return None
+
+    @swagger_auto_schema(
+        operation_description="Загрузить или заменить аватар пользователя (для админ-панели)",
+        responses={200: 'Аватар обновлён', 404: 'Пользователь не найден'},
+    )
+    def post(self, request, user_id):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        user = self._get_target_user(user_id)
+        if not user:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        file, file_path = self.get_file_or_path('image')
+        if not file and not file_path:
+            return Response(
+                {'error': 'Файл изображения не передан'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        UserAvatar.objects.filter(user=user).delete()
+        avatar = UserAvatar.objects.create(user=user)
+        if file:
+            avatar.image.save(file.name, file, save=False)
+        elif file_path:
+            self.assign_file_field(avatar, 'image', file_path=file_path)
+        avatar.save()
+
+        return Response(
+            {'avatar_url': _get_user_avatar_url(user)},
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        operation_description="Удалить аватар пользователя (для админ-панели)",
+        responses={204: 'Аватар удалён', 404: 'Пользователь или аватар не найден'},
+    )
+    def delete(self, request, user_id):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        user = self._get_target_user(user_id)
+        if not user:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        avatar = UserAvatar.objects.filter(user=user).first()
+        if avatar:
+            avatar.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        return Response(
+            {'detail': 'Аватар не найден'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+
+class AdminUserResetPasswordView(BaseAPIViewAuthMixin, BaseAPIView):
+    """
+    Сброс пароля пользователя администратором.
+    Production: случайный пароль + уведомление на email.
+    Development: ручная установка пароля при передаче new_password и confirm_password.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _get_target_user(self, user_id):
+        try:
+            return User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return None
+
+    @swagger_auto_schema(
+        operation_description="Сбросить пароль пользователя (админ-панель)",
+        request_body=AdminResetUserPasswordSerializer,
+        responses={200: 'Пароль сброшен или установлен'},
+    )
+    def post(self, request, user_id):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        if request.user.id == user_id:
+            return Response(
+                {'error': 'Нельзя сбросить пароль собственной учётной записи через эту форму.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = self._get_target_user(user_id)
+        if not user:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if _is_manual_password_reset_request(request):
+            serializer = AdminResetUserPasswordSerializer(data=request.data)
+            if not serializer.is_valid():
+                errors = parse_errors_to_dict(serializer.errors)
+                return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+            user.set_password(serializer.validated_data['new_password'])
+            user.save(update_fields=['password'])
+            _revoke_user_auth(user)
+
+            return Response(
+                {
+                    'message': 'Пароль установлен.',
+                    'mode': 'manual',
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        email = (user.email or '').strip()
+
+        _apply_system_password_reset(user)
+        _revoke_user_auth(user)
+
+        email_sent = False
+        email_error = None
+        if email:
+            email_sent, email_error = send_admin_password_reset_notification(email)
+        else:
+            email_error = 'У пользователя не указан email — уведомление не отправлено.'
+
+        response_data = {
+            'message': 'Пароль сброшен.',
+            'mode': 'system',
+            'email_sent': email_sent,
+        }
+        if email_sent:
+            response_data['message'] = 'Пароль сброшен. Пользователю отправлено уведомление.'
+        else:
+            response_data['warning'] = (
+                email_error or 'Не удалось отправить уведомление на email пользователя.'
+            )
+
+        return Response(response_data, status=status.HTTP_200_OK)
