@@ -2,6 +2,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.serializers import ValidationError as DRFValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from drf_yasg.utils import swagger_auto_schema
@@ -33,6 +34,7 @@ from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
 from django.contrib.auth.models import User
 import logging
 
+from src.core.cms.adp.password_policy import validate_new_password_pair
 from src.core.utils.database.main import OrderedDictQueryExecutor
 from src.config.settings.auth import get_token_lifetime
 
@@ -207,18 +209,23 @@ class ResetPasswordView(BaseAPIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Проверяем совпадение паролей
-        if new_password != confirm_password:
+        try:
+            validate_new_password_pair({
+                'new_password': new_password,
+                'confirm_password': confirm_password,
+            })
+        except DRFValidationError as exc:
+            detail = exc.detail
+            if isinstance(detail, list):
+                error_message = str(detail[0])
+            elif isinstance(detail, dict):
+                first_value = next(iter(detail.values()))
+                error_message = str(first_value[0] if isinstance(first_value, list) else first_value)
+            else:
+                error_message = str(detail)
             return Response(
-                {"error": "Пароли не совпадают"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Проверяем минимальную длину пароля
-        if len(new_password) < 8:
-            return Response(
-                {"error": "Пароль должен быть не менее 8 символов"}, 
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': error_message},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Проверяем код подтверждения

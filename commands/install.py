@@ -6,6 +6,7 @@
     api install --force    — принудительно переустановить зависимости модулей
 """
 
+import ast
 import os
 import re
 import shutil
@@ -14,15 +15,19 @@ import sys
 import tempfile
 import tomllib
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from commands.base import PoetryCommand
+
+_CORE_LOCK_GROUPS = frozenset({"main"})
+_PIP_BATCH_SIZE = 40
 
 
 class InstallCommand(PoetryCommand):
     """
     Устанавливает зависимости ядра через poetry install, затем сканирует
-    pyproject.toml всех модулей и доустанавливает недостающие пакеты.
+    pyproject.toml всех модулей и доустанавливает недостающие пакеты через pip
+    с constraints из poetry.lock ядра (main), чтобы не «перебивать» версии ядра.
     Корневой pyproject.toml при этом не изменяется.
     """
 
@@ -37,13 +42,11 @@ class InstallCommand(PoetryCommand):
             print("Ошибка: не удалось найти корневой pyproject.toml.")
             return 1
 
-        # ── 1. Устанавливаем ядро ────────────────────────────────────────
-        print("─── Установка зависимостей ядра...")
+        print("─── Установка зависимостей ядра (main)...")
         rc = self._install_core(project_root)
         if rc != 0:
             return rc
 
-        # ── 2. Собираем зависимости модулей ──────────────────────────────
         root_data = self._read_toml(project_root / "pyproject.toml")
         if root_data is None:
             return 1
@@ -72,65 +75,185 @@ class InstallCommand(PoetryCommand):
             print("─── Все зависимости модулей уже установлены.")
             return 0
 
-        # ── 3. Устанавливаем зависимости модулей ─────────────────────────
         print(f"\n─── Установка {len(missing)} пакетов из модулей: {', '.join(sorted(missing))}")
 
         if force:
             self._uninstall_packages(list(missing.keys()))
 
-        return self._install_via_poetry(project_root, root_data, missing)
+        rc = self._install_module_packages(project_root, root_data, missing)
+        if rc != 0:
+            return rc
 
-    # ------------------------------------------------------------------ #
-    # Шаг 1: установка ядра                                               #
-    # ------------------------------------------------------------------ #
+        print("─── Синхронизация версий пакетов ядра (main)...")
+        return self._sync_main_lock_versions(project_root)
 
     def _install_core(self, project_root: Path) -> int:
         env = os.environ.copy()
         env["POETRY_VIRTUALENVS_CREATE"] = "false"
         result = subprocess.run(
-            ["poetry", "install", "--no-root", "--directory", str(project_root)],
+            [
+                "poetry",
+                "install",
+                "--no-root",
+                "--only",
+                "main",
+                "--directory",
+                str(project_root),
+            ],
             cwd=str(project_root),
             env=env,
         )
         return result.returncode
 
-    # ------------------------------------------------------------------ #
-    # Шаг 3: установка через временный pyproject.toml                     #
-    # ------------------------------------------------------------------ #
-
-    def _install_via_poetry(
-        self, project_root: Path, root_data: dict, merged_deps: dict
+    def _install_module_packages(
+        self, project_root: Path, root_data: dict, module_deps: dict
     ) -> int:
+        lock_path = project_root / "poetry.lock"
+        main_versions = self._parse_poetry_lock(lock_path, groups=_CORE_LOCK_GROUPS)
+        if not main_versions:
+            print("Предупреждение: poetry.lock ядра не найден или пуст — constraints не применены.")
+
         all_sources = self._collect_all_sources(project_root, root_data)
+        requirements = [
+            self._to_pip_requirement(pkg, constraint, project_root)
+            for pkg, constraint in sorted(module_deps.items())
+        ]
+        extra_index_urls = self._collect_extra_index_urls(module_deps, all_sources)
+
         tmp_dir = Path(tempfile.mkdtemp(prefix="ergo_install_"))
         try:
-            toml_content = self._build_merged_toml(root_data, merged_deps, project_root, all_sources)
-            (tmp_dir / "pyproject.toml").write_text(toml_content, encoding="utf-8")
+            constraints_path = tmp_dir / "core_constraints.txt"
+            if main_versions:
+                constraints_path.write_text(
+                    "\n".join(f"{name}=={version}" for name, version in sorted(main_versions.items()))
+                    + "\n",
+                    encoding="utf-8",
+                )
 
-            lock_src = project_root / "poetry.lock"
-            if lock_src.exists():
-                shutil.copy2(lock_src, tmp_dir / "poetry.lock")
+            cmd: List[str] = [sys.executable, "-m", "pip", "install"]
+            for url in extra_index_urls:
+                cmd.extend(["--extra-index-url", url])
+            if main_versions:
+                cmd.extend(["-c", str(constraints_path)])
+            cmd.extend(requirements)
 
-            env = os.environ.copy()
-            env["POETRY_VIRTUALENVS_CREATE"] = "false"
-
-            print("Обновление poetry.lock для новых пакетов...")
-            lock_result = subprocess.run(
-                ["poetry", "lock", "--directory", str(tmp_dir)],
-                cwd=str(project_root),
-                env=env,
-            )
-            if lock_result.returncode != 0:
-                return lock_result.returncode
-
-            result = subprocess.run(
-                ["poetry", "install", "--no-root", "--directory", str(tmp_dir)],
-                cwd=str(project_root),
-                env=env,
-            )
+            print("Установка модульных пакетов через pip (с constraints poetry.lock ядра)...")
+            result = subprocess.run(cmd, cwd=str(project_root))
             return result.returncode
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _sync_main_lock_versions(self, project_root: Path) -> int:
+        main_versions = self._parse_poetry_lock(
+            project_root / "poetry.lock",
+            groups=_CORE_LOCK_GROUPS,
+        )
+        if not main_versions:
+            return 0
+
+        specs = [f"{name}=={version}" for name, version in sorted(main_versions.items())]
+        for i in range(0, len(specs), _PIP_BATCH_SIZE):
+            batch = specs[i : i + _PIP_BATCH_SIZE]
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", *batch],
+                cwd=str(project_root),
+            )
+            if result.returncode != 0:
+                return result.returncode
+        return 0
+
+    def _parse_poetry_lock(
+        self, lock_path: Path, groups: Optional[frozenset] = None
+    ) -> Dict[str, str]:
+        if not lock_path.exists():
+            return {}
+
+        versions: Dict[str, str] = {}
+        current_name: Optional[str] = None
+        current_version: Optional[str] = None
+        current_groups: List[str] = []
+
+        def _flush() -> None:
+            nonlocal current_name, current_version, current_groups
+            if not current_name or not current_version:
+                return
+            if groups is None or any(group in groups for group in current_groups):
+                versions[current_name] = current_version
+            current_name = None
+            current_version = None
+            current_groups = []
+
+        for line in lock_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped == "[[package]]":
+                _flush()
+                continue
+            if stripped.startswith("name = "):
+                current_name = stripped.split("=", 1)[1].strip().strip('"')
+            elif stripped.startswith("version = "):
+                current_version = stripped.split("=", 1)[1].strip().strip('"')
+            elif stripped.startswith("groups = "):
+                try:
+                    current_groups = ast.literal_eval(stripped.split("=", 1)[1].strip())
+                except (SyntaxError, ValueError):
+                    current_groups = []
+
+        _flush()
+        return versions
+
+    def _to_pip_requirement(self, pkg: str, constraint: Any, project_root: Path) -> str:
+        del project_root
+        if isinstance(constraint, str):
+            return f"{pkg}{self._pep508_version(constraint)}"
+        if isinstance(constraint, dict):
+            version = constraint.get("version", "")
+            if version:
+                return f"{pkg}{self._pep508_version(version)}"
+        return pkg
+
+    def _pep508_version(self, constraint: str) -> str:
+        value = constraint.strip()
+        if not value:
+            return ""
+
+        if value.startswith("^"):
+            base = value[1:]
+            major = int(base.split(".", 1)[0])
+            if major == 0:
+                parts = base.split(".")
+                minor = int(parts[1]) if len(parts) > 1 else 0
+                return f">={base},<0.{minor + 1}.0"
+            return f">={base},<{major + 1}.0.0"
+
+        if value.startswith("~"):
+            base = value[1:]
+            parts = base.split(".")
+            if len(parts) >= 2:
+                return f">={base},<{parts[0]}.{int(parts[1]) + 1}.0"
+            return f">={base}"
+
+        if re.match(r"^[<>=!~]", value):
+            return value
+
+        return f"=={value}"
+
+    def _collect_extra_index_urls(
+        self, module_deps: dict, all_sources: List[dict]
+    ) -> List[str]:
+        source_urls = {source["name"]: source["url"] for source in all_sources}
+        urls: List[str] = []
+        seen: Set[str] = set()
+        for constraint in module_deps.values():
+            if not isinstance(constraint, dict):
+                continue
+            source_name = constraint.get("source")
+            if not source_name:
+                continue
+            url = source_urls.get(source_name)
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+        return urls
 
     def _uninstall_packages(self, packages: List[str]) -> None:
         print(f"Удаление {len(packages)} пакетов перед переустановкой...")
@@ -138,18 +261,14 @@ class InstallCommand(PoetryCommand):
             [sys.executable, "-m", "pip", "uninstall", "-y", *packages],
         )
 
-    # ------------------------------------------------------------------ #
-    # Чтение / сканирование                                               #
-    # ------------------------------------------------------------------ #
-
     def _find_project_root(self) -> Optional[Path]:
         candidates = [
             Path(os.getcwd()),
             Path(__file__).resolve().parent.parent.parent.parent,
         ]
-        for c in candidates:
-            if (c / "pyproject.toml").exists():
-                return c
+        for candidate in candidates:
+            if (candidate / "pyproject.toml").exists():
+                return candidate
         return None
 
     def _read_toml(self, path: Path) -> Optional[dict]:
@@ -198,10 +317,6 @@ class InstallCommand(PoetryCommand):
                     seen.setdefault(source["name"], source)
         return list(seen.values())
 
-    # ------------------------------------------------------------------ #
-    # Слияние зависимостей                                                #
-    # ------------------------------------------------------------------ #
-
     def _merge_dependencies(
         self,
         root_data: dict,
@@ -236,85 +351,7 @@ class InstallCommand(PoetryCommand):
             return a
 
     def _lower_ver(self, constraint: str) -> tuple:
-        m = re.search(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", constraint)
-        if m:
-            return tuple(int(x or 0) for x in m.groups())
+        match = re.search(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", constraint)
+        if match:
+            return tuple(int(part or 0) for part in match.groups())
         return (0, 0, 0)
-
-    # ------------------------------------------------------------------ #
-    # Построение временного pyproject.toml                                #
-    # ------------------------------------------------------------------ #
-
-    def _build_merged_toml(
-        self,
-        root_data: dict,
-        module_only_deps: dict,
-        project_root: Path,
-        extra_sources: Optional[List[dict]] = None,
-    ) -> str:
-        """
-        Строит минимальный временный pyproject.toml только с зависимостями модулей.
-        Корневые зависимости (включая path-пакеты django/drf) сюда не включаются —
-        они уже установлены шагом poetry install для ядра.
-        """
-        poetry_section = root_data.get("tool", {}).get("poetry", {})
-        sources: list = extra_sources if extra_sources is not None else []
-        build_system: dict = root_data.get("build-system", {})
-
-        lines: List[str] = []
-        lines.append("[tool.poetry]")
-        lines.append('name = "ergo_ms_modules"')
-        lines.append('version = "0.1.0"')
-        lines.append("")
-
-        for source in sources:
-            lines.append("[[tool.poetry.source]]")
-            for k, v in source.items():
-                lines.append(f'{k} = "{v}"')
-            lines.append("")
-
-        python_constraint = (
-            root_data.get("tool", {})
-            .get("poetry", {})
-            .get("dependencies", {})
-            .get("python", ">=3.12,<3.13")
-        )
-        lines.append("[tool.poetry.dependencies]")
-        lines.append(f'python = "{python_constraint}"')
-        for pkg, constraint in sorted(module_only_deps.items()):
-            if pkg == "python":
-                continue
-            lines.append(f"{pkg} = {self._format_constraint(constraint, project_root)}")
-        lines.append("")
-
-        if build_system:
-            lines.append("[build-system]")
-            requires = build_system.get("requires", [])
-            if requires:
-                req_str = ", ".join(f'"{r}"' for r in requires)
-                lines.append(f"requires = [{req_str}]")
-            if "build-backend" in build_system:
-                lines.append(f'build-backend = "{build_system["build-backend"]}"')
-
-        return "\n".join(lines) + "\n"
-
-    def _format_constraint(self, constraint: Any, project_root: Path) -> str:
-        if isinstance(constraint, str):
-            return f'"{constraint}"'
-        if isinstance(constraint, dict):
-            parts: List[str] = []
-            for k, v in constraint.items():
-                if k == "path":
-                    abs_path = (project_root / v).resolve().as_posix()
-                    parts.append(f'path = "{abs_path}"')
-                elif k == "extras":
-                    ext_str = ", ".join(f'"{e}"' for e in v)
-                    parts.append(f"extras = [{ext_str}]")
-                elif isinstance(v, bool):
-                    parts.append(f"{k} = {'true' if v else 'false'}")
-                elif isinstance(v, str):
-                    parts.append(f'{k} = "{v}"')
-                else:
-                    parts.append(f"{k} = {v}")
-            return "{" + ", ".join(parts) + "}"
-        return str(constraint)

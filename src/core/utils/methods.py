@@ -92,23 +92,31 @@ def send_confirmation_email(email: str, code: str) -> Tuple[bool, Optional[str]]
 
 def generate_secure_random_password(length: int = 16, max_attempts: int = 50) -> str:
     """Генерирует пароль, проходящий AUTH_PASSWORD_VALIDATORS и правила ADP."""
-    if length < 8:
-        length = 8
+    min_length = getattr(settings, 'PASSWORD_MIN_LENGTH', 8)
+    if length < min_length:
+        length = min_length
 
     alphabet = string.ascii_letters + string.digits + '!@#$%&*-_=+'
     rng = secrets.SystemRandom()
 
     for _ in range(max_attempts):
-        chars = [
-            rng.choice(string.ascii_lowercase),
-            rng.choice(string.digits),
-        ]
+        chars = []
+        if getattr(settings, 'PASSWORD_REQUIRE_LOWERCASE', True):
+            chars.append(rng.choice(string.ascii_lowercase))
+        if getattr(settings, 'PASSWORD_REQUIRE_UPPERCASE', False):
+            chars.append(rng.choice(string.ascii_uppercase))
+        if getattr(settings, 'PASSWORD_REQUIRE_DIGIT', True):
+            chars.append(rng.choice(string.digits))
+        if getattr(settings, 'PASSWORD_REQUIRE_SPECIAL', False):
+            chars.append(rng.choice('!@#$%&*-_=+'))
+        if not chars:
+            chars.append(rng.choice(string.ascii_lowercase))
         chars.extend(rng.choice(alphabet) for _ in range(length - len(chars)))
         rng.shuffle(chars)
         candidate = ''.join(chars)
         try:
             password_validation.validate_password(candidate)
-            from src.core.cms.adp.serializers import validate_new_password_pair
+            from src.core.cms.adp.password_policy import validate_new_password_pair
 
             validate_new_password_pair({
                 'new_password': candidate,

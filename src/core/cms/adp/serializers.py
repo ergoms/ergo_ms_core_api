@@ -12,9 +12,11 @@ from rest_framework.serializers import (
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
 from src.core.cms.adp.models import (
-    UserDevice, UserProfile, Role, RoleGroup, 
-    Policy, UserRole, ModulePermission
+    UserDevice, UserProfile, Role, RoleGroup,
+    Policy, UserRole, ModulePermission,
 )
+from src.core.cms.adp.password_policy import validate_new_password_pair, validate_password_value
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 class UserRegistrationValidationSerializer(Serializer):
     first_name = CharField(required=True)
@@ -35,13 +37,20 @@ class UserRegistrationValidationSerializer(Serializer):
 
 class UserRegistrationSerializer(ModelSerializer):
     password = CharField(
-        write_only=True, 
-        style={'input_type': 'password'}
+        write_only=True,
+        style={'input_type': 'password'},
     )
 
     class Meta:
         model = User
         fields = ['first_name', 'last_name', 'middle_name', 'username', 'email', 'password']
+
+    def validate_password(self, value):
+        try:
+            validate_password_value(value)
+        except DjangoValidationError as exc:
+            raise ValidationError(list(exc.messages))
+        return value
 
     def create(self, validated_data):
         user = User.objects.create_user(
@@ -59,26 +68,6 @@ class UserRegistrationSerializer(ModelSerializer):
 class UserLoginSerializer(Serializer):
     username = CharField(max_length=150)
     password = CharField(write_only=True)
-
-
-def validate_new_password_pair(attrs):
-    """Общая валидация пары new_password / confirm_password."""
-    new_password = attrs.get('new_password', '')
-    confirm_password = attrs.get('confirm_password', '')
-
-    if new_password != confirm_password:
-        raise ValidationError('Новый пароль и подтверждение не совпадают.')
-
-    if len(new_password) < 8:
-        raise ValidationError('Пароль должен содержать минимум 8 символов.')
-
-    if not any(c.islower() for c in new_password):
-        raise ValidationError('Пароль должен содержать хотя бы одну букву в нижнем регистре.')
-
-    if not any(c.isdigit() for c in new_password):
-        raise ValidationError('Пароль должен содержать хотя бы одну цифру.')
-
-    return attrs
 
 
 class ChangePasswordSerializer(Serializer):

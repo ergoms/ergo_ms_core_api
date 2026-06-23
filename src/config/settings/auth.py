@@ -17,22 +17,6 @@ from django.conf import settings
 
 from src.config.env import env
 
-# Список валидаторов паролей, используемых для проверки паролей пользователей.
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
-]
-
 # Настройка ограничения запросов для анонимных и аутентифицированных пользователей.
 THROTTLE_RATES_ANON = env.str('API_THROTTLE_RATES_ANON', default='10/minute')
 THROTTLE_RATES_USER = env.str('API_THROTTLE_RATES_USER', default='5000/hour')
@@ -61,23 +45,30 @@ ACCESS_TOKEN_LIFETIME = env.int('API_ACCESS_TOKEN_LIFETIME', default=30)
 REFRESH_TOKEN_LIFETIME = env.int('API_REFRESH_TOKEN_LIFETIME', default=1440)
 
 # Настройка времени жизни токенов для режима "Запомнить меня" (в минутах).
-# По умолчанию: 7 дней для access, 30 дней для refresh
-REMEMBER_ME_ACCESS_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_ACCESS_TOKEN_LIFETIME', default=10080)
-REMEMBER_ME_REFRESH_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_REFRESH_TOKEN_LIFETIME', default=43200)
+# По умолчанию: 3 дня для access, 7 дней для refresh
+REMEMBER_ME_ACCESS_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_ACCESS_TOKEN_LIFETIME', default=4320)
+REMEMBER_ME_REFRESH_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_REFRESH_TOKEN_LIFETIME', default=10080)
 
-# Тип развертывания: development или production
-# В development режиме токены имеют увеличенное время жизни (365 дней)
+# Тип развертывания (используется в других частях API, не влияет на JWT)
 DEPLOY_TYPE = env.str('API_DEPLOY_TYPE', default='production')
 IS_DEVELOPMENT = DEPLOY_TYPE == 'development'
 
-# Время жизни токенов в dev режиме (365 дней в минутах)
-DEV_ACCESS_TOKEN_LIFETIME = 525600
-DEV_REFRESH_TOKEN_LIFETIME = 525600
+# Ограничение срока жизни JWT (true/false, не зависит от API_DEPLOY_TYPE).
+# true  — используются API_ACCESS_TOKEN_LIFETIME и API_REFRESH_TOKEN_LIFETIME
+# false — срок жизни не ограничивается (значения lifetime игнорируются)
+JWT_LIFETIME_ENABLED = env.bool('API_JWT_LIFETIME_ENABLED', default=True)
+
+# Внутреннее значение при JWT_LIFETIME_ENABLED=false (JWT требует claim exp)
+JWT_NO_EXPIRY_LIFETIME_MINUTES = 5256000
 
 # Конфигурация JWT-аутентификации.
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=ACCESS_TOKEN_LIFETIME),
-    'REFRESH_TOKEN_LIFETIME': timedelta(minutes=REFRESH_TOKEN_LIFETIME),
+    'ACCESS_TOKEN_LIFETIME': timedelta(
+        minutes=ACCESS_TOKEN_LIFETIME if JWT_LIFETIME_ENABLED else JWT_NO_EXPIRY_LIFETIME_MINUTES,
+    ),
+    'REFRESH_TOKEN_LIFETIME': timedelta(
+        minutes=REFRESH_TOKEN_LIFETIME if JWT_LIFETIME_ENABLED else JWT_NO_EXPIRY_LIFETIME_MINUTES,
+    ),
     'ROTATE_REFRESH_TOKENS': False,
     'BLACKLIST_AFTER_ROTATION': True,
     'ALGORITHM': 'HS256',
@@ -93,30 +84,25 @@ SIMPLE_JWT = {
 
 def get_token_lifetime(remember_me: bool = False) -> tuple:
     """
-    Возвращает время жизни access и refresh токенов в зависимости от:
-    - Режима развертывания (API_DEPLOY_TYPE: development/production)
-    - Флага "Запомнить меня"
-    
+    Возвращает время жизни access и refresh токенов.
+
+    При API_JWT_LIFETIME_ENABLED=false срок не ограничивается.
+    При true — стандартные значения или remember_me.
+
     Returns:
         tuple: (access_lifetime, refresh_lifetime) в виде timedelta
     """
-    
-    if IS_DEVELOPMENT:
-        # В development режиме используем увеличенное время жизни (365 дней)
-        return (
-            timedelta(minutes=DEV_ACCESS_TOKEN_LIFETIME),
-            timedelta(minutes=DEV_REFRESH_TOKEN_LIFETIME)
-        )
-    
+    if not JWT_LIFETIME_ENABLED:
+        no_expiry = timedelta(minutes=JWT_NO_EXPIRY_LIFETIME_MINUTES)
+        return no_expiry, no_expiry
+
     if remember_me:
-        # В production режиме с "Запомнить меня" используем увеличенное время
         return (
             timedelta(minutes=REMEMBER_ME_ACCESS_TOKEN_LIFETIME),
-            timedelta(minutes=REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
+            timedelta(minutes=REMEMBER_ME_REFRESH_TOKEN_LIFETIME),
         )
-    
-    # Стандартное время жизни токенов
+
     return (
         timedelta(minutes=ACCESS_TOKEN_LIFETIME),
-        timedelta(minutes=REFRESH_TOKEN_LIFETIME)
+        timedelta(minutes=REFRESH_TOKEN_LIFETIME),
     )
