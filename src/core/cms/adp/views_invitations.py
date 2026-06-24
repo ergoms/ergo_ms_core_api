@@ -16,6 +16,7 @@ from src.core.cms.adp.serializers import (
     CreateRegistrationInvitationSerializer,
     BulkCreateRegistrationInvitationsSerializer,
     BulkSendRegistrationInvitationsSerializer,
+    ClearRegistrationInvitationsSerializer,
     ValidateInvitationSerializer,
 )
 from src.core.cms.adp.services.registration import RegistrationService
@@ -112,15 +113,20 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
             )
 
         total = queryset.count()
+        total_all = RegistrationInvitation.objects.count()
         offset = (page - 1) * page_size
         invitations = list(queryset[offset:offset + page_size])
         serializer = RegistrationInvitationSerializer(invitations, many=True)
 
+        inactive_count = RegistrationService.get_inactive_invitations_queryset().count()
+
         return Response({
             'invitations': serializer.data,
             'total': total,
+            'total_all': total_all,
             'page': page,
             'page_size': page_size,
+            'inactive_count': inactive_count,
             'registration_mode': RegistrationService.get_mode(),
         })
 
@@ -242,6 +248,44 @@ class RegistrationInvitationBulkCreateView(BaseAPIViewAuthMixin, BaseAPIView):
             send_email=serializer.validated_data.get('send_email', False),
         )
         return Response(result, status=status.HTTP_201_CREATED)
+
+
+class RegistrationInvitationClearView(BaseAPIViewAuthMixin, BaseAPIView):
+    """Массовая очистка приглашений (только глобальные администраторы)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description='Удалить приглашения: inactive — использованные, истёкшие и отозванные; all — все записи',
+        request_body=ClearRegistrationInvitationsSerializer,
+        responses={200: 'Количество удалённых записей'},
+    )
+    def post(self, request):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        serializer = ClearRegistrationInvitationsSerializer(data=request.data or {})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        scope = serializer.validated_data.get(
+            'scope',
+            ClearRegistrationInvitationsSerializer.SCOPE_INACTIVE,
+        )
+        result = RegistrationService.clear_invitations(scope=scope)
+
+        if result.get('error'):
+            return Response({'error': result['error']}, status=status.HTTP_400_BAD_REQUEST)
+
+        if result['deleted'] == 0:
+            return Response({
+                'deleted': 0,
+                'scope': scope,
+                'message': 'Нет приглашений для удаления',
+            })
+
+        return Response(result)
 
 
 class RegistrationInvitationBulkSendView(BaseAPIViewAuthMixin, BaseAPIView):

@@ -8,6 +8,7 @@ from rest_framework.serializers import (
     SerializerMethodField,
     DateTimeField,
     BooleanField,
+    ChoiceField,
 )
 
 from django.contrib.auth.models import User
@@ -477,6 +478,17 @@ class BulkCreateRegistrationInvitationsSerializer(Serializer):
 
 class BulkSendRegistrationInvitationsSerializer(Serializer):
     invitation_ids = ListField(child=IntegerField(), allow_empty=False, max_length=500)
+
+
+class ClearRegistrationInvitationsSerializer(Serializer):
+    SCOPE_INACTIVE = 'inactive'
+    SCOPE_ALL = 'all'
+
+    scope = ChoiceField(
+        choices=[(SCOPE_INACTIVE, 'inactive'), (SCOPE_ALL, 'all')],
+        default=SCOPE_INACTIVE,
+        required=False,
+    )
 
 
 class ValidateInvitationSerializer(Serializer):

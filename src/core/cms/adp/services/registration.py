@@ -11,6 +11,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from src.core.cms.adp.models import RegistrationInvitation
@@ -175,6 +176,34 @@ class RegistrationService:
         invitation.is_revoked = True
         invitation.save(update_fields=['is_revoked'])
         return True, None
+
+    @staticmethod
+    def get_inactive_invitations_queryset():
+        now = timezone.now()
+        return RegistrationInvitation.objects.filter(
+            Q(used_at__isnull=False)
+            | Q(is_revoked=True)
+            | Q(expires_at__lte=now)
+        )
+
+    @staticmethod
+    def count_invitations_by_scope(scope: str = 'all') -> int:
+        if scope == 'inactive':
+            return RegistrationService.get_inactive_invitations_queryset().count()
+        return RegistrationInvitation.objects.count()
+
+    @staticmethod
+    @transaction.atomic
+    def clear_invitations(scope: str = 'inactive') -> dict:
+        if scope == 'all':
+            queryset = RegistrationInvitation.objects.all()
+        elif scope == 'inactive':
+            queryset = RegistrationService.get_inactive_invitations_queryset()
+        else:
+            return {'deleted': 0, 'scope': scope, 'error': 'Неизвестный режим очистки'}
+
+        deleted_count, _ = queryset.delete()
+        return {'deleted': deleted_count, 'scope': scope}
 
     @staticmethod
     @transaction.atomic

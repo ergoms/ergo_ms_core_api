@@ -46,6 +46,7 @@ from src.core.cms.adp.views_invitations import (
     RegistrationInvitationResendView,
     RegistrationInvitationBulkCreateView,
     RegistrationInvitationBulkSendView,
+    RegistrationInvitationClearView,
 )
 
 urlpatterns = [
@@ -55,6 +56,7 @@ urlpatterns = [
     path('invitations/', RegistrationInvitationListView.as_view(), name='registration_invitations'),
     path('invitations/bulk/', RegistrationInvitationBulkCreateView.as_view(), name='registration_invitations_bulk'),
     path('invitations/bulk/send/', RegistrationInvitationBulkSendView.as_view(), name='registration_invitations_bulk_send'),
+    path('invitations/clear/', RegistrationInvitationClearView.as_view(), name='registration_invitations_clear'),
     path('invitations/<int:invitation_id>/', RegistrationInvitationDetailView.as_view(), name='registration_invitation_detail'),
     path(
         'invitations/<int:invitation_id>/resend/',
