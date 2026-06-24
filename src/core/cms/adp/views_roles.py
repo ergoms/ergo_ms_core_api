@@ -10,6 +10,7 @@ from drf_yasg import openapi
 
 from django.contrib.auth.models import User
 from django.db.models import Prefetch, Q
+from django.db.models.deletion import ProtectedError
 
 from src.core.settings.models import UserAvatar
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
@@ -60,6 +61,50 @@ def _get_user_avatar_url(user):
         avatar = None
     if avatar and avatar.image:
         return avatar.image.url
+    return None
+
+
+def _validate_admin_user_deletion(request, target_user):
+    if request.user.id == target_user.id:
+        return Response(
+            {'error': 'Нельзя удалить собственную учётную запись.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if target_user.is_superuser and not request.user.is_superuser:
+        return Response(
+            {'error': 'Нельзя удалить суперпользователя.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return None
+
+
+def _perform_admin_user_deletion(user):
+    from src.core.integrations import bridge
+
+    _revoke_user_auth(user)
+
+    if bridge.has('workers.delete_worker_for_user'):
+        bridge.call('workers.delete_worker_for_user', user)
+    if bridge.has('students.delete_student_for_user'):
+        bridge.call('students.delete_student_for_user', user)
+
+    bridge.emit('core.user_delete', user_id=user.id)
+
+    try:
+        user.delete()
+    except ProtectedError:
+        return Response(
+            {
+                'error': (
+                    'Невозможно удалить пользователя: '
+                    'есть связанные данные, блокирующие удаление.'
+                ),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     return None
 
 
@@ -973,6 +1018,36 @@ class AdminUserDetailView(BaseAPIViewAuthMixin, BaseAPIView):
 
         errors = parse_errors_to_dict(serializer.errors)
         return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @swagger_auto_schema(
+        operation_description="Удалить пользователя (для админ-панели)",
+        responses={
+            204: 'Пользователь удалён',
+            400: 'Нельзя удалить пользователя',
+            404: 'Пользователь не найден',
+        },
+    )
+    def delete(self, request, user_id):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        user = self._get_target_user(user_id)
+        if not user:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        validation_error = _validate_admin_user_deletion(request, user)
+        if validation_error:
+            return validation_error
+
+        deletion_error = _perform_admin_user_deletion(user)
+        if deletion_error:
+            return deletion_error
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class AdminUserAvatarView(MediaApiFileMixin, BaseAPIViewAuthMixin, BaseAPIView):

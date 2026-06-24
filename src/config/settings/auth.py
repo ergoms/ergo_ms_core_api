@@ -16,16 +16,24 @@ from datetime import timedelta
 from django.conf import settings
 
 from src.config.env import env
+from src.config.settings.drf import DRF_BROWSABLE_ENABLED
 
 # Настройка ограничения запросов для анонимных и аутентифицированных пользователей.
 THROTTLE_RATES_ANON = env.str('API_THROTTLE_RATES_ANON', default='10/minute')
 THROTTLE_RATES_USER = env.str('API_THROTTLE_RATES_USER', default='5000/hour')
+
+DEFAULT_RENDERER_CLASSES = [
+    'rest_framework.renderers.JSONRenderer',
+]
+if DRF_BROWSABLE_ENABLED:
+    DEFAULT_RENDERER_CLASSES.append('rest_framework.renderers.BrowsableAPIRenderer')
 
 # Конфигурация Django REST Framework.
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
+    'DEFAULT_RENDERER_CLASSES': DEFAULT_RENDERER_CLASSES,
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',

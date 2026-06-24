@@ -1,21 +1,10 @@
 """
-Файл содержащий настройки Swagger для документации API.
+Настройки доступа к документации API (Swagger UI / ReDoc) из переменных окружения (.env).
 """
 
-# Настройки Swagger для документации API.
-SWAGGER_SETTINGS = {
-    # Настройки для аутентификации через JWT Bearer Token
-    'SECURITY_DEFINITIONS': {
-        'Bearer': {
-            'type': 'apiKey',
-            'name': 'Authorization',
-            'in': 'header',
-        }
-    },
-    # Отключаем аутентификацию через сессии Django
-    'USE_SESSION_AUTH': False,
-    # Убираем URL для входа
-    'LOGIN_URL': None,
-    # Убираем URL для выхода
-    'LOGOUT_URL': None,
-}
+from src.config.env import env
+
+_deploy_type = env.str('API_DEPLOY_TYPE', default='production').strip().lower()
+_default_swagger_enabled = _deploy_type != 'production'
+
+SWAGGER_ENABLED = env.bool('API_SWAGGER_ENABLED', default=_default_swagger_enabled)
