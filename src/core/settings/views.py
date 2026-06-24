@@ -5,8 +5,10 @@ from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.http import HttpResponse
+
+from .permissions import IsGlobalAdmin
 
 from .models import Category
 from .serializers import CategorySerializer
@@ -19,7 +21,6 @@ from .audit import log_audit
 from .models import AuditLog
 from .serializers import AuditLogSerializer
 from rest_framework.viewsets import ReadOnlyModelViewSet
-from rest_framework.permissions import IsAdminUser
 
 from .models import *
 from .serializers import *
@@ -41,6 +42,11 @@ class GeneralSettingsViewSet(viewsets.ModelViewSet):
     queryset = GeneralSettings.objects.all()
     serializer_class = GeneralSettingsSerializer
 
+    def get_permissions(self):
+        if self.action == 'get_site_name':
+            return [AllowAny()]
+        return [IsAuthenticated(), IsGlobalAdmin()]
+
     @action(detail=False, methods=['get'], url_path='last')
     def get_last_settings(self, request):
         last_settings = self.queryset.order_by('-id').first()
@@ -58,7 +64,7 @@ class GeneralSettingsViewSet(viewsets.ModelViewSet):
             from .serializers import GeneralSettingsSiteNameSerializer
             serializer = GeneralSettingsSiteNameSerializer(last_settings)
             return Response(serializer.data)
-        return Response({'site_name': 'ERGO MS'}, status=status.HTTP_200_OK)
+        return Response({'site_name': 'ERGOMS'}, status=status.HTTP_200_OK)
     
     def perform_update(self, serializer):
         old_obj = self.get_object()
@@ -235,7 +241,7 @@ class UserAvatarViewSet(MediaApiFileMixin, viewsets.ModelViewSet):
 class AuditLogViewSet(ReadOnlyModelViewSet):
     queryset = AuditLog.objects.all()
     serializer_class = AuditLogSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated, IsGlobalAdmin]
     filterset_fields = ['content_type__model', 'object_id', 'action']
     ordering = ['-timestamp']
 

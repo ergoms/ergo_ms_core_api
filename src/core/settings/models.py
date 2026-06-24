@@ -8,7 +8,7 @@ from slugify import slugify
 from django.utils.translation import gettext_lazy as _
 
 class GeneralSettings(models.Model):
-    site_name = models.CharField(_("Название сайта"), max_length=255, default="My Site")
+    site_name = models.CharField(_("Название сайта"), max_length=255, default="ERGOMS")
     site_tagline = models.CharField(_("Tagline"), max_length=255, blank=True)
     site_url = models.URLField(_("URL сайта"), max_length=200)
     admin_email = models.EmailField(_("Email администратора"), max_length=254)

@@ -307,3 +307,40 @@ class ModulePermission(models.Model):
     
     def __str__(self):
         return f"{self.module_name}.{self.permission_key} - {self.role_group.name}"
+
+
+class RegistrationInvitation(models.Model):
+    """Приглашение на регистрацию в системе."""
+
+    email = models.EmailField(verbose_name='Email')
+    token = models.CharField(max_length=64, unique=True, db_index=True, verbose_name='Токен')
+    invited_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sent_registration_invitations',
+        verbose_name='Пригласил',
+    )
+    note = models.CharField(max_length=255, blank=True, default='', verbose_name='Примечание')
+    expires_at = models.DateTimeField(verbose_name='Действует до')
+    used_at = models.DateTimeField(null=True, blank=True, verbose_name='Использовано')
+    used_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='registration_invitation',
+        verbose_name='Зарегистрировался',
+    )
+    is_revoked = models.BooleanField(default=False, verbose_name='Отозвано')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создано')
+
+    class Meta:
+        app_label = 'cms_adp'
+        verbose_name = 'Приглашение на регистрацию'
+        verbose_name_plural = 'Приглашения на регистрацию'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.email} ({self.token[:8]}...)'

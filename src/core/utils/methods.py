@@ -169,6 +169,46 @@ def send_admin_password_reset_notification(email: str) -> Tuple[bool, Optional[s
         return False, error_msg
 
 
+def send_registration_invitation_email(
+    email: str,
+    invite_url: str,
+    ttl_days: int,
+) -> Tuple[bool, Optional[str]]:
+    """Отправляет email с ссылкой-приглашением на регистрацию."""
+    try:
+        default_from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+        if not default_from_email:
+            error_msg = 'SMTP не настроен: отсутствует DEFAULT_FROM_EMAIL'
+            logger.error(error_msg)
+            return False, error_msg
+
+        normalized_email = _normalize_email_for_recipient(email)
+        if not normalized_email:
+            error_msg = 'Недопустимый адрес получателя'
+            logger.warning(error_msg)
+            return False, error_msg
+
+        subject = 'Приглашение в ERGOMS'
+        message = (
+            f'Вас пригласили зарегистрироваться в системе ERGOMS.\n\n'
+            f'Перейдите по ссылке для создания учётной записи:\n{invite_url}\n\n'
+            f'Ссылка действительна {ttl_days} дн.'
+        )
+
+        send_mail(
+            subject,
+            message,
+            default_from_email,
+            [normalized_email],
+            fail_silently=False,
+        )
+        return True, None
+    except Exception as e:
+        error_msg = format_smtp_error(e)
+        logger.error('SMTP Error (%s): %s', type(e).__name__, error_msg, exc_info=True)
+        return False, error_msg
+
+
 def convert_snake_to_camel(snake_text: str) -> str:
     """
     Преобразует строку в формате snake_case в CamelCase.

@@ -946,11 +946,17 @@ class CheckAccessToAdminPanel(BaseAPIViewAuthMixin):
         },
     )
     def get(self, request: Request):
-        result = {'access_to_panel':False, 'access_to_category':False}
-        perms =[]
-        if(request.user.is_superuser):
+        from src.core.cms.adp.services.permissions import PermissionService
+
+        result = {'access_to_panel': False, 'access_to_category': False}
+        perms = []
+
+        if PermissionService.can_manage_users_as_global_admin(request.user):
             result['access_to_panel'] = True
-            result['access_to_category'] =True
+            result['access_to_category'] = True
+        elif request.user.is_superuser:
+            result['access_to_panel'] = True
+            result['access_to_category'] = True
         else:
             user = request.user
             groups = user.groups.all()

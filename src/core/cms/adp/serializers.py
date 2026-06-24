@@ -7,14 +7,16 @@ from rest_framework.serializers import (
     ListField,
     SerializerMethodField,
     DateTimeField,
+    BooleanField,
 )
 
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
 from src.core.cms.adp.models import (
     UserDevice, UserProfile, Role, RoleGroup,
-    Policy, UserRole, ModulePermission,
+    Policy, UserRole, ModulePermission, RegistrationInvitation,
 )
+from src.core.cms.adp.services.registration import RegistrationService
 from src.core.cms.adp.password_policy import validate_new_password_pair, validate_password_value
 from django.core.exceptions import ValidationError as DjangoValidationError
 
@@ -25,6 +27,7 @@ class UserRegistrationValidationSerializer(Serializer):
     username = CharField(required=True)
     email = CharField(required=True)
     password = CharField(write_only=True, style={'input_type': 'password'})
+    invitation_token = CharField(required=False, allow_blank=True, write_only=True)
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
@@ -32,7 +35,31 @@ class UserRegistrationValidationSerializer(Serializer):
         return value
 
     def validate(self, attrs):
+        _validate_registration_access(attrs)
         return attrs
+
+
+def _validate_registration_access(attrs):
+    mode = RegistrationService.get_mode()
+    if mode == RegistrationService.MODE_CLOSED:
+        raise ValidationError({'message': 'Регистрация в системе отключена.'})
+
+    if mode != RegistrationService.MODE_INVITATION:
+        return
+
+    token = (attrs.get('invitation_token') or '').strip()
+    if not token:
+        raise ValidationError({'invitation_token': 'Для регистрации требуется приглашение.'})
+
+    invitation = RegistrationService.get_valid_invitation(token)
+    if not invitation:
+        raise ValidationError({'invitation_token': 'Приглашение недействительно или истекло.'})
+
+    email = (attrs.get('email') or '').strip().lower()
+    if invitation.email.lower() != email:
+        raise ValidationError({'email': 'Email не совпадает с приглашением.'})
+
+    attrs['_invitation'] = invitation
 
 
 class UserRegistrationSerializer(ModelSerializer):
@@ -40,10 +67,14 @@ class UserRegistrationSerializer(ModelSerializer):
         write_only=True,
         style={'input_type': 'password'},
     )
+    invitation_token = CharField(required=False, allow_blank=True, write_only=True)
 
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'middle_name', 'username', 'email', 'password']
+        fields = [
+            'first_name', 'last_name', 'middle_name', 'username', 'email',
+            'password', 'invitation_token',
+        ]
 
     def validate_password(self, value):
         try:
@@ -52,7 +83,14 @@ class UserRegistrationSerializer(ModelSerializer):
             raise ValidationError(list(exc.messages))
         return value
 
+    def validate(self, attrs):
+        _validate_registration_access(attrs)
+        return attrs
+
     def create(self, validated_data):
+        invitation = validated_data.pop('_invitation', None)
+        validated_data.pop('invitation_token', None)
+
         user = User.objects.create_user(
             username=validated_data['username'],
             first_name=validated_data.get('first_name', ''),
@@ -61,6 +99,9 @@ class UserRegistrationSerializer(ModelSerializer):
             email=validated_data['email'],
             password=validated_data['password'],
         )
+
+        if invitation:
+            RegistrationService.mark_invitation_used(invitation, user)
 
         return user
     
@@ -388,3 +429,49 @@ class AdminUserRoleInfoSerializer(Serializer):
     role = RoleListMinimalSerializer(allow_null=True)
     role_groups = RoleGroupListMinimalSerializer(many=True)
     avatar_url = CharField(allow_blank=True, allow_null=True, required=False)
+
+
+class RegistrationInvitationSerializer(Serializer):
+    id = IntegerField(read_only=True)
+    email = CharField(read_only=True)
+    token = CharField(read_only=True)
+    invite_url = SerializerMethodField()
+    status = SerializerMethodField()
+    note = CharField(read_only=True)
+    invited_by_id = IntegerField(read_only=True, allow_null=True)
+    invited_by_name = SerializerMethodField()
+    expires_at = DateTimeField(read_only=True)
+    used_at = DateTimeField(read_only=True, allow_null=True)
+    created_at = DateTimeField(read_only=True)
+
+    def get_invite_url(self, obj):
+        return RegistrationService.build_invitation_url(obj.token)
+
+    def get_status(self, obj):
+        return RegistrationService.get_invitation_status(obj)
+
+    def get_invited_by_name(self, obj):
+        if not obj.invited_by:
+            return ''
+        return obj.invited_by.get_full_name() or obj.invited_by.username
+
+
+class CreateRegistrationInvitationSerializer(Serializer):
+    email = CharField(required=True)
+    note = CharField(required=False, allow_blank=True, default='')
+    send_email = BooleanField(required=False, default=False)
+
+    def validate_email(self, value):
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValidationError('Email обязателен.')
+        if User.objects.filter(email__iexact=normalized).exists():
+            raise ValidationError('Пользователь с таким email уже зарегистрирован.')
+        return normalized
+
+
+class ValidateInvitationSerializer(Serializer):
+    valid = BooleanField(read_only=True)
+    email = CharField(read_only=True, allow_null=True)
+    expires_at = DateTimeField(read_only=True, allow_null=True)
+    status = CharField(read_only=True, allow_null=True)

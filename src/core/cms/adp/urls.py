@@ -38,8 +38,25 @@ from src.core.cms.adp.views_roles import (
     AdminUserResetPasswordView,
 )
 
+from src.core.cms.adp.views_invitations import (
+    RegistrationSettingsView,
+    ValidateInvitationView,
+    RegistrationInvitationListView,
+    RegistrationInvitationDetailView,
+    RegistrationInvitationResendView,
+)
+
 urlpatterns = [
     # Authentication endpoints
+    path('registration-settings/', RegistrationSettingsView.as_view(), name='registration_settings'),
+    path('invitations/validate/', ValidateInvitationView.as_view(), name='validate_invitation'),
+    path('invitations/', RegistrationInvitationListView.as_view(), name='registration_invitations'),
+    path('invitations/<int:invitation_id>/', RegistrationInvitationDetailView.as_view(), name='registration_invitation_detail'),
+    path(
+        'invitations/<int:invitation_id>/resend/',
+        RegistrationInvitationResendView.as_view(),
+        name='registration_invitation_resend',
+    ),
     path('validate-registration/', UserRegistrationValidationView.as_view(), name='validate_registration'),
     path('registration/', UserRegistrationView.as_view(), name='registration'),
     path('authorization/', UserAuthorizationView.as_view(), name='authorization'),
