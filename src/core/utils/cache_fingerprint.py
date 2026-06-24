@@ -34,6 +34,10 @@ def get_celery_config_fingerprint(
         for module_dir in sorted(modules_dir.iterdir()):
             if not module_dir.is_dir():
                 continue
+            module_env = module_dir / '.env'
+            if module_env.exists():
+                key = str(module_env.relative_to(project_root))
+                result[key] = module_env.stat().st_mtime
             for cfg_name in ('celery_config.py', 'celery_beat_config.py'):
                 cfg = module_dir / cfg_name
                 if cfg.exists():

@@ -19,14 +19,50 @@ def _get_modules_env_mtime() -> float:
         return 0
 
 
+def _get_modules_env_fingerprint() -> Dict[str, float]:
+    """Fingerprint всех .env файлов модулей (без .env.example)."""
+    fingerprint: Dict[str, float] = {}
+    modules_dir = os.path.abspath(MODULES_DIR)
+    if not os.path.isdir(modules_dir):
+        return fingerprint
+
+    try:
+        fingerprint['modules'] = Path(modules_dir).stat().st_mtime
+    except OSError:
+        fingerprint['modules'] = 0
+
+    for file_path, _relative_path in _find_env_files_in_directory(modules_dir, 'modules'):
+        try:
+            fingerprint[file_path] = Path(file_path).stat().st_mtime
+        except OSError:
+            continue
+
+    return fingerprint
+
+
+def _env_fingerprint_equal(stored: Optional[Dict[str, float]], current: Dict[str, float]) -> bool:
+    from src.core.utils.cache_fingerprint import fingerprint_equal
+
+    if not stored:
+        return False
+    return fingerprint_equal(stored, current)
+
+
 def _read_env_cache() -> Optional[Dict[str, str]]:
     from src.core.utils.cache_io import read_bin_cache
 
     data = read_bin_cache(_ENV_CACHE_FILE)
     if data is None:
         return None
-    if data.get('modules_mtime') != _get_modules_env_mtime():
+
+    current_fingerprint = _get_modules_env_fingerprint()
+    stored_fingerprint = data.get('fingerprint')
+    if stored_fingerprint is None:
+        if data.get('modules_mtime') != _get_modules_env_mtime():
+            return None
+    elif not _env_fingerprint_equal(stored_fingerprint, current_fingerprint):
         return None
+
     return data.get('env_vars', {})
 
 
@@ -34,7 +70,7 @@ def _write_env_cache(env_vars: Dict[str, str]) -> None:
     from src.core.utils.cache_io import write_bin_cache
 
     data = {
-        'modules_mtime': _get_modules_env_mtime(),
+        'fingerprint': _get_modules_env_fingerprint(),
         'env_vars': env_vars,
     }
     if write_bin_cache(_ENV_CACHE_FILE, data):
