@@ -14,6 +14,8 @@ from src.core.cms.adp.models import RegistrationInvitation
 from src.core.cms.adp.serializers import (
     RegistrationInvitationSerializer,
     CreateRegistrationInvitationSerializer,
+    BulkCreateRegistrationInvitationsSerializer,
+    BulkSendRegistrationInvitationsSerializer,
     ValidateInvitationSerializer,
 )
 from src.core.cms.adp.services.registration import RegistrationService
@@ -209,3 +211,56 @@ class RegistrationInvitationResendView(BaseAPIViewAuthMixin, BaseAPIView):
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(_serialize_invitation(invitation))
+
+
+class RegistrationInvitationBulkCreateView(BaseAPIViewAuthMixin, BaseAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description='Массовое создание приглашений по списку email',
+        request_body=BulkCreateRegistrationInvitationsSerializer,
+    )
+    def post(self, request):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        if RegistrationService.get_mode() != RegistrationService.MODE_INVITATION:
+            return Response(
+                {'error': 'Режим регистрации по приглашениям не включён (API_REGISTRATION_MODE=invitation).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = BulkCreateRegistrationInvitationsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        result = RegistrationService.bulk_create_invitations(
+            emails=serializer.validated_data['emails'],
+            invited_by=request.user,
+            note=serializer.validated_data.get('note', ''),
+            send_email=serializer.validated_data.get('send_email', False),
+        )
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class RegistrationInvitationBulkSendView(BaseAPIViewAuthMixin, BaseAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description='Массовая отправка email с приглашениями',
+        request_body=BulkSendRegistrationInvitationsSerializer,
+    )
+    def post(self, request):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        serializer = BulkSendRegistrationInvitationsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        result = RegistrationService.bulk_send_invitation_emails(
+            invitation_ids=serializer.validated_data['invitation_ids'],
+        )
+        return Response(result)

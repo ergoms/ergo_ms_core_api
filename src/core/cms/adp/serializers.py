@@ -463,11 +463,20 @@ class CreateRegistrationInvitationSerializer(Serializer):
 
     def validate_email(self, value):
         normalized = value.strip().lower()
-        if not normalized:
-            raise ValidationError('Email обязателен.')
-        if User.objects.filter(email__iexact=normalized).exists():
-            raise ValidationError('Пользователь с таким email уже зарегистрирован.')
+        error = RegistrationService.validate_email_for_invitation(normalized)
+        if error:
+            raise ValidationError(error)
         return normalized
+
+
+class BulkCreateRegistrationInvitationsSerializer(Serializer):
+    emails = ListField(child=CharField(), allow_empty=False, max_length=500)
+    note = CharField(required=False, allow_blank=True, default='')
+    send_email = BooleanField(required=False, default=False)
+
+
+class BulkSendRegistrationInvitationsSerializer(Serializer):
+    invitation_ids = ListField(child=IntegerField(), allow_empty=False, max_length=500)
 
 
 class ValidateInvitationSerializer(Serializer):

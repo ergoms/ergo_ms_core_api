@@ -8,6 +8,8 @@ from typing import Optional
 
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
 
@@ -104,6 +106,21 @@ class RegistrationService:
         ).exists()
 
     @staticmethod
+    def validate_email_for_invitation(email: str) -> Optional[str]:
+        normalized = (email or '').strip().lower()
+        if not normalized:
+            return 'Email обязателен'
+        try:
+            validate_email(normalized)
+        except DjangoValidationError:
+            return 'Некорректный email'
+        if User.objects.filter(email__iexact=normalized).exists():
+            return 'Пользователь с таким email уже зарегистрирован'
+        if RegistrationService.has_active_invitation_for_email(normalized):
+            return 'Для этого email уже есть активное приглашение'
+        return None
+
+    @staticmethod
     @transaction.atomic
     def create_invitation(*, email: str, invited_by: User, note: str = '', send_email: bool = False) -> tuple:
         normalized_email = email.strip().lower()
@@ -158,3 +175,83 @@ class RegistrationService:
         invitation.is_revoked = True
         invitation.save(update_fields=['is_revoked'])
         return True, None
+
+    @staticmethod
+    @transaction.atomic
+    def bulk_create_invitations(
+        *,
+        emails: list,
+        invited_by: User,
+        note: str = '',
+        send_email: bool = False,
+    ) -> dict:
+        created = []
+        skipped = []
+        email_warnings = []
+        seen = set()
+
+        for raw_email in emails:
+            normalized = (raw_email or '').strip().lower()
+            if not normalized:
+                continue
+
+            if normalized in seen:
+                skipped.append({'email': normalized, 'reason': 'Дубликат в списке'})
+                continue
+            seen.add(normalized)
+
+            validation_error = RegistrationService.validate_email_for_invitation(normalized)
+            if validation_error:
+                skipped.append({'email': normalized, 'reason': validation_error})
+                continue
+
+            invitation, error = RegistrationService.create_invitation(
+                email=normalized,
+                invited_by=invited_by,
+                note=note,
+                send_email=False,
+            )
+            if not invitation:
+                skipped.append({'email': normalized, 'reason': error or 'Не удалось создать приглашение'})
+                continue
+
+            item = {
+                'id': invitation.id,
+                'email': invitation.email,
+                'invite_url': RegistrationService.build_invitation_url(invitation.token),
+                'status': RegistrationService.get_invitation_status(invitation),
+            }
+
+            if send_email:
+                success, email_error = RegistrationService.send_invitation_email(invitation)
+                if not success:
+                    item['email_warning'] = email_error
+                    email_warnings.append({'email': normalized, 'warning': email_error})
+
+            created.append(item)
+
+        return {
+            'created': created,
+            'skipped': skipped,
+            'email_warnings': email_warnings,
+        }
+
+    @staticmethod
+    def bulk_send_invitation_emails(invitation_ids: list) -> dict:
+        sent = []
+        failed = []
+
+        for invitation_id in invitation_ids:
+            try:
+                invitation = RegistrationInvitation.objects.get(pk=invitation_id)
+            except RegistrationInvitation.DoesNotExist:
+                failed.append({'id': invitation_id, 'error': 'Приглашение не найдено'})
+                continue
+
+            success, error = RegistrationService.send_invitation_email(invitation)
+            if success:
+                sent.append({'id': invitation.id, 'email': invitation.email})
+            else:
+                failed.append({'id': invitation.id, 'email': invitation.email, 'error': error})
+
+        return {'sent': sent, 'failed': failed}
