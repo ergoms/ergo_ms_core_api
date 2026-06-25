@@ -39,6 +39,7 @@ def _get_dirs_fingerprint() -> dict:
     """
     Fingerprint для проверки актуальности кэша discovered_apps.
     Учитывает mtime директорий и всех apps.py — ловит добавление/изменение приложений.
+    Также включает DISABLED_MODULES — при изменении списка кэш инвалидируется.
     """
     result = {}
     for name, path in [('core', CORE_DIR), ('modules', MODULES_DIR)]:
@@ -55,6 +56,7 @@ def _get_dirs_fingerprint() -> dict:
         else:
             result[f'{name}_dir'] = 0
             result[f'{name}_apps'] = 0
+    result['disabled_modules'] = os.getenv('DISABLED_MODULES', '')
     return result
 
 
@@ -99,7 +101,11 @@ def _find_modules_apps_fast(modules_dir: str, installed_apps: list) -> None:
     """Поиск приложений модулей по структуре (без импорта)."""
     if not os.path.isdir(modules_dir):
         return
+    from src.core.utils.module_registry import get_disabled_modules
+    disabled = get_disabled_modules()
     for module_name in os.listdir(modules_dir):
+        if module_name in disabled:
+            continue
         module_path = os.path.join(modules_dir, module_name)
         if os.path.isdir(module_path):
             api_path = os.path.join(module_path, 'api')

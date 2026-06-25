@@ -6,7 +6,7 @@
 - mtime_equal() — сравнение mtime с допуском
 """
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 MTIME_TOLERANCE = 2.0
 
@@ -72,11 +72,17 @@ def get_modules_config_max_mtime(modules_dir: Path) -> float:
     return max_mtime
 
 
-def fingerprint_equal(stored: Dict[str, float], current: Dict[str, float]) -> bool:
-    """Проверка равенства fingerprint с учётом MTIME_TOLERANCE."""
+def fingerprint_equal(stored: Dict[str, Any], current: Dict[str, Any]) -> bool:
+    """Проверка равенства fingerprint с учётом MTIME_TOLERANCE для числовых значений."""
     if set(stored.keys()) != set(current.keys()):
         return False
     for key in stored:
-        if not mtime_equal(stored.get(key, 0), current.get(key, 0)):
+        stored_val = stored.get(key, 0)
+        current_val = current.get(key, 0)
+        if isinstance(stored_val, str) or isinstance(current_val, str):
+            if stored_val != current_val:
+                return False
+            continue
+        if not mtime_equal(float(stored_val), float(current_val)):
             return False
     return True

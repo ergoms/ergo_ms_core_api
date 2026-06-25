@@ -44,6 +44,8 @@ class CeleryModuleManager:
 
     def _load_modules_from_cache(self) -> None:
         """Загружает конфигурации Celery для модулей из discovered_apps (параллельно)."""
+        from src.core.utils.module_registry import get_disabled_modules
+        disabled = get_disabled_modules()
         all_apps = get_discovered_apps()
         module_apps = [app for app in all_apps if app.startswith('modules.')]
         items: List[Tuple[str, str]] = []
@@ -53,6 +55,8 @@ class CeleryModuleManager:
                 module_name = module_parts[-2]
             else:
                 module_name = module_parts[-1]
+            if module_name in disabled:
+                continue
             if not is_valid_module_name(module_name):
                 self.logger.warning(f"Пропускаем модуль с невалидным именем: {module_name} (путь: {app_path})")
                 continue

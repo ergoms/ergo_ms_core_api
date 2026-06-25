@@ -3,8 +3,12 @@ from django.urls import (
     include
 )
 from src.core.cms.views import *
+from src.core.cms.disabled_modules_view import DisabledModulesView
 
 urlpatterns = [        
+    # Системная конфигурация модулей
+    path('disabled-modules/', DisabledModulesView.as_view(), name='disabled-modules'),
+
     # Основные CMS роуты
     path('check_access_to_page/', CheckAccesstoPage.as_view(), name='check access to page'),
     path('check_access_to_admin_panel/', CheckAccessToAdminPanel.as_view(), name='check access to admin panel'),

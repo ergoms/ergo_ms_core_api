@@ -6,6 +6,7 @@ from .models import Notification
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
+        ref_name = 'CoreNotification'
         fields = (
             'id',
             'title',

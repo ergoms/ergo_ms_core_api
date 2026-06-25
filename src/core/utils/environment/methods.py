@@ -237,6 +237,7 @@ def collect_env_files_from_all_sources(use_cache: Optional[bool] = None) -> Dict
 def _find_env_files_in_directory(directory: str, source_name: str) -> List[Tuple[str, str]]:
     """
     Находит все .env файлы в указанной директории и её подпапках.
+    Пропускает файлы из отключённых модулей (DISABLED_MODULES).
     
     Аргументы:
         directory (str): Путь к директории для поиска
@@ -245,6 +246,9 @@ def _find_env_files_in_directory(directory: str, source_name: str) -> List[Tuple
     Возвращает:
         List[Tuple[str, str]]: Список кортежей (путь_к_файлу, относительный_путь)
     """
+    disabled_raw = os.environ.get('DISABLED_MODULES', '')
+    disabled = {m.strip() for m in disabled_raw.split(',') if m.strip()}
+
     env_files = []
     search_path = Path(directory)
     
@@ -252,17 +256,21 @@ def _find_env_files_in_directory(directory: str, source_name: str) -> List[Tuple
         logger.warning(f"Директория {source_name} не найдена: {directory}")
         return env_files
     
-    # Рекурсивный поиск .env файлов
     for env_file in search_path.rglob('*.env*'):
         if env_file.is_file():
             if env_file.name.endswith('.env.example'):
                 continue
-            # Создаем относительный путь от корня проекта
+            if disabled:
+                try:
+                    relative = env_file.relative_to(search_path)
+                    if relative.parts and relative.parts[0] in disabled:
+                        continue
+                except ValueError:
+                    pass
             try:
                 relative_path = env_file.relative_to(search_path)
                 env_files.append((str(env_file), f"{source_name}/{relative_path}"))
             except ValueError:
-                # Если не удается создать относительный путь, используем имя файла
                 env_files.append((str(env_file), f"{source_name}/{env_file.name}"))
     
     return env_files
