@@ -6,6 +6,7 @@ from src.core.cms.adp.views import (
     UserRegistrationValidationView,
     UserRegistrationView,
     UserAuthorizationView,
+    PasswordResetSettingsView,
     SendConfirmationCodeView,
     VerifyConfirmationCodeView,
     ResetPasswordView,
@@ -52,6 +53,7 @@ from src.core.cms.adp.views_invitations import (
 urlpatterns = [
     # Authentication endpoints
     path('registration-settings/', RegistrationSettingsView.as_view(), name='registration_settings'),
+    path('password-reset-settings/', PasswordResetSettingsView.as_view(), name='password_reset_settings'),
     path('invitations/validate/', ValidateInvitationView.as_view(), name='validate_invitation'),
     path('invitations/', RegistrationInvitationListView.as_view(), name='registration_invitations'),
     path('invitations/bulk/', RegistrationInvitationBulkCreateView.as_view(), name='registration_invitations_bulk'),

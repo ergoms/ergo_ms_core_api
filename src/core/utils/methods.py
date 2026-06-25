@@ -144,11 +144,22 @@ def send_admin_password_reset_notification(email: str) -> Tuple[bool, Optional[s
             logger.warning(error_msg)
             return False, error_msg
 
+        from src.core.cms.adp.services.password_reset import PasswordResetService
+
         subject = 'Сброс пароля администратором — ERGO MS'
+        if PasswordResetService.is_enabled():
+            recovery_hint = (
+                'Для восстановления доступа воспользуйтесь формой «Забыл пароль» '
+                'на странице входа в систему.'
+            )
+        else:
+            recovery_hint = (
+                'Для восстановления доступа обратитесь к администратору системы.'
+            )
         message = (
             'Администратор системы сбросил пароль вашей учётной записи.\n\n'
             'Текущий пароль никому не известен — ни вам, ни администраторам — в целях безопасности.\n\n'
-            'Для восстановления доступа воспользуйтесь формой «Забыл пароль» на странице входа в систему.'
+            f'{recovery_hint}'
         )
 
         send_mail(

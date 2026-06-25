@@ -36,6 +36,7 @@ from django.contrib.auth.models import User
 import logging
 
 from src.core.cms.adp.password_policy import validate_new_password_pair
+from src.core.cms.adp.services.password_reset import PasswordResetService
 from src.core.utils.database.main import OrderedDictQueryExecutor
 from src.config.settings.auth import get_token_lifetime
 
@@ -99,6 +100,17 @@ class UserRegistrationValidationView(BaseAPIView):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+class PasswordResetSettingsView(BaseAPIView):
+    """Публичные настройки восстановления пароля."""
+
+    @swagger_auto_schema(
+        operation_description='Получить настройки восстановления пароля',
+        responses={200: openapi.Response(description='Настройки восстановления пароля')},
+    )
+    def get(self, request):
+        return Response(PasswordResetService.get_public_settings())
+
+
 class SendConfirmationCodeView(BaseAPIView):
     throttle_classes = [AnonRateThrottle]
     throttle_scope = 'password_reset'
@@ -107,6 +119,13 @@ class SendConfirmationCodeView(BaseAPIView):
         operation_description="Отправка кода подтверждения.",
     )   
     def post(self, request):
+        purpose = request.data.get('purpose', '')
+        if PasswordResetService.is_password_reset_purpose(purpose) and not PasswordResetService.is_enabled():
+            return Response(
+                {'error': PasswordResetService.get_disabled_message()},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         email = request.data.get("email")
         if not email:
             return Response({"error": "Отсутствует Email"}, status=status.HTTP_400_BAD_REQUEST)
@@ -133,13 +152,17 @@ class SendConfirmationCodeView(BaseAPIView):
         if not success:
             return Response(
                 {
-                    "error": "Не удалось отправить email. Проверьте настройки SMTP.",
-                    "detail": error_message
-                }, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    "error": "Не удалось отправить письмо с кодом восстановления.",
+                    "detail": error_message or "Проверьте настройки SMTP.",
+                    "email_sent": False,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        return Response({"message": "Код подтверждения отправлен"}, status=status.HTTP_200_OK)
+        return Response(
+            {"message": "Код подтверждения отправлен", "email_sent": True},
+            status=status.HTTP_200_OK,
+        )
 
 class VerifyConfirmationCodeView(BaseAPIView):
     @swagger_auto_schema(
@@ -203,6 +226,12 @@ class ResetPasswordView(BaseAPIView):
         },
     )
     def post(self, request):
+        if not PasswordResetService.is_enabled():
+            return Response(
+                {'error': PasswordResetService.get_disabled_message()},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         email = request.data.get("email")
         code = request.data.get("code")
         new_password = request.data.get("new_password")
