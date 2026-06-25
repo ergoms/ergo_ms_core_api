@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from collections import OrderedDict
 
-from src.config.settings.base import MODULES_DIR, VIRTUAL_ENV_DIR
+from src.config.paths import MODULES_DIR, VIRTUAL_ENV_DIR
 
 logger = logging.getLogger(__name__)
 

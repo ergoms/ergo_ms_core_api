@@ -7,9 +7,12 @@
 
 from src.config.patterns.local import *
 from src.config.env import env
+from src.config.nginx_runtime import merge_allowed_hosts
 
 SECRET_KEY = env.str('API_SECRET_KEY')
 
 DEBUG = True
 
-ALLOWED_HOSTS = env.list('API_ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
+ALLOWED_HOSTS = merge_allowed_hosts(
+    env.list('API_ALLOWED_HOSTS', default=['localhost', '127.0.0.1']),
+)

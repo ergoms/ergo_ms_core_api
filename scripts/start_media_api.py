@@ -46,8 +46,12 @@ def main() -> int:
     sys.path.insert(0, str(MEDIA_SRC))
 
     deploy_type = _read_env_var('MEDIA_API_DEPLOY_TYPE', 'development').lower()
-    port = _read_env_var('MEDIA_API_PORT', '8003')
-    default_host = '127.0.0.1' if deploy_type == 'production' else '0.0.0.0'
+    nginx_enabled = _read_env_var('NGINX_ENABLED', 'false').lower() in ('1', 'true', 'yes')
+    # MEDIA_API_BIND_PORT — порт процесса (8003). MEDIA_API_PORT — порт в публичных URL (80 за nginx).
+    port = _read_env_var('MEDIA_API_BIND_PORT', '') or _read_env_var('MEDIA_API_PORT', '8003')
+    if deploy_type == 'production' and port in ('80', '443'):
+        port = _read_env_var('MEDIA_API_BIND_PORT', '8003')
+    default_host = '127.0.0.1' if deploy_type == 'production' or nginx_enabled else '0.0.0.0'
     host = _read_env_var('MEDIA_API_BIND_HOST', default_host)
     env = _build_env()
 

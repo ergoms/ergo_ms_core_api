@@ -47,6 +47,8 @@ def _get_media_base_url() -> str:
     host = getattr(settings, 'MEDIA_API_HOST', 'localhost')
     port = getattr(settings, 'MEDIA_API_PORT', 8003)
     protocol = getattr(settings, 'MEDIA_API_PROTOCOL', 'http')
+    if (protocol == 'http' and int(port) == 80) or (protocol == 'https' and int(port) == 443):
+        return f"{protocol}://{host}"
     return f"{protocol}://{host}:{port}"
 
 

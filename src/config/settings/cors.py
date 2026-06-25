@@ -15,6 +15,7 @@ Dev-origins собираются из _CORS_DEV_HOSTS и _CORS_DEV_PORTS (localh
 """
 
 from src.config.env import env
+from src.config.nginx_runtime import effective_cors_origins
 
 CORS_ALLOW_ALL_ORIGINS = False
 
@@ -24,9 +25,8 @@ _default_origins = [
     f'http://{host}:{port}' for host in _CORS_DEV_HOSTS for port in _CORS_DEV_PORTS
 ]
 
-CORS_ALLOWED_ORIGINS = env.list(
-    'CORS_ALLOWED_ORIGINS',
-    default=_default_origins,  # type: ignore[arg-type]
+CORS_ALLOWED_ORIGINS = effective_cors_origins(
+    env.list('CORS_ALLOWED_ORIGINS', default=_default_origins),  # type: ignore[arg-type]
 )
 
 CORS_ALLOWED_ORIGIN_REGEXES = env.list(
