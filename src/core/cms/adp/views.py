@@ -3,6 +3,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.serializers import ValidationError as DRFValidationError
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from drf_yasg.utils import swagger_auto_schema
@@ -99,6 +100,9 @@ class UserRegistrationValidationView(BaseAPIView):
         )
 
 class SendConfirmationCodeView(BaseAPIView):
+    throttle_classes = [AnonRateThrottle]
+    throttle_scope = 'password_reset'
+
     @swagger_auto_schema(
         operation_description="Отправка кода подтверждения.",
     )   
@@ -107,13 +111,11 @@ class SendConfirmationCodeView(BaseAPIView):
         if not email:
             return Response({"error": "Отсутствует Email"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Проверяем существование пользователя с указанным email
-        try:
-            User.objects.get(email=email)
-        except User.DoesNotExist:
+        user_exists = User.objects.filter(email=email).exists()
+        if not user_exists:
             return Response(
-                {"error": "Пользователь с таким email не найден"}, 
-                status=status.HTTP_400_BAD_REQUEST
+                {"message": "Если пользователь с таким email существует, код будет отправлен"},
+                status=status.HTTP_200_OK,
             )
 
         # Генерация 6-значного кода
@@ -165,6 +167,9 @@ class VerifyConfirmationCodeView(BaseAPIView):
             return Response({"error": "Неверный код"}, status=status.HTTP_400_BAD_REQUEST)
 
 class ResetPasswordView(BaseAPIView):
+    throttle_classes = [AnonRateThrottle]
+    throttle_scope = 'password_reset'
+
     @swagger_auto_schema(
         operation_description="Сброс пароля по коду подтверждения.",
         request_body=openapi.Schema(

@@ -36,6 +36,17 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
 
         if content_type_name and object_id:
             ct = get_content_type(content_type_name)
+            if ct is None:
+                return Message.objects.none()
+            model_class = ct.model_class()
+            if model_class is not None:
+                try:
+                    obj = model_class.objects.get(pk=object_id)
+                    if hasattr(obj, 'has_messenger_access'):
+                        if not obj.has_messenger_access(self.request.user):
+                            return Message.objects.none()
+                except model_class.DoesNotExist:
+                    return Message.objects.none()
             return queryset.filter(content_type=ct, object_id=object_id).order_by('created_at')
 
         return Message.objects.none()

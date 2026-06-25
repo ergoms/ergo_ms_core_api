@@ -150,11 +150,29 @@ def _get_active_user_role_from_prefetch(user):
     return active_roles[0] if active_roles else None
 
 
-def _build_admin_user_list_item(user, user_role=None):
+def _get_admin_user_role_for_display(user):
+    user_role = (
+        UserRole.objects
+        .filter(user=user, is_active=True)
+        .select_related('role')
+        .prefetch_related('role_groups')
+        .first()
+    )
+    if user_role or getattr(user, 'is_superuser', False):
+        return user_role
+
+    return PermissionService.get_user_role(user)
+
+
+def _build_admin_user_list_item(user, user_role=None, admin_role=None):
     if user_role is None:
         user_role = _get_active_user_role_from_prefetch(user)
 
-    role = user_role.role if user_role else None
+    role = PermissionService.resolve_display_role(
+        user,
+        user_role,
+        admin_role=admin_role,
+    )
     role_groups = list(user_role.role_groups.all()) if user_role else []
 
     return {
@@ -215,8 +233,13 @@ def _get_admin_users_queryset(search=''):
 
 
 def _build_admin_user_detail(user):
-    user_role = PermissionService.get_user_role(user)
-    role = user_role.role if user_role else None
+    admin_role = PermissionService._get_or_create_admin_role()
+    user_role = _get_admin_user_role_for_display(user)
+    role = PermissionService.resolve_display_role(
+        user,
+        user_role,
+        admin_role=admin_role,
+    )
     role_groups = list(user_role.role_groups.all()) if user_role else []
 
     data = CMSUserSerializer(user).data
@@ -948,8 +971,12 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
         total = users_qs.count()
         offset = (page - 1) * page_size
         users = list(users_qs[offset:offset + page_size])
+        admin_role = PermissionService._get_or_create_admin_role()
 
-        items = [_build_admin_user_list_item(user) for user in users]
+        items = [
+            _build_admin_user_list_item(user, admin_role=admin_role)
+            for user in users
+        ]
         serializer = AdminUserRoleInfoSerializer(items, many=True)
 
         return Response({

@@ -1,8 +1,8 @@
 """
 Менеджер для автоматического обнаружения и загрузки конфигураций Celery Beat модулей.
 
-Использует discovered_apps и файловый кэш расписания — при валидном кэше
-импорт celery_beat_config модулей не выполняется.
+Использует discovered_apps. Файловый кэш расписания ускоряет прогрев,
+но get_all_beat_schedules() всегда пересобирает расписание из конфигов модулей.
 """
 
 import importlib
@@ -26,12 +26,13 @@ class CeleryBeatModuleManager:
     def __init__(self, use_config_cache: bool = True):
         self.modules_configs: Dict[str, CeleryBeatModuleConfig] = {}
         self.logger = logging.getLogger('celery.beat.manager')
-        self._cached_schedule: Optional[Dict[str, Dict[str, Any]]] = (
-            read_beat_schedule_cache() if use_config_cache else None
-        )
-        if self._cached_schedule is None:
+        # Кэш используется только для прогрева; актуальное расписание всегда
+        # собирается через get_beat_schedule() модулей (учитывает runtime-флаги .env).
+        self._use_config_cache = use_config_cache
+        cached = read_beat_schedule_cache() if use_config_cache else None
+        if cached is None:
             self._load_modules_from_cache()
-    
+
     def _load_modules_from_cache(self) -> None:
         """Загружает конфигурации Beat для модулей из discovered_apps (параллельно)."""
         all_apps = get_discovered_apps()
@@ -79,10 +80,18 @@ class CeleryBeatModuleManager:
             return (module_name, self._create_default_config(module_name, app_path))
 
     def _save_schedule_to_cache(self) -> None:
-        """Сохраняет расписание в кэш после загрузки модулей."""
-        schedule = self.get_all_beat_schedules()
-        if schedule:
-            write_beat_schedule_cache(schedule)
+        """Сохраняет актуальное расписание в кэш после загрузки модулей."""
+        if not self._use_config_cache:
+            return
+        schedule = self._build_beat_schedules()
+        write_beat_schedule_cache(schedule)
+
+    def _build_beat_schedules(self) -> Dict[str, Dict[str, Any]]:
+        """Собирает расписания из загруженных конфигов модулей."""
+        schedules: Dict[str, Dict[str, Any]] = {}
+        for config in self.modules_configs.values():
+            schedules.update(config.get_beat_schedule())
+        return schedules
 
     def _create_default_config(self, module_name: str, app_path: str = None) -> CeleryBeatModuleConfig:
         """Создает базовую конфигурацию Beat для модуля"""
@@ -93,13 +102,10 @@ class CeleryBeatModuleManager:
         return DefaultBeatModuleConfig(module_name)
     
     def get_all_beat_schedules(self) -> Dict[str, Dict[str, Any]]:
-        """Собирает расписания (из кэша или модулей)."""
-        if self._cached_schedule is not None:
-            return self._cached_schedule
-        schedules = {}
-        for config in self.modules_configs.values():
-            schedules.update(config.get_beat_schedule())
-        return schedules
+        """Собирает расписания из конфигов модулей (с учётом runtime-настроек)."""
+        if not self.modules_configs:
+            self._load_modules_from_cache()
+        return self._build_beat_schedules()
     
     def get_module_loggers(self) -> Dict[str, Dict[str, logging.Logger]]:
         """Собирает все логгеры Beat из всех модулей"""

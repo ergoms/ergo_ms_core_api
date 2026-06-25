@@ -234,6 +234,29 @@ class PermissionService:
             and user_role.is_active
             and PermissionService._is_admin_role(user_role.role)
         )
+
+    @staticmethod
+    def resolve_display_role(
+        user: User,
+        user_role: Optional[UserRole] = None,
+        *,
+        admin_role: Optional[Role] = None,
+    ) -> Optional[Role]:
+        """
+        Эффективная роль для отображения в админ-панели.
+
+        Суперпользователь и is_staff без явной роли показываются как «Администратор».
+        """
+        if getattr(user, 'is_superuser', False):
+            return admin_role or PermissionService._get_or_create_admin_role()
+
+        if user_role and user_role.role:
+            return user_role.role
+
+        if getattr(user, 'is_staff', False):
+            return admin_role or PermissionService._get_or_create_admin_role()
+
+        return None
     
     @staticmethod
     def check_url_access(user: User, url_path: str) -> bool:

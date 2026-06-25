@@ -90,6 +90,7 @@ class GeneralSettingsViewSet(viewsets.ModelViewSet):
 class AppearanceSettingsViewSet(viewsets.ModelViewSet):
     queryset = AppearanceSettings.objects.all()
     serializer_class = AppearanceSettingsSerializer
+    permission_classes = [IsAuthenticated, IsGlobalAdmin]
     
     @action(detail=False, methods=['get'], url_path='last')
     def get_last_settings(self, request):
@@ -173,24 +174,32 @@ class AppearanceSettingsViewSet(viewsets.ModelViewSet):
 class SecuritySettingsViewSet(viewsets.ModelViewSet):
     queryset = SecuritySettings.objects.all()
     serializer_class = SecuritySettingsSerializer
+    permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
 class MediaSettingsViewSet(viewsets.ModelViewSet):
     queryset = MediaSettings.objects.all()
     serializer_class = MediaSettingsSerializer
+    permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
 class PermalinkSettingsViewSet(viewsets.ModelViewSet):
     queryset = PermalinkSettings.objects.all()
     serializer_class = PermalinkSettingsSerializer
+    permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
 class EmailSettingsViewSet(viewsets.ModelViewSet):
     queryset = EmailSettings.objects.all()
     serializer_class = EmailSettingsSerializer
+    permission_classes = [IsAuthenticated, IsGlobalAdmin]
+
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
+    permission_classes = [IsAuthenticated, IsGlobalAdmin]
+
 class TagViewSet(viewsets.ModelViewSet):
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
+    permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
 class UserAvatarViewSet(MediaApiFileMixin, viewsets.ModelViewSet):
     queryset = UserAvatar.objects.all()
@@ -250,7 +259,11 @@ class ThemeViewSet(viewsets.ModelViewSet):
     """ViewSet для управления темами оформления"""
     queryset = Theme.objects.all()
     serializer_class = ThemeSerializer
-    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve', 'get_active_theme'):
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsGlobalAdmin()]
     
     def get_queryset(self):
         queryset = Theme.objects.all()

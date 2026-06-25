@@ -5,7 +5,6 @@
 чтобы избежать дублирования логики чтения кэша и fingerprint.
 """
 
-import pickle
 import os
 import subprocess
 import sys
@@ -18,6 +17,30 @@ API_DIR = SCRIPT_DIR.parent
 PROJECT_ROOT = API_DIR.parent.parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
+
+
+def _bootstrap_project_env() -> None:
+    """Подгружает API_SECRET_KEY из .env до django.setup (для подписи кэша)."""
+    if os.environ.get('API_SECRET_KEY'):
+        return
+    env_path = PROJECT_ROOT / '.env'
+    if not env_path.is_file():
+        return
+    try:
+        for line in env_path.read_text(encoding='utf-8').splitlines():
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, _, value = line.partition('=')
+            if key.strip() == 'API_SECRET_KEY':
+                os.environ['API_SECRET_KEY'] = value.strip().strip('"').strip("'")
+                return
+    except OSError:
+        pass
+
+
+_bootstrap_project_env()
+
 MODULES_DIR = PROJECT_ROOT / 'modules'
 WORKERS_CONFIG = PROJECT_ROOT / 'celery_workers.yaml'
 CACHE_DIR = PROJECT_ROOT / 'virtual_env' / 'cache'
@@ -29,6 +52,13 @@ LOCK_MAX_AGE = 120
 
 def _pid_exists(pid: int) -> bool:
     """Кроссплатформенная проверка существования процесса."""
+    if pid <= 0:
+        return False
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except Exception:
+        pass
     try:
         os.kill(pid, 0)
         return True
@@ -36,7 +66,7 @@ def _pid_exists(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    except OSError:
+    except (OSError, SystemError):
         return False
 
 
@@ -63,14 +93,10 @@ def get_fingerprint() -> Dict[str, float]:
 
 
 def _load_bin_cache(path: Path) -> Optional[Dict]:
-    """Загружает бинарный кэш (pickle). Возвращает None при ошибке."""
-    if not path.exists() or path.stat().st_size == 0:
-        return None
-    try:
-        with open(path, 'rb') as f:
-            return pickle.load(f)
-    except (pickle.PickleError, OSError, EOFError):
-        return None
+    """Загружает кэш (JSON+HMAC через cache_io). Возвращает None при ошибке."""
+    from src.core.utils.cache_io import read_bin_cache
+    data = read_bin_cache(path)
+    return data if isinstance(data, dict) else None
 
 
 def read_queues_cache() -> List[str]:

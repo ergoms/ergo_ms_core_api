@@ -290,7 +290,7 @@ if IS_CELERY_PROCESS:
     # Синхронизация задач Beat с БД (django-celery-beat) — в фоне, не блокирует старт
     # -----------------------------------------------------------------------
 
-    if IS_BEAT and CELERY_BEAT_SCHEDULER and CELERY_BEAT_SCHEDULER_DB_ALIAS and CELERY_BEAT_SCHEDULE:
+    if IS_BEAT and CELERY_BEAT_SCHEDULER and CELERY_BEAT_SCHEDULER_DB_ALIAS:
         import threading
 
         def _run_beat_sync() -> None:
@@ -304,7 +304,7 @@ if IS_CELERY_PROCESS:
                 from src.core.utils.celery_beat.sync import CeleryBeatSyncManager
 
                 sync_manager = CeleryBeatSyncManager(
-                    config_schedule=CELERY_BEAT_SCHEDULE,
+                    config_schedule=CELERY_BEAT_SCHEDULE or {},
                     db_alias=CELERY_BEAT_SCHEDULER_DB_ALIAS,
                 )
                 sync_results = sync_manager.sync_all()
