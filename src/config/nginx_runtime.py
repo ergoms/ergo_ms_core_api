@@ -107,7 +107,7 @@ def effective_media_public_host(default: str = 'localhost') -> str:
 def effective_media_public_port(default: str = '8003') -> str:
     if nginx_enabled():
         return env.str('MEDIA_API_PORT', default=nginx_listen_port())
-    return env.str('MEDIA_API_PORT', default=default)
+    return env.str('MEDIA_API_BIND_PORT', default=default)
 
 
 def effective_cors_origins(default_origins: list[str]) -> list[str]:
