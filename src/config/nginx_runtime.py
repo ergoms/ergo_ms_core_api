@@ -65,6 +65,14 @@ def nginx_use_https() -> bool:
     return nginx_listen_port() == '443'
 
 
+def nginx_host_policy() -> str:
+    """allow | redirect | deny — см. NGINX_HOST_POLICY в .env."""
+    value = env.str('NGINX_HOST_POLICY', default='allow').strip().lower()
+    if value in ('allow', 'redirect', 'deny'):
+        return value
+    return 'allow'
+
+
 def nginx_public_base_url() -> str:
     override = env.str('FRONTEND_BASE_URL', default='').strip()
     if override and not nginx_enabled():
