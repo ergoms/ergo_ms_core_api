@@ -12,7 +12,11 @@ from dataclasses import dataclass
 from django.core.mail import EmailMultiAlternatives
 
 from src.core.utils.smtp_errors import format_smtp_error
-from src.core.utils.smtp_resolver import resolve_connection_and_from
+from src.core.utils.smtp_resolver import (
+    EMAIL_DISABLED_MESSAGE,
+    is_email_enabled,
+    resolve_connection_and_from,
+)
 
 from .email_templates import EmailTemplateResolver, RenderedEmail
 
@@ -30,6 +34,10 @@ class MailService:
 
     @staticmethod
     def send_notification_email(*, notification, recipient_email: str) -> SendResult:
+        if not is_email_enabled():
+            logger.debug('MailService: %s', EMAIL_DISABLED_MESSAGE)
+            return SendResult(success=False, error=EMAIL_DISABLED_MESSAGE)
+
         connection, from_email = resolve_connection_and_from()
         if not from_email:
             msg = 'SMTP не настроен (нет EmailSettings в БД и DEFAULT_FROM_EMAIL в env)'

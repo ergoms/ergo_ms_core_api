@@ -22,6 +22,7 @@ def _create_notification(
     link_url=None,
     route=None,
     meta=None,
+    actions=None,
     idempotency_key=None,
 ):
     """Создать уведомление и доставить его по всем зарегистрированным каналам.
@@ -38,6 +39,7 @@ def _create_notification(
         link_url (str|None): прямой URL для перехода.
         route (dict|None): {'name': '<RouteName>', 'params': {...}} для Vue Router.
         meta (dict|None): произвольные данные.
+        actions (list|None): кнопки [{id, label, style, handler}] для in_app.
         idempotency_key (str|None): защита от дублей при повторной доставке.
 
     Возвращает Notification или None при некорректных данных.
@@ -53,5 +55,6 @@ def _create_notification(
         link_url=link_url,
         route=route,
         meta=meta,
+        actions=actions,
         idempotency_key=idempotency_key,
     )

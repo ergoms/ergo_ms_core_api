@@ -44,6 +44,14 @@ def send_notification_email_task(self, notification_id: int):
     if delivery.status == NotificationEmailDelivery.STATUS_SENT:
         return  # идемпотентность при Celery-retry/повторной постановке
 
+    from src.core.utils.smtp_resolver import is_email_enabled
+
+    if not is_email_enabled():
+        delivery.status = NotificationEmailDelivery.STATUS_SKIPPED
+        delivery.error_message = 'Email отключён глобально'
+        delivery.save(update_fields=['status', 'error_message'])
+        return
+
     # Настройки могли измениться между dispatch и выполнением задачи
     if not PreferenceResolver.is_enabled(
         recipient.pk,

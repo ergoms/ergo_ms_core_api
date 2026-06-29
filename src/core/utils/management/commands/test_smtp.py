@@ -13,6 +13,7 @@ from src.core.utils.smtp_resolver import (
     SourceType,
     build_connection,
     describe_security,
+    is_email_enabled,
     resolve_connection_and_from,
     resolve_smtp_config,
     validate_config,
@@ -48,6 +49,12 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        if not is_email_enabled():
+            raise CommandError(
+                'Исходящая почта отключена (EMAIL_ENABLED=false). '
+                'Установите EMAIL_ENABLED=true в .env для проверки SMTP.'
+            )
+
         source: SourceType = options['source']
         check_only: bool = options['check_only']
         recipient_raw = options['recipient']

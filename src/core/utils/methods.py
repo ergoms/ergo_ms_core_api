@@ -16,6 +16,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 
 from src.core.utils.smtp_errors import format_smtp_error
+from src.core.utils.smtp_resolver import EMAIL_DISABLED_MESSAGE, is_email_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,12 @@ def parse_errors_to_dict(error_dict: Dict[str, list]) -> Dict[str, str]:
     flatten('', error_dict)
     return parsed_errors
 
+def _check_email_enabled() -> Tuple[bool, Optional[str]] | None:
+    """None — email включён; иначе (False, сообщение об ошибке)."""
+    if not is_email_enabled():
+        return False, EMAIL_DISABLED_MESSAGE
+    return None
+
 def send_confirmation_email(email: str, code: str) -> Tuple[bool, Optional[str]]:
     """
     Отправляет email с кодом подтверждения.
@@ -66,6 +73,10 @@ def send_confirmation_email(email: str, code: str) -> Tuple[bool, Optional[str]]
     """
     import logging
     logger = logging.getLogger(__name__)
+
+    disabled = _check_email_enabled()
+    if disabled is not None:
+        return disabled
     
     try:
         default_from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
@@ -140,6 +151,10 @@ def generate_secure_random_password(length: int = 16, max_attempts: int = 50) ->
 
 def send_admin_password_reset_notification(email: str) -> Tuple[bool, Optional[str]]:
     """Уведомление о сбросе пароля администратором (без пароля и без кода)."""
+    disabled = _check_email_enabled()
+    if disabled is not None:
+        return disabled
+
     try:
         default_from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
         if not default_from_email:
@@ -195,6 +210,10 @@ def send_registration_invitation_email(
     ttl_days: int,
 ) -> Tuple[bool, Optional[str]]:
     """Отправляет email с ссылкой-приглашением на регистрацию."""
+    disabled = _check_email_enabled()
+    if disabled is not None:
+        return disabled
+
     try:
         default_from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
         if not default_from_email:

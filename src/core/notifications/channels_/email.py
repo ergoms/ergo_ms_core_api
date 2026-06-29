@@ -30,6 +30,15 @@ class EmailChannel:
         ):
             return
 
+        from src.core.utils.smtp_resolver import is_email_enabled
+
+        if not is_email_enabled():
+            logger.debug(
+                'EmailChannel: пропуск notification=%s — EMAIL_ENABLED=false',
+                notification.pk,
+            )
+            return
+
         notification_id = notification.pk
 
         def _enqueue():

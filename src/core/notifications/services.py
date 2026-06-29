@@ -5,6 +5,8 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
+from src.core.integrations import bridge
+
 from .channels_ import get_channels
 from .models import Notification
 from .preferences import PreferenceResolver
@@ -50,6 +52,7 @@ class NotificationService:
         link_url: str | None = None,
         route: dict | None = None,
         meta: dict | None = None,
+        actions: list | None = None,
         idempotency_key: str | None = None,
     ) -> Notification | None:
         recipient_id, ok = _resolve_recipient(recipient)
@@ -73,6 +76,7 @@ class NotificationService:
             )
             return None
 
+        action_list = actions if isinstance(actions, list) else []
         defaults = {
             'title': title,
             'body': body or '',
@@ -83,6 +87,8 @@ class NotificationService:
             'link_url': link_url or '',
             'route': route,
             'meta': meta or {},
+            'actions': action_list,
+            'actions_state': 'pending' if action_list else None,
             # email-only уведомление хранит данные для письма, но скрыто из inbox
             'in_app_visible': enabled_channels.get('in_app', True),
         }
@@ -136,3 +142,88 @@ class NotificationService:
         return Notification.objects.filter(
             recipient=user, is_read=False, in_app_visible=True,
         ).count()
+
+    @staticmethod
+    @transaction.atomic
+    def execute_action(notification_id: int, user, action_id: str) -> dict:
+        """Выполнить интерактивное действие уведомления через ModuleBridge."""
+        try:
+            notification = Notification.objects.select_for_update().get(
+                pk=notification_id,
+                recipient=user,
+                in_app_visible=True,
+            )
+        except Notification.DoesNotExist:
+            return {'success': False, 'error': 'not_found'}
+
+        if notification.actions_state != 'pending':
+            return {'success': False, 'error': 'not_pending'}
+
+        action_def = None
+        for item in notification.actions or []:
+            if isinstance(item, dict) and item.get('id') == action_id:
+                action_def = item
+                break
+        if not action_def:
+            return {'success': False, 'error': 'invalid_action'}
+
+        handler = action_def.get('handler') or ''
+        if not handler or not bridge.has(handler):
+            logger.warning(
+                'NotificationService.execute_action: handler %r не зарегистрирован',
+                handler,
+            )
+            return {'success': False, 'error': 'handler_unavailable'}
+
+        try:
+            result = bridge.call(
+                handler,
+                notification=notification,
+                action_id=action_id,
+                user=user,
+            )
+        except Exception:
+            logger.exception(
+                'NotificationService.execute_action: handler %s упал для #%s',
+                handler,
+                notification_id,
+            )
+            return {'success': False, 'error': 'handler_failed'}
+
+        if not isinstance(result, dict) or not result.get('success'):
+            return {
+                'success': False,
+                'error': result.get('error', 'handler_rejected') if isinstance(result, dict) else 'handler_rejected',
+                'message': result.get('message', '') if isinstance(result, dict) else '',
+            }
+
+        now = timezone.now()
+        update_fields = [
+            'actions_state',
+            'resolved_action_id',
+            'resolved_at',
+            'is_read',
+            'read_at',
+        ]
+        notification.actions_state = 'resolved'
+        notification.resolved_action_id = action_id
+        notification.resolved_at = now
+        notification.is_read = True
+        notification.read_at = now
+
+        update_payload = result.get('update') if isinstance(result.get('update'), dict) else {}
+        if update_payload.get('body') is not None:
+            notification.body = update_payload['body']
+            update_fields.append('body')
+        if update_payload.get('level'):
+            notification.level = update_payload['level']
+            update_fields.append('level')
+
+        notification.save(update_fields=update_fields)
+
+        return {
+            'success': True,
+            'message': result.get('message', ''),
+            'notification': notification,
+            'unread_count': NotificationService.unread_count(user),
+        }

@@ -63,6 +63,30 @@ class Notification(models.Model):
         default=dict,
         verbose_name='Доп. данные',
     )
+    actions = models.JSONField(
+        blank=True,
+        default=list,
+        verbose_name='Кнопки действий',
+        help_text='Список {id, label, style, handler} для интерактивных уведомлений',
+    )
+    actions_state = models.CharField(
+        max_length=16,
+        blank=True,
+        null=True,
+        verbose_name='Состояние действий',
+        help_text='null — без действий; pending / resolved / expired',
+    )
+    resolved_action_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        verbose_name='Выбранное действие',
+    )
+    resolved_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        verbose_name='Действие выполнено в',
+    )
     idempotency_key = models.CharField(
         max_length=255,
         blank=True,

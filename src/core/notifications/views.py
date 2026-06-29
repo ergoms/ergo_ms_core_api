@@ -75,6 +75,21 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             'unread_count': 0,
         })
 
+    @action(detail=True, methods=['post'], url_path='execute_action')
+    def execute_action(self, request, pk=None):
+        action_id = (request.data.get('action_id') or '').strip()
+        if not action_id:
+            return Response({'success': False, 'error': 'action_id_required'}, status=400)
+
+        result = NotificationService.execute_action(pk, request.user, action_id)
+        if result.get('error') == 'not_found':
+            return Response({'success': False, 'error': 'not_found'}, status=404)
+
+        notification = result.pop('notification', None)
+        if notification is not None:
+            result['notification'] = NotificationSerializer(notification).data
+        return Response(result, status=200 if result.get('success') else 400)
+
     @action(detail=False, methods=['get', 'patch'], url_path='preferences')
     def preferences(self, request):
         """Настройки уведомлений текущего пользователя.

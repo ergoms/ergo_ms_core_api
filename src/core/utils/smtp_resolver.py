@@ -11,6 +11,8 @@ from django.core.mail import get_connection
 
 logger = logging.getLogger(__name__)
 
+EMAIL_DISABLED_MESSAGE = 'Email отключён (EMAIL_ENABLED=false)'
+
 SourceType = Literal['auto', 'env', 'db']
 ConfigSource = Literal['db', 'env']
 
@@ -25,6 +27,10 @@ class SmtpConfig:
     use_ssl: bool
     from_email: str
     source: ConfigSource
+
+
+def is_email_enabled() -> bool:
+    return bool(getattr(settings, 'EMAIL_ENABLED', False))
 
 
 def _infer_ssl_flags(*, port: int, use_tls: bool, use_ssl: bool | None = None) -> tuple[bool, bool]:
@@ -85,6 +91,9 @@ def _config_from_env() -> SmtpConfig | None:
 
 
 def resolve_smtp_config(source: SourceType = 'auto') -> SmtpConfig | None:
+    if not is_email_enabled():
+        return None
+
     if source in ('auto', 'db'):
         record = _load_db_record()
         if record is not None:
@@ -96,6 +105,9 @@ def resolve_smtp_config(source: SourceType = 'auto') -> SmtpConfig | None:
 
 
 def validate_config(config: SmtpConfig | None) -> list[str]:
+    if not is_email_enabled():
+        return [EMAIL_DISABLED_MESSAGE]
+
     if config is None:
         return ['SMTP не настроен (нет EmailSettings в БД и DEFAULT_FROM_EMAIL в env)']
 
@@ -127,6 +139,9 @@ def build_connection(config: SmtpConfig):
 
 def resolve_connection_and_from(source: SourceType = 'auto'):
     """(connection | None, from_email | None). None-connection = дефолт Django (env)."""
+    if not is_email_enabled():
+        return None, None
+
     config = resolve_smtp_config(source=source)
     if config is None:
         return None, None
