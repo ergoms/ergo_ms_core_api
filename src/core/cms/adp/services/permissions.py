@@ -360,6 +360,7 @@ class PermissionService:
         user_role = PermissionService.get_user_role(user)
         
         if not user_role:
+            is_global_admin = PermissionService.is_admin(user)
             return {
                 'user_id': user.id,
                 'username': user.username,
@@ -367,7 +368,8 @@ class PermissionService:
                 'role_groups': [],
                 'allowed_urls': [],
                 'denied_urls': [],
-                'module_permissions': []
+                'module_permissions': [],
+                'is_global_admin': is_global_admin,
             }
         
         # Собираем разрешенные и запрещенные URL
@@ -418,7 +420,8 @@ class PermissionService:
             'role_groups': list(role_groups),
             'allowed_urls': allowed_urls,
             'denied_urls': denied_urls,
-            'module_permissions': module_permissions
+            'module_permissions': module_permissions,
+            'is_global_admin': PermissionService.is_admin(user),
         }
     
     @staticmethod
