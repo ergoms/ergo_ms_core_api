@@ -183,6 +183,7 @@ def _build_admin_user_list_item(user, user_role=None, admin_role=None):
         'first_name': user.first_name or '',
         'last_name': user.last_name or '',
         'date_joined': user.date_joined,
+        'last_login': user.last_login,
         'role': role,
         'role_groups': role_groups,
         'avatar_url': _get_user_avatar_url(user),
