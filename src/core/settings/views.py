@@ -15,7 +15,7 @@ from .serializers import CategorySerializer
 from .models import UserAvatar
 from .serializers import UserAvatarSerializer
 from rest_framework.permissions import IsAuthenticated
-from src.core.utils.mixins import MediaApiFileMixin
+from src.core.utils.mixins import MediaApiFileMixin, read_storage_file_bytes
 from django.forms.models import model_to_dict
 from .audit import log_audit
 from .models import AuditLog
@@ -87,7 +87,19 @@ class GeneralSettingsViewSet(viewsets.ModelViewSet):
 
         instance.delete()
 
-class AppearanceSettingsViewSet(viewsets.ModelViewSet):
+class _ThemeImportMixin(MediaApiFileMixin):
+    """Чтение JSON-темы из прямой загрузки или из пути media_api."""
+
+    def _read_theme_json(self, request):
+        file, file_path = self.get_file_or_path('file')
+        if file_path:
+            return read_storage_file_bytes(file_path).decode('utf-8')
+        if file:
+            return file.read().decode('utf-8')
+        return None
+
+
+class AppearanceSettingsViewSet(_ThemeImportMixin, viewsets.ModelViewSet):
     queryset = AppearanceSettings.objects.all()
     serializer_class = AppearanceSettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
@@ -134,16 +146,13 @@ class AppearanceSettingsViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='import-theme')
     def import_theme(self, request):
         """Импорт темы из JSON файла"""
-        file = request.FILES.get('file')
-        if not file:
-            return Response(
-                {'error': 'Файл не передан'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
         try:
-            # Читаем JSON из файла
-            file_content = file.read().decode('utf-8')
+            file_content = self._read_theme_json(request)
+            if file_content is None:
+                return Response(
+                    {'error': 'Файл не передан'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             theme_data = json.loads(file_content)
             
             # Валидация структуры
@@ -223,11 +232,9 @@ class UserAvatarViewSet(MediaApiFileMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         if self.request.user.is_authenticated:
             UserAvatar.objects.filter(user=self.request.user).delete()
-            file, file_path = self.get_file_or_path('image')
-            instance = serializer.save(user=self.request.user)
-            if file_path:
-                self.assign_file_field(instance, 'image', file_path=file_path)
-                instance.save()
+            if self.request.data.get('image_path') or self.request.FILES.get('image'):
+                self.get_file_or_path('image')
+            serializer.save(user=self.request.user)
     
     @action(detail=False, methods=['delete'], url_path='current')
     def delete_current(self, request):
@@ -255,7 +262,7 @@ class AuditLogViewSet(ReadOnlyModelViewSet):
     ordering = ['-timestamp']
 
 
-class ThemeViewSet(viewsets.ModelViewSet):
+class ThemeViewSet(_ThemeImportMixin, viewsets.ModelViewSet):
     """ViewSet для управления темами оформления"""
     queryset = Theme.objects.all()
     serializer_class = ThemeSerializer
@@ -355,15 +362,13 @@ class ThemeViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='import')
     def import_theme(self, request):
         """Импорт темы из JSON файла"""
-        file = request.FILES.get('file')
-        if not file:
-            return Response(
-                {'error': 'Файл не передан'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
         try:
-            file_content = file.read().decode('utf-8')
+            file_content = self._read_theme_json(request)
+            if file_content is None:
+                return Response(
+                    {'error': 'Файл не передан'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             theme_data = json.loads(file_content)
             
             # Валидация обязательных полей

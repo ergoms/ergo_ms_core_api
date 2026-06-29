@@ -4,6 +4,32 @@ from django.core.files.storage import default_storage
 from rest_framework.exceptions import ValidationError
 
 
+def validate_media_path(file_path: str, field_name: str = 'file') -> str:
+    """
+    Нормализует и проверяет путь к файлу внутри MEDIA_ROOT.
+    Возвращает путь в формате storage (слэши /).
+    """
+    if not isinstance(file_path, str) or not file_path.strip():
+        raise ValidationError({field_name: 'Недопустимое значение пути к файлу'})
+    normalized = os.path.normpath(file_path.replace('\\', '/').lstrip('/'))
+    if normalized.startswith('..') or os.path.isabs(normalized):
+        raise ValidationError({field_name: 'Недопустимый путь к файлу'})
+    base_location = os.path.realpath(default_storage.location)
+    resolved = os.path.realpath(os.path.join(base_location, normalized))
+    if resolved != base_location and not resolved.startswith(base_location + os.sep):
+        raise ValidationError({field_name: 'Недопустимый путь к файлу'})
+    storage_name = normalized.replace(os.sep, '/')
+    if not default_storage.exists(storage_name):
+        raise ValidationError({field_name: f'Файл не найден: {storage_name}'})
+    return storage_name
+
+
+def read_storage_file_bytes(storage_name: str) -> bytes:
+    """Прочитать содержимое файла из хранилища по проверенному пути."""
+    with default_storage.open(storage_name, 'rb') as file_obj:
+        return file_obj.read()
+
+
 class SwaggerSafeMixin:
     """
     Миксин для безопасной работы с Swagger генерацией схемы.
@@ -49,19 +75,7 @@ class MediaApiFileMixin:
         """
         file_path = self.request.data.get(f'{field_name}_path')
         if file_path:
-            if not isinstance(file_path, str) or not file_path.strip():
-                raise ValidationError({field_name: 'Недопустимое значение пути к файлу'})
-            normalized = os.path.normpath(file_path.replace('\\', '/').lstrip('/'))
-            if normalized.startswith('..') or os.path.isabs(normalized):
-                raise ValidationError({field_name: 'Недопустимый путь к файлу'})
-            base_location = os.path.realpath(default_storage.location)
-            resolved = os.path.realpath(os.path.join(base_location, normalized))
-            if resolved != base_location and not resolved.startswith(base_location + os.sep):
-                raise ValidationError({field_name: 'Недопустимый путь к файлу'})
-            storage_name = normalized.replace(os.sep, '/')
-            if not default_storage.exists(storage_name):
-                raise ValidationError({field_name: f'Файл не найден: {storage_name}'})
-            return None, storage_name
+            return None, validate_media_path(file_path, field_name)
         return self.request.FILES.get(field_name), None
 
     @staticmethod

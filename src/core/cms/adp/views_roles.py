@@ -4,7 +4,7 @@ Views для управления ролями, политиками и прав
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
@@ -1082,7 +1082,7 @@ class AdminUserAvatarView(MediaApiFileMixin, BaseAPIViewAuthMixin, BaseAPIView):
     Загрузка и удаление аватара пользователя администратором.
     """
     permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def _get_target_user(self, user_id):
         try:

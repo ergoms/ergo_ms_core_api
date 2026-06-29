@@ -1,7 +1,7 @@
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.serializers import ValidationError as DRFValidationError
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -31,14 +31,25 @@ from src.core.cms.adp.serializers import (
     UpdateUserProfileSerializer,
 )
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
+from src.core.utils.mixins import MediaApiFileMixin, read_storage_file_bytes
 
 from django.contrib.auth.models import User
+import os
 import logging
 
 from src.core.cms.adp.password_policy import validate_new_password_pair
 from src.core.cms.adp.services.password_reset import PasswordResetService
 from src.core.utils.database.main import OrderedDictQueryExecutor
 from src.config.settings.auth import get_token_lifetime
+from src.core.cms.adp.services.session_devices import (
+    attach_device_claim,
+    attach_device_to_refresh_token,
+    bind_device_to_refresh_token,
+    is_current_device,
+    revoke_user_device_session,
+    touch_device_activity,
+)
+from src.core.cms.adp.user_agent_utils import build_device_display_name, get_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -406,21 +417,19 @@ class UserAuthorizationView(BaseAPIView):
             user = authenticate(request, username=username, password=password)
 
             if user is not None:
-                # Создаем или обновляем информацию об устройстве
-                self._create_or_update_device(request, user)
-                
-                # Получаем время жизни токенов в зависимости от remember_me
+                device = self._create_or_update_device(request, user)
+
                 access_lifetime, refresh_lifetime = get_token_lifetime(remember_me)
-                
-                # Создаем токены с кастомным временем жизни
+
                 refresh = RefreshToken.for_user(user)
                 refresh.set_exp(lifetime=refresh_lifetime)
-                
-                # ВАЖНО: сохраняем access_token в переменную, т.к. каждое обращение
-                # к refresh.access_token создаёт новый токен с дефолтным временем
+
                 access_token = refresh.access_token
                 access_token.set_exp(lifetime=access_lifetime)
-                
+                bind_device_to_refresh_token(device, refresh)
+                attach_device_to_refresh_token(refresh, device)
+                attach_device_claim(access_token, device)
+
                 return Response(
                     {
                         'refresh': str(refresh),
@@ -443,33 +452,35 @@ class UserAuthorizationView(BaseAPIView):
         )
     
     def _create_or_update_device(self, request, user):
-        """Создает или обновляет информацию об устройстве пользователя"""
-        ip_address = self._get_client_ip(request)
+        """Создаёт или обновляет сессию устройства (отдельно для каждого браузера)."""
+        ip_address = get_client_ip(request)
         user_agent = request.META.get('HTTP_USER_AGENT', '')
         device_type = self._detect_device_type(user_agent)
-        device_name = self._get_device_name(user_agent, device_type)
-        
-        # Ищем существующее устройство по пользователю и IP
-        try:
-            device = UserDevice.objects.get(user=user, ip_address=ip_address)
-            # Обновляем существующее устройство
+        device_name = build_device_display_name(user_agent, device_type)
+
+        device = UserDevice.objects.filter(
+            user=user,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        ).first()
+
+        if device is not None:
             device.is_active = True
-            device.user_agent = user_agent
             device.device_name = device_name
             device.device_type = device_type
-            device.save()
-        except UserDevice.DoesNotExist:
-            # Создаем новое устройство
-            device = UserDevice.objects.create(
-                user=user,
-                ip_address=ip_address,
-                device_type=device_type,
-                device_name=device_name,
-                user_agent=user_agent,
-                city='Неизвестно',  # Можно добавить геолокацию позже
-                country='Неизвестно',
-                is_active=True,
-            )
+            device.save(update_fields=['is_active', 'device_name', 'device_type', 'last_activity'])
+            return device
+
+        return UserDevice.objects.create(
+            user=user,
+            ip_address=ip_address,
+            device_type=device_type,
+            device_name=device_name,
+            user_agent=user_agent,
+            city='Неизвестно',
+            country='Неизвестно',
+            is_active=True,
+        )
     
     def _get_client_ip(self, request):
         """Получает IP адрес клиента"""
@@ -577,38 +588,38 @@ class ProtectedView(BaseAPIViewAuthMixin):
         security=[{'Bearer': []}]
     )
     def get(self, request):
-        # Обновляем последнюю активность текущего устройства
-        self._update_device_activity(request)
-        
-        # Создаем профиль если его нет
-        profile, created = UserProfile.objects.get_or_create(user=request.user)
-        
-        # Возвращаем пустой ответ - успешный статус 200 означает валидный токен
-        # Все данные пользователя загружаются через /profile/
+        if touch_device_activity(request) is None:
+            self._ensure_legacy_device(request)
+
+        UserProfile.objects.get_or_create(user=request.user)
+
         return Response({}, status=status.HTTP_200_OK)
-    
-    def _update_device_activity(self, request):
-        """Обновляет последнюю активность устройства пользователя"""
-        try:
-            ip_address = self._get_client_ip(request)
-            device = UserDevice.objects.get(user=request.user, ip_address=ip_address, is_active=True)
-            device.save()  # Обновит last_activity благодаря auto_now=True
-        except UserDevice.DoesNotExist:
-            # Если устройство не найдено, создаем его
-            user_agent = request.META.get('HTTP_USER_AGENT', '')
-            device_type = self._detect_device_type(user_agent)
-            device_name = self._get_device_name(user_agent, device_type)
-            
-            UserDevice.objects.create(
-                user=request.user,
-                ip_address=ip_address,
-                device_type=device_type,
-                device_name=device_name,
-                user_agent=user_agent,
-                city='Неизвестно',
-                country='Неизвестно',
-                is_active=True,
-            )
+
+    def _ensure_legacy_device(self, request):
+        """Создаёт запись устройства для старых токенов без device_id."""
+        ip_address = get_client_ip(request)
+        user_agent = request.META.get('HTTP_USER_AGENT', '')
+        if UserDevice.objects.filter(
+            user=request.user,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            is_active=True,
+        ).exists():
+            return
+
+        device_type = self._detect_device_type(user_agent)
+        device_name = build_device_display_name(user_agent, device_type)
+
+        UserDevice.objects.create(
+            user=request.user,
+            ip_address=ip_address,
+            device_type=device_type,
+            device_name=device_name,
+            user_agent=user_agent,
+            city='Неизвестно',
+            country='Неизвестно',
+            is_active=True,
+        )
     
     def _get_client_ip(self, request):
         """Получает IP адрес клиента"""
@@ -744,8 +755,16 @@ class UserDevicesView(BaseAPIViewAuthMixin):
         # Обновляем активность устройства
         self._update_device_activity(request)
         
-        devices = UserDevice.objects.filter(user=request.user).order_by('-last_activity')
-        serializer = UserDeviceSerializer(devices, many=True)
+        devices = (
+            UserDevice.objects
+            .filter(user=request.user, is_active=True)
+            .order_by('-last_activity')
+        )
+        serializer = UserDeviceSerializer(
+            devices,
+            many=True,
+            context={'request': request},
+        )
         return Response(serializer.data, status=status.HTTP_200_OK)
     
     def _update_device_activity(self, request):
@@ -778,9 +797,14 @@ class UserDeviceDetailView(BaseAPIViewAuthMixin):
     def delete(self, request, device_id):
         try:
             device = UserDevice.objects.get(id=device_id, user=request.user)
-            device.delete()
+            if is_current_device(request, device):
+                return Response(
+                    {'error': 'Нельзя завершить текущую сессию'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            revoke_user_device_session(device)
             return Response(
-                {"message": "Устройство успешно удалено."}, 
+                {"message": "Сессия завершена."},
                 status=status.HTTP_200_OK
             )
         except UserDevice.DoesNotExist:
@@ -903,14 +927,14 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
         return Response({"message": "Настройки безопасности обновлены."}, status=status.HTTP_200_OK)
 
 
-class ImportUsersView(BaseAPIViewAuthMixin):
+class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
     """
     Импорт пользователей из Excel или CSV файла через Celery с real-time прогрессом.
     Ожидаемые столбцы: Фамилия, Имя, Отчество, Логин, E-mail.
     Пароль по умолчанию: "1".
     Проверка дубликатов по ФИО.
     """
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     @swagger_auto_schema(
         operation_description="Импорт пользователей из Excel (.xlsx, .xls) или CSV файла через Celery.",
@@ -920,6 +944,12 @@ class ImportUsersView(BaseAPIViewAuthMixin):
                 openapi.IN_FORM,
                 type=openapi.TYPE_FILE,
                 description='Файл Excel или CSV с пользователями'
+            ),
+            openapi.Parameter(
+                'file_path',
+                openapi.IN_FORM,
+                type=openapi.TYPE_STRING,
+                description='Путь к файлу, загруженному через media_api'
             ),
             openapi.Parameter(
                 'skip_welcome_emails',
@@ -945,41 +975,45 @@ class ImportUsersView(BaseAPIViewAuthMixin):
     )
     def post(self, request):
         from src.core.cms.adp.tasks import import_users_task
-        
-        # Проверяем флаг отключения приветственных писем
-        skip_welcome_emails = request.POST.get('skip_welcome_emails', 'false').lower() in ('true', '1', 'yes')
-        
-        logger.warning(f'Запуск импорта пользователей через Celery. Пользователь: {request.user.username} (ID: {request.user.id}), skip_welcome_emails: {skip_welcome_emails}')
-        
-        if 'file' not in request.FILES:
+
+        skip_raw = request.data.get('skip_welcome_emails', request.POST.get('skip_welcome_emails', 'false'))
+        skip_welcome_emails = str(skip_raw).lower() in ('true', '1', 'yes')
+
+        logger.warning(
+            'Запуск импорта пользователей через Celery. Пользователь: %s (ID: %s), skip_welcome_emails: %s',
+            request.user.username, request.user.id, skip_welcome_emails,
+        )
+
+        file, file_path = self.get_file_or_path('file')
+        if not file and not file_path:
             logger.warning('Попытка импорта без файла')
             return Response(
                 {'error': 'Файл не найден'},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        file = request.FILES['file']
-        file_name = file.name.lower()
-        
-        logger.warning(f'Получен файл для импорта: {file.name}, размер: {file.size} байт')
-        
-        # Проверяем тип файла
+
+        if file:
+            file_content = file.read()
+            original_name = file.name
+        else:
+            file_content = read_storage_file_bytes(file_path)
+            original_name = os.path.basename(file_path)
+
+        file_name = original_name.lower()
+        logger.warning('Получен файл для импорта: %s, размер: %s байт', original_name, len(file_content))
+
         if not file_name.endswith(('.xlsx', '.xls', '.csv')):
-            logger.warning(f'Неподдерживаемый формат файла: {file.name}')
+            logger.warning('Неподдерживаемый формат файла: %s', original_name)
             return Response(
                 {'error': 'Поддерживаются только файлы Excel (.xlsx, .xls) и CSV (.csv)'},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         try:
-            # Читаем содержимое файла в память
-            file_content = file.read()
-            
-            # Запускаем Celery задачу
             task = import_users_task.delay(
                 file_content=file_content,
-                file_name=file.name,
-                skip_welcome_emails=skip_welcome_emails
+                file_name=original_name,
+                skip_welcome_emails=skip_welcome_emails,
             )
             
             logger.warning(f'Celery задача запущена: task_id={task.id}')

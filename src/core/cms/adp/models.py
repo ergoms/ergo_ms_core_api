@@ -75,6 +75,13 @@ class UserDevice(models.Model):
     city = models.CharField(max_length=100, blank=True, null=True)
     country = models.CharField(max_length=100, blank=True, null=True)
     is_active = models.BooleanField(default=False)
+    outstanding_token_jti = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        db_index=True,
+        verbose_name='JTI refresh-токена',
+    )
     last_activity = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
     

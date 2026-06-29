@@ -4,7 +4,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from rest_framework import permissions, viewsets
 from rest_framework.exceptions import PermissionDenied
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
 
 from src.core.utils.mixins import SwaggerSafeMixin, MediaApiFileMixin
 
@@ -106,7 +106,7 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
 class MessageAttachmentViewSet(MediaApiFileMixin, SwaggerSafeMixin, viewsets.ModelViewSet):
     serializer_class = MessageAttachmentSerializer
     permission_classes = [permissions.IsAuthenticated]
-    parser_classes = (MultiPartParser, FormParser)
+    parser_classes = (JSONParser, MultiPartParser, FormParser)
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
 
     def get_queryset(self):

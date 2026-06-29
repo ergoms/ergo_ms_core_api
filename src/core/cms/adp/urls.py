@@ -1,6 +1,6 @@
 from django.urls import path, include
 
-from rest_framework_simplejwt.views import TokenRefreshView
+from src.core.cms.adp.token_refresh import DeviceBoundTokenRefreshView
 
 from src.core.cms.adp.views import (
     UserRegistrationValidationView,
@@ -73,7 +73,7 @@ urlpatterns = [
     path('verify-code/', VerifyConfirmationCodeView.as_view(), name="verify_code"),
     path('reset-password/', ResetPasswordView.as_view(), name="reset_password"),
 
-    path('token-refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('token-refresh/', DeviceBoundTokenRefreshView.as_view(), name='token_refresh'),
     path('protected/', ProtectedView.as_view(), name='protected'),
     
     # Security endpoints

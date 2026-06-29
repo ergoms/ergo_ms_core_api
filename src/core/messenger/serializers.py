@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
+from src.core.utils.mixins import validate_media_path
+
 from .models import Message, MessageAttachment
 from .utils import get_content_type
 
@@ -29,6 +31,11 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
             'created_at',
         )
         read_only_fields = ('id', 'original_filename', 'file_size', 'mime_type', 'file_url', 'created_at')
+
+    def validate_file_path(self, value):
+        if value:
+            return validate_media_path(value, 'file')
+        return value
 
     def validate(self, attrs):
         if not attrs.get('file') and not attrs.get('file_path'):

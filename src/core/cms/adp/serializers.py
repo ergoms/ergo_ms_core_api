@@ -1,6 +1,8 @@
 from rest_framework.serializers import (
     ModelSerializer,
     CharField,
+    EmailField,
+    URLField,
     IntegerField,
     ValidationError,
     Serializer,
@@ -16,6 +18,11 @@ from django.contrib.auth import authenticate
 from src.core.cms.adp.models import (
     UserDevice, UserProfile, Role, RoleGroup,
     Policy, UserRole, ModulePermission, RegistrationInvitation,
+)
+from src.core.cms.adp.user_agent_utils import (
+    format_device_location,
+    get_device_type_display,
+    parse_user_agent,
 )
 from src.core.cms.adp.services.registration import RegistrationService
 from src.core.cms.adp.password_policy import validate_new_password_pair, validate_password_value
@@ -157,10 +164,44 @@ class AdminResetUserPasswordSerializer(Serializer):
 
 
 class UserDeviceSerializer(ModelSerializer):
+    is_current = SerializerMethodField()
+    browser = SerializerMethodField()
+    os = SerializerMethodField()
+    location = SerializerMethodField()
+    device_type_display = SerializerMethodField()
+
     class Meta:
         model = UserDevice
-        fields = ['id', 'device_type', 'device_name', 'ip_address', 'city', 'country', 'is_active', 'last_activity', 'created_at']
-        read_only_fields = ['id', 'ip_address', 'last_activity', 'created_at']
+        fields = [
+            'id', 'device_type', 'device_type_display', 'device_name', 'browser', 'os',
+            'ip_address', 'city', 'country', 'location', 'is_active', 'is_current',
+            'last_activity', 'created_at',
+        ]
+        read_only_fields = [
+            'id', 'device_type', 'device_type_display', 'device_name', 'browser', 'os',
+            'ip_address', 'city', 'country', 'location', 'is_active', 'is_current',
+            'last_activity', 'created_at',
+        ]
+
+    def get_browser(self, obj):
+        return parse_user_agent(obj.user_agent)['browser']
+
+    def get_os(self, obj):
+        return parse_user_agent(obj.user_agent)['os']
+
+    def get_location(self, obj):
+        return format_device_location(obj.city, obj.country)
+
+    def get_device_type_display(self, obj):
+        return get_device_type_display(obj.device_type)
+
+    def get_is_current(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return False
+        from src.core.cms.adp.services.session_devices import is_current_device
+
+        return is_current_device(request, obj)
 
 
 class CMSUserProfileSerializer(ModelSerializer):
@@ -254,33 +295,61 @@ class UpdateUserProfileSerializer(ModelSerializer):
     first_name = CharField(source='user.first_name', required=False, allow_blank=True)
     last_name = CharField(source='user.last_name', required=False, allow_blank=True)
     middle_name = CharField(source='user.middle_name', required=False, allow_blank=True)
-    email = CharField(source='user.email', required=False)
-    
+    email = EmailField(source='user.email', required=False)
+    phone = CharField(required=False, allow_blank=True, allow_null=True)
+    website = URLField(required=False, allow_blank=True, allow_null=True)
+    bio = CharField(required=False, allow_blank=True, allow_null=True)
+    country = CharField(required=False, allow_blank=True, allow_null=True)
+    city = CharField(required=False, allow_blank=True, allow_null=True)
+
     class Meta:
         model = UserProfile
         fields = [
-            'first_name', 'last_name', 'middle_name', 'email', 'phone', 'website', 'bio', 
+            'first_name', 'last_name', 'middle_name', 'email', 'phone', 'website', 'bio',
             'country', 'city', 'language', 'timezone'
         ]
-    
+
+    def validate_email(self, value):
+        if value is None:
+            return value
+
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValidationError('Email обязателен.')
+
+        duplicate_qs = User.objects.filter(email__iexact=normalized)
+        if self.instance is not None:
+            duplicate_qs = duplicate_qs.exclude(pk=self.instance.user_id)
+
+        if duplicate_qs.exists():
+            raise ValidationError('Пользователь с таким email уже существует.')
+
+        return normalized
+
+    def _normalize_blank_profile_value(self, value):
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     def update(self, instance, validated_data):
-        # Обновляем данные пользователя
         user_data = validated_data.pop('user', {})
         if user_data:
             for attr, value in user_data.items():
-                # Для имени, фамилии и отчества разрешаем пустые строки
                 if attr in ['first_name', 'last_name', 'middle_name']:
-                    # Обрабатываем пробелы как пустые строки
-                    if value and value.strip() == '':
+                    if isinstance(value, str) and not value.strip():
                         value = ''
                 setattr(instance.user, attr, value)
             instance.user.save()
-        
-        # Обновляем данные профиля
+
+        nullable_profile_fields = ['phone', 'website', 'bio', 'country', 'city']
         for attr, value in validated_data.items():
+            if attr in nullable_profile_fields:
+                value = self._normalize_blank_profile_value(value)
             setattr(instance, attr, value)
         instance.save()
-        
+
         return instance
 
 

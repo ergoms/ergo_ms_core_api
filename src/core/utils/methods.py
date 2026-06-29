@@ -29,19 +29,28 @@ def _normalize_email_for_recipient(email: str) -> str:
 
 def parse_errors_to_dict(error_dict: Dict[str, list]) -> Dict[str, str]:
     """
-    Преобразует словарь ошибок в строковый формат.
-
-    Аргументы:
-        error_dict (Dict[str, list]): Словарь, где ключи - это поля, а значения - списки ошибок.
-
-    Возвращает:
-        Dict[str, str]: Словарь, где ключи - это поля, а значения - строки, содержащие ошибки, разделенные запятыми.
+    Преобразует словарь ошибок DRF в плоский строковый формат для UI.
     """
     parsed_errors = {}
 
-    for field, details in error_dict.items():
-        parsed_errors[field] = ", ".join(str(detail) for detail in details)
-        
+    def flatten(prefix: str, details) -> None:
+        if isinstance(details, dict):
+            for field, value in details.items():
+                next_prefix = f'{prefix}.{field}' if prefix else field
+                flatten(next_prefix, value)
+            return
+
+        if isinstance(details, list):
+            message = ', '.join(str(detail) for detail in details)
+            field_key = prefix.split('.')[-1] if prefix else 'non_field_errors'
+            parsed_errors[field_key] = message
+            return
+
+        if details is not None:
+            field_key = prefix.split('.')[-1] if prefix else 'non_field_errors'
+            parsed_errors[field_key] = str(details)
+
+    flatten('', error_dict)
     return parsed_errors
 
 def send_confirmation_email(email: str, code: str) -> Tuple[bool, Optional[str]]:

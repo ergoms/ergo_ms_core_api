@@ -5,6 +5,7 @@ from rest_framework import serializers
 from .models import Category
 from .models import Tag
 from .models import UserAvatar
+from src.core.utils.mixins import validate_media_path
 from .models import (
     GeneralSettings, AppearanceSettings, Theme,
     SecuritySettings, MediaSettings, PermalinkSettings, EmailSettings, AuditLog
@@ -126,6 +127,27 @@ class UserAvatarSerializer(serializers.ModelSerializer):
         model = UserAvatar
         fields = ['id', 'user', 'image', 'image_path', 'uploaded_at']
         extra_kwargs = {'image': {'required': False}}
+
+    def validate_image_path(self, value):
+        if value:
+            return validate_media_path(value, 'image')
+        return value
+
+    def validate(self, attrs):
+        if self.instance is None and not attrs.get('image') and not attrs.get('image_path'):
+            raise serializers.ValidationError('Необходимо указать image или image_path')
+        return attrs
+
+    def create(self, validated_data):
+        image_path = validated_data.pop('image_path', None)
+        uploaded_file = validated_data.pop('image', None)
+        instance = UserAvatar.objects.create(**validated_data)
+        if image_path:
+            instance.image.name = image_path
+            instance.save(update_fields=['image'])
+        elif uploaded_file:
+            instance.image.save(uploaded_file.name, uploaded_file, save=True)
+        return instance
 
 class UserAvatarListSerializer(serializers.ModelSerializer):
     """Легковесный сериализатор для списка аватаров (только URL изображения)"""
