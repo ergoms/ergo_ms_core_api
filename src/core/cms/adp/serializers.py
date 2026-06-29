@@ -11,6 +11,7 @@ from rest_framework.serializers import (
     DateTimeField,
     BooleanField,
     ChoiceField,
+    DictField,
 )
 
 from django.contrib.auth.models import User
@@ -498,9 +499,20 @@ class AdminUserRoleInfoSerializer(Serializer):
     last_name = CharField(allow_blank=True, required=False)
     date_joined = DateTimeField(allow_null=True, required=False)
     last_login = DateTimeField(allow_null=True, required=False)
+    is_online = BooleanField(required=False)
+    last_seen = DateTimeField(allow_null=True, required=False)
     role = RoleListMinimalSerializer(allow_null=True)
     role_groups = RoleGroupListMinimalSerializer(many=True)
     avatar_url = CharField(allow_blank=True, allow_null=True, required=False)
+
+
+class UserPresenceEntrySerializer(Serializer):
+    is_online = BooleanField()
+    last_seen = DateTimeField(allow_null=True, required=False)
+
+
+class UserPresenceBatchResponseSerializer(Serializer):
+    presence = DictField(child=UserPresenceEntrySerializer())
 
 
 class RegistrationInvitationSerializer(Serializer):

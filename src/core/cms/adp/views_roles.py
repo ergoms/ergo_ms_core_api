@@ -30,6 +30,7 @@ from src.core.cms.adp.serializers import (
     AdminResetUserPasswordSerializer,
 )
 from src.core.cms.adp.services.permissions import PermissionService
+from src.core.cms.adp.services import presence as presence_service
 from src.config.settings.auth import IS_DEVELOPMENT
 from src.core.utils.methods import (
     parse_errors_to_dict,
@@ -110,6 +111,7 @@ def _perform_admin_user_deletion(user):
 
 def _revoke_user_auth(user):
     UserDevice.objects.filter(user=user).update(is_active=False)
+    presence_service.reset_user(user.id)
 
     try:
         from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
@@ -164,7 +166,7 @@ def _get_admin_user_role_for_display(user):
     return PermissionService.get_user_role(user)
 
 
-def _build_admin_user_list_item(user, user_role=None, admin_role=None):
+def _build_admin_user_list_item(user, user_role=None, admin_role=None, presence_entry=None):
     if user_role is None:
         user_role = _get_active_user_role_from_prefetch(user)
 
@@ -175,6 +177,9 @@ def _build_admin_user_list_item(user, user_role=None, admin_role=None):
     )
     role_groups = list(user_role.role_groups.all()) if user_role else []
 
+    if presence_entry is None:
+        presence_entry = presence_service.PresenceEntry(is_online=False, last_seen=None)
+
     return {
         'user_id': user.id,
         'username': user.username,
@@ -184,6 +189,8 @@ def _build_admin_user_list_item(user, user_role=None, admin_role=None):
         'last_name': user.last_name or '',
         'date_joined': user.date_joined,
         'last_login': user.last_login,
+        'is_online': presence_entry.is_online,
+        'last_seen': presence_entry.last_seen,
         'role': role,
         'role_groups': role_groups,
         'avatar_url': _get_user_avatar_url(user),
@@ -973,9 +980,14 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
         offset = (page - 1) * page_size
         users = list(users_qs[offset:offset + page_size])
         admin_role = PermissionService._get_or_create_admin_role()
+        presence_map = presence_service.get_presence_map([user.id for user in users])
 
         items = [
-            _build_admin_user_list_item(user, admin_role=admin_role)
+            _build_admin_user_list_item(
+                user,
+                admin_role=admin_role,
+                presence_entry=presence_map.get(user.id),
+            )
             for user in users
         ]
         serializer = AdminUserRoleInfoSerializer(items, many=True)

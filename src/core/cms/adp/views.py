@@ -940,26 +940,24 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
 
     @swagger_auto_schema(
         operation_description="Импорт пользователей из Excel (.xlsx, .xls) или CSV файла через Celery.",
-        manual_parameters=[
-            openapi.Parameter(
-                'file',
-                openapi.IN_FORM,
-                type=openapi.TYPE_FILE,
-                description='Файл Excel или CSV с пользователями'
-            ),
-            openapi.Parameter(
-                'file_path',
-                openapi.IN_FORM,
-                type=openapi.TYPE_STRING,
-                description='Путь к файлу, загруженному через media_api'
-            ),
-            openapi.Parameter(
-                'skip_welcome_emails',
-                openapi.IN_FORM,
-                type=openapi.TYPE_BOOLEAN,
-                description='Не отправлять приветственные письма пользователям (по умолчанию: false)'
-            )
-        ],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'file_path': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='Путь к файлу, загруженному через media_api',
+                ),
+                'file': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format=openapi.FORMAT_BINARY,
+                    description='Файл Excel или CSV (multipart, альтернатива file_path)',
+                ),
+                'skip_welcome_emails': openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description='Не отправлять приветственные письма (по умолчанию: false)',
+                ),
+            },
+        ),
         responses={
             200: openapi.Response(
                 description="Task ID для отслеживания прогресса.",

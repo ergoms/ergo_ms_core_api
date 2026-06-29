@@ -1,13 +1,10 @@
 import logging
-from urllib.parse import parse_qs
 
-from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
-from django.contrib.auth import get_user_model
+
+from src.core.cms.adp.ws_auth import authenticate_ws_scope
 
 logger = logging.getLogger('core.notifications')
-
-User = get_user_model()
 
 
 class NotificationsConsumer(AsyncJsonWebsocketConsumer):
@@ -28,11 +25,8 @@ class NotificationsConsumer(AsyncJsonWebsocketConsumer):
     group_name: str | None = None
 
     async def connect(self):
-        user = self.scope.get('user')
-        if not user or not getattr(user, 'is_authenticated', False):
-            user = await self._authenticate_via_query()
-
-        if not user or not getattr(user, 'is_authenticated', False):
+        user = await authenticate_ws_scope(self.scope)
+        if user is None or not getattr(user, 'is_authenticated', False):
             await self.close(code=4401)
             return
 
@@ -46,8 +40,6 @@ class NotificationsConsumer(AsyncJsonWebsocketConsumer):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def receive_json(self, content, **kwargs):
-        # Пользовательские входящие сообщения сейчас не обрабатываются;
-        # клиент только слушает push.
         return
 
     async def notification_new(self, event):
@@ -55,40 +47,3 @@ class NotificationsConsumer(AsyncJsonWebsocketConsumer):
             'type': 'notification_new',
             'notification': event['notification'],
         })
-
-    async def _authenticate_via_query(self):
-        query = self.scope.get('query_string', b'') or b''
-        try:
-            params = parse_qs(query.decode('utf-8'))
-        except Exception:
-            return None
-        token = (params.get('token') or [None])[0]
-        if not token:
-            return None
-        return await self._user_from_jwt(token)
-
-    @staticmethod
-    @database_sync_to_async
-    def _user_from_jwt(token: str):
-        try:
-            from rest_framework_simplejwt.tokens import UntypedToken
-            from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-        except Exception:
-            logger.exception('rest_framework_simplejwt не установлен')
-            return None
-
-        try:
-            validated = UntypedToken(token)
-        except (InvalidToken, TokenError):
-            return None
-        except Exception:
-            logger.exception('Не удалось разобрать JWT для WebSocket')
-            return None
-
-        user_id = validated.get('user_id')
-        if not user_id:
-            return None
-        try:
-            return User.objects.get(pk=user_id)
-        except User.DoesNotExist:
-            return None

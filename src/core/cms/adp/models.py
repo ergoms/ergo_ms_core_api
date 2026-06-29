@@ -91,6 +91,30 @@ class UserDevice(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.device_name}"
 
+
+class UserPresence(models.Model):
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='presence',
+        verbose_name='Пользователь',
+    )
+    connection_count = models.PositiveIntegerField(default=0, verbose_name='Число WS-подключений')
+    last_seen = models.DateTimeField(null=True, blank=True, verbose_name='Последняя активность')
+
+    class Meta:
+        app_label = 'cms_adp'
+        verbose_name = 'Онлайн-статус пользователя'
+        verbose_name_plural = 'Онлайн-статусы пользователей'
+
+    def __str__(self):
+        return f"{self.user.username} ({'online' if self.is_online else 'offline'})"
+
+    @property
+    def is_online(self):
+        return self.connection_count > 0
+
+
 class Role(Group):
     """
     Роли в системе.

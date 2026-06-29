@@ -22,10 +22,11 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 
 from src.core.messenger.routing import websocket_urlpatterns as messenger_ws
 from src.core.notifications.routing import websocket_urlpatterns as notifications_ws
+from src.core.cms.adp.routing import websocket_urlpatterns as adp_ws
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
     "websocket": AuthMiddlewareStack(
-        URLRouter(messenger_ws + notifications_ws)
+        URLRouter(messenger_ws + notifications_ws + adp_ws)
     ),
 })

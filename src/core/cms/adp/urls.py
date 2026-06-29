@@ -39,6 +39,7 @@ from src.core.cms.adp.views_roles import (
     AdminUserResetPasswordView,
 )
 
+from src.core.cms.adp.views_presence import UserPresenceBatchView
 from src.core.cms.adp.views_invitations import (
     RegistrationSettingsView,
     ValidateInvitationView,
@@ -101,11 +102,11 @@ urlpatterns = [
     path('admin-users/', AdminUserRoleListView.as_view(), name='admin_users'),
     path('admin-users/<int:user_id>/', AdminUserDetailView.as_view(), name='admin_user_detail'),
     path('admin-users/<int:user_id>/avatar/', AdminUserAvatarView.as_view(), name='admin_user_avatar'),
-    path(
-        'admin-users/<int:user_id>/reset-password/',
+    path('admin-users/<int:user_id>/reset-password/',
         AdminUserResetPasswordView.as_view(),
         name='admin_user_reset_password',
     ),
+    path('presence/', UserPresenceBatchView.as_view(), name='user_presence_batch'),
     path('import-users/', ImportUsersView.as_view(), name='import_users'),
     path('import-users/status/<str:task_id>/', ImportUsersTaskStatusView.as_view(), name='import_users_status'),
     
