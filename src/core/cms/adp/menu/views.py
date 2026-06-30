@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from src.core.cms.adp.models import UserRole
+from src.core.cms.adp.services.permissions import PermissionService
 from .access import user_can_see_menu_item
 from .models import MenuItem, MenuSeparator, MenuAccessLog
 from .serializers import (
@@ -25,11 +25,7 @@ class BaseMenuAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
     def is_admin(self, user):
-        """Проверяет, является ли пользователь администратором"""
-        if user.is_superuser:
-            return True
-        user_role = UserRole.objects.filter(user=user, is_active=True).first()
-        return user_role and user_role.role.role_type == 'admin'
+        return PermissionService.can_manage_users_as_global_admin(user)
 
 
 class UserMenuView(BaseMenuAPIView):
@@ -584,3 +580,40 @@ class AvailableIconsView(BaseMenuAPIView):
         ]
         
         return Response(icons)
+
+
+class MenuSyncView(BaseMenuAPIView):
+    """Синхронизация пунктов меню из routes.js модулей."""
+
+    @swagger_auto_schema(
+        operation_description="Синхронизировать меню из routes.js модулей",
+        responses={
+            200: "Меню синхронизировано",
+            401: "Не авторизован",
+            403: "Нет доступа",
+            400: "Ошибка синхронизации",
+        },
+        tags=['Menu Admin'],
+    )
+    def post(self, request):
+        if not self.is_admin(request.user):
+            return Response(
+                {'error': 'Доступ запрещён'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from django.core.management import call_command
+        from io import StringIO
+
+        buffer = StringIO()
+        try:
+            call_command('sync_menus', stdout=buffer)
+            return Response({
+                'message': 'Меню синхронизировано',
+                'details': buffer.getvalue(),
+            })
+        except Exception as exc:
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
