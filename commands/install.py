@@ -17,6 +17,10 @@ import tomllib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
+
 from commands.base import PoetryCommand
 
 _CORE_LOCK_GROUPS = frozenset({"main"})
@@ -27,7 +31,7 @@ class InstallCommand(PoetryCommand):
     """
     Устанавливает зависимости ядра через poetry install, затем сканирует
     pyproject.toml всех модулей и доустанавливает недостающие пакеты через pip
-    с constraints из poetry.lock ядра (main), чтобы не «перебивать» версии ядра.
+    (requirements-modules.txt + constraints из poetry.lock ядра).
     Корневой pyproject.toml при этом не изменяется.
     """
 
@@ -65,26 +69,36 @@ class InstallCommand(PoetryCommand):
                     print(f"  {pkg} [{src}]: {ver}")
 
         root_deps = self._get_poetry_deps(root_data)
-        missing = {
+        module_only = {
             pkg: constraint
             for pkg, constraint in merged_deps.items()
             if pkg != "python" and pkg not in root_deps
         }
 
-        if not missing:
-            print("─── Все зависимости модулей уже установлены.")
+        if not module_only:
+            print("─── Дополнительных зависимостей модулей (вне ядра) нет.")
             return 0
 
-        print(f"\n─── Установка {len(missing)} пакетов из модулей: {', '.join(sorted(missing))}")
+        to_install = module_only
+        if not force:
+            to_install = self._filter_unsatisfied_module_deps(module_only, project_root)
+
+        if not to_install:
+            print("─── Все модульные пакеты уже установлены.")
+            return self._sync_main_lock_versions(project_root)
+
+        print(
+            f"\n─── Установка {len(to_install)} пакетов из модулей: "
+            f"{', '.join(sorted(to_install))}"
+        )
 
         if force:
-            self._uninstall_packages(list(missing.keys()))
+            self._uninstall_packages(list(to_install.keys()))
 
-        rc = self._install_module_packages(project_root, root_data, missing)
+        rc = self._install_module_packages(project_root, root_data, to_install)
         if rc != 0:
             return rc
 
-        print("─── Синхронизация версий пакетов ядра (main)...")
         return self._sync_main_lock_versions(project_root)
 
     def _install_core(self, project_root: Path) -> int:
@@ -114,34 +128,63 @@ class InstallCommand(PoetryCommand):
             print("Предупреждение: poetry.lock ядра не найден или пуст — constraints не применены.")
 
         all_sources = self._collect_all_sources(project_root, root_data)
-        requirements = [
-            self._to_pip_requirement(pkg, constraint, project_root)
-            for pkg, constraint in sorted(module_deps.items())
-        ]
         extra_index_urls = self._collect_extra_index_urls(module_deps, all_sources)
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="ergo_install_"))
         try:
             constraints_path = tmp_dir / "core_constraints.txt"
-            if main_versions:
-                constraints_path.write_text(
-                    "\n".join(f"{name}=={version}" for name, version in sorted(main_versions.items()))
-                    + "\n",
-                    encoding="utf-8",
-                )
+            requirements_path = tmp_dir / "requirements-modules.txt"
 
-            cmd: List[str] = [sys.executable, "-m", "pip", "install"]
-            for url in extra_index_urls:
-                cmd.extend(["--extra-index-url", url])
+            if main_versions:
+                self._write_core_constraints(constraints_path, main_versions)
+
+            self._write_module_requirements(
+                requirements_path,
+                module_deps,
+                project_root,
+                extra_index_urls,
+            )
+
+            cmd: List[str] = [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                str(requirements_path),
+            ]
             if main_versions:
                 cmd.extend(["-c", str(constraints_path)])
-            cmd.extend(requirements)
 
-            print("Установка модульных пакетов через pip (с constraints poetry.lock ядра)...")
+            print(
+                "Установка модульных пакетов: pip install -r requirements-modules.txt "
+                "(constraints: poetry.lock ядра)..."
+            )
             result = subprocess.run(cmd, cwd=str(project_root))
             return result.returncode
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _write_core_constraints(self, path: Path, main_versions: Dict[str, str]) -> None:
+        path.write_text(
+            "\n".join(f"{name}=={version}" for name, version in sorted(main_versions.items()))
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_module_requirements(
+        self,
+        path: Path,
+        module_deps: dict,
+        project_root: Path,
+        extra_index_urls: List[str],
+    ) -> None:
+        lines: List[str] = []
+        for url in extra_index_urls:
+            lines.append(f"--extra-index-url {url}")
+        for pkg, constraint in sorted(module_deps.items()):
+            lines.append(self._to_pip_requirement(pkg, constraint, project_root))
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _sync_main_lock_versions(self, project_root: Path) -> int:
         main_versions = self._parse_poetry_lock(
@@ -151,9 +194,20 @@ class InstallCommand(PoetryCommand):
         if not main_versions:
             return 0
 
-        specs = [f"{name}=={version}" for name, version in sorted(main_versions.items())]
-        for i in range(0, len(specs), _PIP_BATCH_SIZE):
-            batch = specs[i : i + _PIP_BATCH_SIZE]
+        installed = self._get_installed_versions()
+        drifted = [
+            f"{name}=={version}"
+            for name, version in sorted(main_versions.items())
+            if not self._lock_version_matches_installed(name, version, installed)
+        ]
+
+        if not drifted:
+            print("─── Версии ядра совпадают с poetry.lock — синхронизация не требуется.")
+            return 0
+
+        print(f"─── Синхронизация {len(drifted)} пакетов ядра с poetry.lock...")
+        for i in range(0, len(drifted), _PIP_BATCH_SIZE):
+            batch = drifted[i : i + _PIP_BATCH_SIZE]
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", *batch],
                 cwd=str(project_root),
@@ -161,6 +215,54 @@ class InstallCommand(PoetryCommand):
             if result.returncode != 0:
                 return result.returncode
         return 0
+
+    def _get_installed_versions(self) -> Dict[str, str]:
+        from importlib.metadata import distributions
+
+        versions: Dict[str, str] = {}
+        for dist in distributions():
+            name = dist.metadata.get("Name") or dist.name
+            if name:
+                versions[canonicalize_name(name)] = dist.version
+        return versions
+
+    def _lock_version_matches_installed(
+        self,
+        name: str,
+        lock_ver: str,
+        installed: Dict[str, str],
+    ) -> bool:
+        inst_ver = installed.get(canonicalize_name(name))
+        if inst_ver is None:
+            return False
+        try:
+            return Version(inst_ver) == Version(lock_ver)
+        except InvalidVersion:
+            return inst_ver == lock_ver
+
+    def _filter_unsatisfied_module_deps(
+        self, module_deps: dict, project_root: Path
+    ) -> dict:
+        installed = self._get_installed_versions()
+        unsatisfied: Dict[str, Any] = {}
+        for pkg, constraint in module_deps.items():
+            req_line = self._to_pip_requirement(pkg, constraint, project_root)
+            if not self._requirement_satisfied(req_line, installed):
+                unsatisfied[pkg] = constraint
+        return unsatisfied
+
+    def _requirement_satisfied(self, req_line: str, installed: Dict[str, str]) -> bool:
+        try:
+            req = Requirement(req_line)
+        except Exception:
+            return False
+        inst_ver = installed.get(canonicalize_name(req.name))
+        if inst_ver is None:
+            return False
+        try:
+            return Version(inst_ver) in req.specifier
+        except InvalidVersion:
+            return False
 
     def _parse_poetry_lock(
         self, lock_path: Path, groups: Optional[frozenset] = None
