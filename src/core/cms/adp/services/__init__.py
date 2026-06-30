@@ -12,6 +12,11 @@ from .permission_catalog import (
     resolve_module_name,
     get_module_permission_keys,
 )
+from .user_search import (
+    apply_user_search,
+    build_user_search_q,
+    resolve_user_by_search,
+)
 
 __all__ = [
     'PermissionService',
@@ -21,4 +26,7 @@ __all__ = [
     'get_module_names',
     'resolve_module_name',
     'get_module_permission_keys',
+    'apply_user_search',
+    'build_user_search_q',
+    'resolve_user_by_search',
 ]

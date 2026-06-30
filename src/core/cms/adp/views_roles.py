@@ -15,6 +15,7 @@ from django.db.models.deletion import ProtectedError
 from src.core.settings.models import UserAvatar
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
 from src.core.utils.mixins import MediaApiFileMixin
+from src.core.cms.adp.services.user_search import apply_user_search
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission, UserProfile, UserDevice
 from src.core.cms.adp.serializers import (
     RoleSerializer,
@@ -212,27 +213,6 @@ def _parse_admin_users_pagination(request):
     return page, page_size, search
 
 
-def _apply_admin_users_search(users_qs, search):
-    normalized = (search or '').strip()
-    if not normalized:
-        return users_qs
-
-    tokens = [token for token in normalized.split() if token]
-    if not tokens:
-        return users_qs
-
-    for token in tokens:
-        users_qs = users_qs.filter(
-            Q(username__icontains=token)
-            | Q(email__icontains=token)
-            | Q(first_name__icontains=token)
-            | Q(last_name__icontains=token)
-            | Q(middle_name__icontains=token)
-        )
-
-    return users_qs
-
-
 def _get_admin_users_queryset(search=''):
     active_roles_qs = (
         UserRole.objects
@@ -250,7 +230,7 @@ def _get_admin_users_queryset(search=''):
         .order_by('last_name', 'first_name', 'username')
     )
 
-    return _apply_admin_users_search(users_qs, search)
+    return apply_user_search(users_qs, search)
 
 
 def _build_admin_user_detail(user):
