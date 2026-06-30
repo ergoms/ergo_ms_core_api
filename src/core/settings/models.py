@@ -4,6 +4,8 @@ from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext_lazy as _
 
+from src.core.settings.services.theme_seed import DEFAULT_THEME_COLORS
+
 
 class Theme(models.Model):
     """Модель для хранения пользовательских тем"""
@@ -72,31 +74,8 @@ class Theme(models.Model):
     @classmethod
     def get_default_colors(cls, base_theme='light'):
         """Возвращает цвета по умолчанию для указанной базовой темы"""
-        if base_theme == 'dark':
-            return {
-                'headerBackground': 'rgba(30, 30, 30, 0.85)',
-                'authBackground': 'rgba(30, 30, 30, 0.7)',
-                'background': '#111112',
-                'border': '#555555',
-                'primaryText': '#c9cccf',
-                'secondaryText': '#6e6e6e',
-                'primaryBackground': '#18181a',
-                'secondaryBackground': '#2a2a2c',
-                'hoverBackground': '#3d3d3f',
-                'accent': '#f14336'
-            }
-        return {
-            'headerBackground': 'rgba(255, 255, 255, 0.85)',
-            'authBackground': 'rgba(255, 255, 255, 0.7)',
-            'background': '#f2f2f2',
-            'border': '#e0e0e0',
-            'primaryText': '#101223',
-            'secondaryText': '#6e6e6e',
-            'primaryBackground': '#ffffff',
-            'secondaryBackground': '#f1f1f1',
-            'hoverBackground': '#e1e1e1',
-            'accent': '#d0322d'
-        }
+        key = 'dark' if base_theme == 'dark' else 'light'
+        return dict(DEFAULT_THEME_COLORS[key])
     
     @classmethod
     def get_default_bootstrap_colors(cls, base_theme='light'):

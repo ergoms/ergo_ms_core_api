@@ -262,61 +262,18 @@ class ThemeViewSet(_ThemeImportMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='create-system-themes')
     def create_system_themes(self, request):
         """Создать или обновить системные темы (light и dark)"""
-        created = []
-        updated = []
-        
-        # Светлая тема
-        light_theme, light_created = Theme.objects.get_or_create(
-            name='Светлая', is_system=True,
-            defaults={
-                'description': 'Системная светлая тема',
-                'author': 'System',
-                'base_theme': 'light',
-                'colors': Theme.get_default_colors('light'),
-                'bootstrap_colors': {},  # Пустой - используем SCSS
-                'is_active': False,
-                'is_default': True,
-            }
-        )
-        if light_created:
-            created.append(ThemeSerializer(light_theme).data)
-        else:
-            # Обновляем существующую - сбрасываем bootstrap_colors
-            light_theme.colors = Theme.get_default_colors('light')
-            light_theme.bootstrap_colors = {}
-            light_theme.save()
-            updated.append(ThemeSerializer(light_theme).data)
-        
-        # Тёмная тема
-        dark_theme, dark_created = Theme.objects.get_or_create(
-            name='Тёмная', is_system=True,
-            defaults={
-                'description': 'Системная тёмная тема',
-                'author': 'System',
-                'base_theme': 'dark',
-                'colors': Theme.get_default_colors('dark'),
-                'bootstrap_colors': {},  # Пустой - используем SCSS
-                'is_active': False,
-                'is_default': False,
-            }
-        )
-        if dark_created:
-            created.append(ThemeSerializer(dark_theme).data)
-        else:
-            # Обновляем существующую - сбрасываем bootstrap_colors
-            dark_theme.colors = Theme.get_default_colors('dark')
-            dark_theme.bootstrap_colors = {}
-            dark_theme.save()
-            updated.append(ThemeSerializer(dark_theme).data)
-        
+        from src.core.settings.services.theme_seed import ensure_system_themes
+
+        created, updated = ensure_system_themes(Theme, update_existing=True)
+
         message = []
         if created:
             message.append(f'Создано {len(created)} тем')
         if updated:
             message.append(f'Обновлено {len(updated)} тем')
-        
+
         return Response({
             'message': ', '.join(message) if message else 'Темы актуальны',
-            'created': created,
-            'updated': updated
-        }, status=status.HTTP_200_OK)
+            'created': [ThemeSerializer(theme).data for theme in created],
+            'updated': [ThemeSerializer(theme).data for theme in updated],
+        })
