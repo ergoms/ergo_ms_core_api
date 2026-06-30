@@ -28,17 +28,24 @@ def populate_core_menu(apps, schema_editor):
     ], parent=user_menu)
     
     # Настройки сайта (фиксированный order=10)
-    settings_menu = cms.create_group('Настройки сайта', 'Settings', icon='UserCog', order=10)
-    
-    # Админ-панель (вложенная группа)
+    settings_menu = cms.create_group(
+        'Настройки сайта',
+        'Settings',
+        icon='UserCog',
+        order=10,
+        is_admin_only=True,
+    )
     admin_panel = cms.create_group(
-        'Админ-панель', 'AdminPanel', 
-        icon='KeySquare', 
-        parent=settings_menu, 
-        is_admin_only=True
+        'Админ-панель',
+        'AdminPanel',
+        icon='KeySquare',
+        parent=settings_menu,
+        order=10,
+        is_admin_only=True,
     )
     users_menu = cms.create_group(
-        'Пользователи', 'UsersPanel',
+        'Пользователи',
+        'UsersPanel',
         icon='Users',
         parent=admin_panel,
         order=10,
@@ -53,8 +60,15 @@ def populate_core_menu(apps, schema_editor):
         ('Политики и права', 'PermissionsPanel'),
         ('Ограничения', 'LiminationPanel'),
         ('Управление меню', 'MenuPanel'),
-        ('Темы оформления', 'ThemeEditor'),
     ], parent=admin_panel)
+    cms.create_route(
+        'Темы оформления',
+        'ThemeEditor',
+        parent=settings_menu,
+        icon='Palette',
+        order=20,
+        is_admin_only=True,
+    )
     
     # Остальные настройки — удалены: общие настройки, редактор страниц, категории страниц
 

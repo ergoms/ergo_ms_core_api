@@ -10,12 +10,19 @@ def add_theme_editor_menu(apps, schema_editor):
     if MenuItem.objects.filter(route_name='ThemeEditor').exists():
         return
 
-    cms = MenuMigrationHelper(apps, 'core/cms')
-    admin_panel = MenuItem.objects.filter(route_name='AdminPanel').first()
-    if not admin_panel:
+    settings_menu = MenuItem.objects.filter(route_name='Settings').first()
+    if not settings_menu:
         return
 
-    cms.create_route('Темы оформления', 'ThemeEditor', parent=admin_panel, icon='Palette')
+    cms = MenuMigrationHelper(apps, 'core/cms')
+    cms.create_route(
+        'Темы оформления',
+        'ThemeEditor',
+        parent=settings_menu,
+        icon='Palette',
+        order=10,
+        is_admin_only=True,
+    )
 
 
 def remove_theme_editor_menu(apps, schema_editor):
