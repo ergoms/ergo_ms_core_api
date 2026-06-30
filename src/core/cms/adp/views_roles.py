@@ -213,7 +213,12 @@ def _parse_admin_users_pagination(request):
     return page, page_size, search
 
 
-def _get_admin_users_queryset(search=''):
+def _parse_online_only_param(request) -> bool:
+    raw = (request.query_params.get('online_only') or '').strip().lower()
+    return raw in ('true', '1', 'yes')
+
+
+def _get_admin_users_queryset(search='', online_only=False):
     active_roles_qs = (
         UserRole.objects
         .filter(is_active=True)
@@ -229,6 +234,9 @@ def _get_admin_users_queryset(search=''):
         )
         .order_by('last_name', 'first_name', 'username')
     )
+
+    if online_only:
+        users_qs = users_qs.filter(presence__connection_count__gt=0)
 
     return apply_user_search(users_qs, search)
 
@@ -959,6 +967,13 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
                 type=openapi.TYPE_STRING,
                 required=False,
             ),
+            openapi.Parameter(
+                'online_only',
+                openapi.IN_QUERY,
+                description='Только пользователи с активным WS-подключением (true, 1, yes)',
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+            ),
         ],
         responses={200: AdminUserRoleInfoSerializer(many=True)}
     )
@@ -968,7 +983,8 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
             return forbidden
 
         page, page_size, search = _parse_admin_users_pagination(request)
-        users_qs = _get_admin_users_queryset(search)
+        online_only = _parse_online_only_param(request)
+        users_qs = _get_admin_users_queryset(search, online_only=online_only)
         total = users_qs.count()
         offset = (page - 1) * page_size
         users = list(users_qs[offset:offset + page_size])

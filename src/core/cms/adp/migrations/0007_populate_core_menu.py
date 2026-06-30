@@ -37,8 +37,17 @@ def populate_core_menu(apps, schema_editor):
         parent=settings_menu, 
         is_admin_only=True
     )
+    users_menu = cms.create_group(
+        'Пользователи', 'UsersPanel',
+        icon='Users',
+        parent=admin_panel,
+        order=10,
+    )
     cms.create_routes_batch([
-        ('Пользователи', 'UsersPanel'),
+        ('Все', 'UsersPanel'),
+        ('В сети', 'OnlineUsersPanel'),
+    ], parent=users_menu)
+    cms.create_routes_batch([
         ('Роли', 'CategoriesPanel'),
         ('Ролевые группы', 'GroupsPanel'),
         ('Политики и права', 'PermissionsPanel'),
