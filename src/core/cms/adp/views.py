@@ -51,6 +51,11 @@ from src.core.cms.adp.services.session_devices import (
     touch_device_activity,
 )
 from src.core.cms.adp.user_agent_utils import build_device_display_name, get_client_ip
+from src.core.cms.adp.auth_cookies import (
+    clear_auth_cookies,
+    refresh_cookie_max_age,
+    set_refresh_cookie,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -372,6 +377,8 @@ class UserRegistrationView(BaseAPIView):
         )
 
 class UserAuthorizationView(BaseAPIView):
+    throttle_scope = 'login'
+
     @swagger_auto_schema(
         operation_description="Авторизация пользователя.",
         request_body=openapi.Schema(
@@ -432,13 +439,16 @@ class UserAuthorizationView(BaseAPIView):
                 attach_device_to_refresh_token(refresh, device)
                 attach_device_claim(access_token, device)
 
-                return Response(
-                    {
-                        'refresh': str(refresh),
-                        'access': str(access_token)
-                    },
-                    status=status.HTTP_200_OK
+                response = Response(
+                    {'access': str(access_token)},
+                    status=status.HTTP_200_OK,
                 )
+                set_refresh_cookie(
+                    response,
+                    str(refresh),
+                    refresh_cookie_max_age(refresh_lifetime),
+                )
+                return response
             else:
                 return Response(
                     {
@@ -596,6 +606,15 @@ class ProtectedView(BaseAPIViewAuthMixin):
         UserProfile.objects.get_or_create(user=request.user)
 
         return Response({}, status=status.HTTP_200_OK)
+
+
+class LogoutView(BaseAPIView):
+    """Очистка HttpOnly refresh-cookie (доступно без валидного access)."""
+
+    def post(self, request):
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+        clear_auth_cookies(response)
+        return response
 
     def _ensure_legacy_device(self, request):
         """Создаёт запись устройства для старых токенов без device_id."""

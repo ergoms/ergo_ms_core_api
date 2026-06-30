@@ -45,6 +45,7 @@ REST_FRAMEWORK = {
         'anon': THROTTLE_RATES_ANON,
         'user': THROTTLE_RATES_USER,
         'password_reset': '5/minute',
+        'login': '5/minute',
     },
 }
 

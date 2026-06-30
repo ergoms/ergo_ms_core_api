@@ -1,11 +1,7 @@
 """
 Сервисы модуля ADP
 """
-from .permissions import (
-    PermissionService,
-    register_permission_hook,
-    unregister_permission_hook,
-)
+from .permissions import PermissionService
 from .permission_catalog import (
     get_all_permission_keys,
     get_module_names,
@@ -20,8 +16,6 @@ from .user_search import (
 
 __all__ = [
     'PermissionService',
-    'register_permission_hook',
-    'unregister_permission_hook',
     'get_all_permission_keys',
     'get_module_names',
     'resolve_module_name',

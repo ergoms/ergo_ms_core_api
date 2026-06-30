@@ -6,6 +6,7 @@ from src.core.cms.adp.views import (
     UserRegistrationValidationView,
     UserRegistrationView,
     UserAuthorizationView,
+    LogoutView,
     PasswordResetSettingsView,
     SendConfirmationCodeView,
     VerifyConfirmationCodeView,
@@ -75,6 +76,7 @@ urlpatterns = [
     path('reset-password/', ResetPasswordView.as_view(), name="reset_password"),
 
     path('token-refresh/', DeviceBoundTokenRefreshView.as_view(), name='token_refresh'),
+    path('logout/', LogoutView.as_view(), name='logout'),
     path('protected/', ProtectedView.as_view(), name='protected'),
     
     # Security endpoints

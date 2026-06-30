@@ -1,11 +1,6 @@
-from django.db import models
-from django.contrib.auth.models import (User, Group, Permission)
-from django.utils import timezone
+from django.contrib.auth.models import User
 
-from src.core.cms.models import (
-    ExpandedPermission,Accession, GroupCategory, 
-    ExpandedGroup, PermissionMark, Accession
-)
+from src.core.cms.models import ExpandedPermission
 
 
 def GetUserExpandedPermissions(user: User):

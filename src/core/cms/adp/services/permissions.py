@@ -2,9 +2,7 @@
 Сервис для проверки прав доступа пользователей к ресурсам системы.
 """
 import re
-import warnings
-from functools import wraps
-from typing import List, Dict, Optional, Callable
+from typing import List, Dict, Optional
 from django.contrib.auth.models import User
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
 from src.core.integrations import bridge
@@ -13,62 +11,9 @@ from src.core.integrations import bridge
 PERMISSION_CHECK_EVENT = 'adp.permission_check'
 
 
-def register_permission_hook(hook_name: str, callback: Callable):
-    """
-    DEPRECATED: используйте `bridge.subscribe('adp.permission_check', handler)`.
-
-    Тонкий shim для обратной совместимости со старым API.
-    Поддерживает только hook_name='check_module_permission'.
-
-    Сигнатура callback (старый формат):
-        def callback(user, module_name, permission_key, **kwargs) -> Optional[bool]
-
-    Сигнатура подписчика bridge.subscribe:
-        def handler(*, user, module_name, permission_key, kwargs, **_) -> Optional[bool]
-
-    Адаптер ниже преобразует kwargs из event-формата в старый.
-    """
-    if hook_name != 'check_module_permission':
-        warnings.warn(
-            f"register_permission_hook: unknown hook '{hook_name}', ignored",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return
-
-    warnings.warn(
-        "register_permission_hook is deprecated; "
-        "use bridge.subscribe('adp.permission_check', handler).",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    @wraps(callback)
-    def _adapter(*, user, module_name, permission_key, kwargs=None, **_extra):
-        return callback(user, module_name, permission_key, **(kwargs or {}))
-
-    _adapter._wrapped_callback = callback  # type: ignore[attr-defined]
-    bridge.subscribe(PERMISSION_CHECK_EVENT, _adapter)
-
-
-def unregister_permission_hook(hook_name: str, callback: Callable):
-    """DEPRECATED: см. register_permission_hook."""
-    if hook_name != 'check_module_permission':
-        return
-    bus = bridge._event_bus
-    handlers = list(getattr(bus, '_subscribers', {}).get(PERMISSION_CHECK_EVENT, []))
-    for h in handlers:
-        if getattr(h, '_wrapped_callback', None) is callback:
-            bridge.unsubscribe(PERMISSION_CHECK_EVENT, h)
-            break
-
-
 class PermissionService:
     """
     Сервис для работы с правами доступа пользователей.
-    
-    Поддерживает расширение через хуки — модули могут регистрировать
-    свои обработчики для добавления контекстной логики проверки прав.
     """
     DEFAULT_ROLE_NAME = 'Пользователь'
     DEFAULT_ROLE_DESCRIPTION = 'Роль по умолчанию для всех пользователей'
