@@ -43,6 +43,13 @@ class UserRegistrationValidationSerializer(Serializer):
             raise ValidationError("Данный логин уже занят, попробуйте другой.")
         return value
 
+    def validate_email(self, value):
+        normalized = (value or '').strip().lower()
+        error = RegistrationService.validate_email_for_registration(normalized)
+        if error:
+            raise ValidationError(error)
+        return normalized
+
     def validate(self, attrs):
         _validate_registration_access(attrs)
         return attrs
@@ -91,6 +98,13 @@ class UserRegistrationSerializer(ModelSerializer):
         except DjangoValidationError as exc:
             raise ValidationError(list(exc.messages))
         return value
+
+    def validate_email(self, value):
+        normalized = (value or '').strip().lower()
+        error = RegistrationService.validate_email_for_registration(normalized)
+        if error:
+            raise ValidationError(error)
+        return normalized
 
     def validate(self, attrs):
         _validate_registration_access(attrs)

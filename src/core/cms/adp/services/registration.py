@@ -94,6 +94,26 @@ class RegistrationService:
         return None
 
     @staticmethod
+    def is_email_existence_check_enabled() -> bool:
+        return bool(getattr(settings, 'REGISTRATION_CHECK_EMAIL_EXISTS', False))
+
+    @staticmethod
+    def _email_already_registered(email: str) -> bool:
+        normalized = (email or '').strip().lower()
+        if not normalized:
+            return False
+        return User.objects.filter(email__iexact=normalized).exists()
+
+    @staticmethod
+    def validate_email_for_registration(email: str) -> Optional[str]:
+        if not RegistrationService.is_email_existence_check_enabled():
+            return None
+        normalized = (email or '').strip().lower()
+        if RegistrationService._email_already_registered(normalized):
+            return 'Пользователь с таким email уже зарегистрирован'
+        return None
+
+    @staticmethod
     def has_active_invitation_for_email(email: str) -> bool:
         normalized_email = (email or '').strip().lower()
         if not normalized_email:
@@ -115,7 +135,7 @@ class RegistrationService:
             validate_email(normalized)
         except DjangoValidationError:
             return 'Некорректный email'
-        if User.objects.filter(email__iexact=normalized).exists():
+        if RegistrationService._email_already_registered(normalized):
             return 'Пользователь с таким email уже зарегистрирован'
         if RegistrationService.has_active_invitation_for_email(normalized):
             return 'Для этого email уже есть активное приглашение'
