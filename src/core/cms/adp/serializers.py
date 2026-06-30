@@ -241,7 +241,7 @@ class CMSUserMenuSerializer(ModelSerializer):
     """
     Минимальный сериализатор пользователя для меню.
     Возвращает только необходимые данные для отображения в боковом меню:
-    username, email, full_name, initials_name.
+    username, email, first_name, middle_name, full_name, initials_name.
     Используется в эндпоинте /api/cms/adp/user-menu-data/
     """
     full_name = SerializerMethodField(read_only=True)
@@ -253,6 +253,8 @@ class CMSUserMenuSerializer(ModelSerializer):
             'id',
             'username',
             'email',
+            'first_name',
+            'middle_name',
             'full_name',
             'initials_name',
         ]
