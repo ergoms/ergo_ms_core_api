@@ -10,8 +10,6 @@ from drf_yasg import openapi
 
 from django.contrib.auth.models import User
 from django.db.models import Prefetch, Q
-from django.db.models.deletion import ProtectedError
-
 from src.core.settings.models import UserAvatar
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
 from src.core.utils.mixins import MediaApiFileMixin
@@ -32,6 +30,11 @@ from src.core.cms.adp.serializers import (
 )
 from src.core.cms.adp.services.permissions import PermissionService
 from src.core.cms.adp.services import presence as presence_service
+from src.core.cms.adp.services.user_deletion import (
+    UserDeletionBlockedError,
+    delete_admin_user,
+    revoke_user_auth,
+)
 from src.config.settings.auth import IS_DEVELOPMENT
 from src.core.utils.methods import (
     parse_errors_to_dict,
@@ -83,44 +86,20 @@ def _validate_admin_user_deletion(request, target_user):
 
 
 def _perform_admin_user_deletion(user):
-    from src.core.integrations import bridge
-
-    _revoke_user_auth(user)
-
-    if bridge.has('workers.delete_worker_for_user'):
-        bridge.call('workers.delete_worker_for_user', user)
-    if bridge.has('students.delete_student_for_user'):
-        bridge.call('students.delete_student_for_user', user)
-
-    bridge.emit('core.user_delete', user_id=user.id)
-
     try:
-        user.delete()
-    except ProtectedError:
-        return Response(
-            {
-                'error': (
-                    'Невозможно удалить пользователя: '
-                    'есть связанные данные, блокирующие удаление.'
-                ),
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        delete_admin_user(user)
+    except UserDeletionBlockedError as exc:
+        payload = {
+            'error': (
+                'Невозможно удалить пользователя: '
+                'есть связанные данные, блокирующие удаление.'
+            ),
+        }
+        if exc.detail:
+            payload['details'] = exc.detail
+        return Response(payload, status=status.HTTP_400_BAD_REQUEST)
 
     return None
-
-
-def _revoke_user_auth(user):
-    UserDevice.objects.filter(user=user).update(is_active=False)
-    presence_service.reset_user(user.id)
-
-    try:
-        from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
-
-        for outstanding in OutstandingToken.objects.filter(user=user):
-            BlacklistedToken.objects.get_or_create(token=outstanding)
-    except Exception:
-        pass
 
 
 def _apply_system_password_reset(user):
@@ -1220,7 +1199,7 @@ class AdminUserResetPasswordView(BaseAPIViewAuthMixin, BaseAPIView):
 
             user.set_password(serializer.validated_data['new_password'])
             user.save(update_fields=['password'])
-            _revoke_user_auth(user)
+            revoke_user_auth(user)
 
             return Response(
                 {
@@ -1233,7 +1212,7 @@ class AdminUserResetPasswordView(BaseAPIViewAuthMixin, BaseAPIView):
         email = (user.email or '').strip()
 
         _apply_system_password_reset(user)
-        _revoke_user_auth(user)
+        revoke_user_auth(user)
 
         email_sent = False
         email_error = None
