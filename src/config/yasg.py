@@ -19,19 +19,7 @@ if SWAGGER_ENABLED:
     from drf_yasg.views import get_schema_view
     from drf_yasg import openapi
 
-    def get_system_title():
-        """Получает название сайта из БД, с fallback на дефолт."""
-        try:
-            from src.core.settings.models import GeneralSettings
-
-            last_settings = GeneralSettings.objects.order_by('-id').first()
-            if last_settings and last_settings.site_name:
-                return last_settings.site_name
-        except Exception:
-            pass
-        return 'ERGO MS'
-
-    system_title = get_system_title()
+    system_title = 'ERGO MS'
 
     schema_view = get_schema_view(
         openapi.Info(

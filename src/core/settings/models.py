@@ -1,68 +1,8 @@
 from django.db import models
 from django.core.exceptions import ValidationError
-from django.contrib.auth.models import Group, Permission
-from django.core.validators import FileExtensionValidator
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
-from slugify import slugify
 from django.utils.translation import gettext_lazy as _
-
-class GeneralSettings(models.Model):
-    site_name = models.CharField(_("Название сайта"), max_length=255, default="ERGOMS")
-    site_tagline = models.CharField(_("Tagline"), max_length=255, blank=True)
-    site_url = models.URLField(_("URL сайта"), max_length=200)
-    admin_email = models.EmailField(_("Email администратора"), max_length=254)
-    roles = models.ManyToManyField(
-    Group,
-    verbose_name=_("Роли пользователей"),
-    blank=True,
-    help_text=_("Группы пользователей, доступных в системе")
-)
-    # Настройки главной страницы
-    class HomePageChoices(models.TextChoices):
-        STATIC = "static", _("Статическая страница")
-        LATEST = "latest", _("Последние сообщения")
-    homepage_type = models.CharField(
-        _("Тип домашней страницы"),
-        max_length=10,
-        choices=HomePageChoices.choices,
-        default=HomePageChoices.LATEST
-    )
-    posts_per_page = models.PositiveIntegerField(_("Посты на страницу"), default=10)
-    discourage_search_engines = models.BooleanField(
-        _("Discourage Search Engines"),
-        default=False,
-        help_text=_("Запретить индексацию сайта")
-    )
-    privacy_policy = models.TextField(_("Политика конфиденциальности"), blank=True)
-
-    class Meta:
-        verbose_name = _("Общие настройки")
-        verbose_name_plural = _("Общие настройки")
-
-    def __str__(self):
-        return _("Общие настройки")
-
-
-class AppearanceSettings(models.Model):
-    # Хранит настройки темы
-    theme_name = models.CharField(_("Название темы"), max_length=100, default="default")
-    # Дополнительные JSON-настройки, например, цветовые схемы
-    config = models.JSONField(_("Конфигурация темы"), default=dict, blank=True)
-    # Полная конфигурация темы (light и dark)
-    theme_config = models.JSONField(
-        _("Полная конфигурация темы"),
-        default=dict,
-        blank=True,
-        help_text=_("JSON с настройками цветов для light и dark тем")
-    )
-
-    class Meta:
-        verbose_name = _("Настройки внешнего вида")
-        verbose_name_plural = _("Настройки внешнего вида")
-
-    def __str__(self):
-        return f"{self.theme_name}"
 
 
 class Theme(models.Model):
@@ -247,48 +187,7 @@ class EmailSettings(models.Model):
 
     def __str__(self):
         return _("Email Settings")
-class Category(models.Model):
-    name = models.CharField(max_length=255, verbose_name="Название категории")
-    slug = models.SlugField(max_length=255, verbose_name="Slug", blank=True)
-    parent = models.ForeignKey(
-        'self', null=True, blank=True,
-        on_delete=models.CASCADE,
-        related_name='children',
-        verbose_name="Родительская категория"
-    )
 
-    class Meta:
-        verbose_name = "Категория"
-        verbose_name_plural = "Категории"
-        unique_together = [['parent', 'slug']]
-
-    def __str__(self):
-        return self.name
-
-    def save(self, *args, **kwargs):
-        if not self.slug:
-            base_slug = slugify(self.name)
-            slug = base_slug
-            n = 1
-            while Category.objects.filter(parent=self.parent, slug=slug).exclude(pk=self.pk).exists():
-                slug = f"{base_slug}-{n}"
-                n += 1
-            self.slug = slug
-        super().save(*args, **kwargs)
-
-class Tag(models.Model):
-    name = models.CharField("Название тега", max_length=255, unique=True)
-    category = models.ForeignKey(
-        Category, on_delete=models.CASCADE, related_name="tags", verbose_name="Категория", null=True, blank=True
-    )
-
-    class Meta:
-        verbose_name = "Тег"
-        verbose_name_plural = "Теги"
-
-    def __str__(self):
-        return self.name
-    
 class UserAvatar(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,

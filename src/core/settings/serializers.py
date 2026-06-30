@@ -1,50 +1,11 @@
-from django.contrib.contenttypes.models import ContentType
-
 from rest_framework import serializers
 
-from .models import Category
-from .models import Tag
 from .models import UserAvatar
 from src.core.utils.mixins import validate_media_path
 from .models import (
-    GeneralSettings, AppearanceSettings, Theme,
+    Theme,
     SecuritySettings, MediaSettings, PermalinkSettings, EmailSettings, AuditLog
 )
-
-class GeneralSettingsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = GeneralSettings
-        fields = '__all__'
-
-class GeneralSettingsReadSerializer(serializers.ModelSerializer):
-    """Сериализатор для чтения настроек (без лишних полей)"""
-    class Meta:
-        model = GeneralSettings
-        fields = [
-            'id',
-            'site_name',
-            'site_tagline',
-            'site_url',
-            'admin_email',
-            'homepage_type',
-            'posts_per_page',
-            'discourage_search_engines',
-            'privacy_policy',
-        ]
-        read_only_fields = fields
-
-class GeneralSettingsSiteNameSerializer(serializers.ModelSerializer):
-    """Сериализатор только для названия сайта (для меню)"""
-    class Meta:
-        model = GeneralSettings
-        fields = ['site_name']
-        read_only_fields = fields
-
-class AppearanceSettingsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = AppearanceSettings
-        fields = '__all__'
-
 
 class ThemeSerializer(serializers.ModelSerializer):
     """Сериализатор для тем оформления"""
@@ -75,17 +36,6 @@ class ThemeSerializer(serializers.ModelSerializer):
         return data
 
 
-class ThemeExportSerializer(serializers.Serializer):
-    """Сериализатор для экспорта темы"""
-    name = serializers.CharField()
-    description = serializers.CharField(allow_blank=True, required=False)
-    author = serializers.CharField(allow_blank=True, required=False)
-    base_theme = serializers.ChoiceField(choices=['light', 'dark'])
-    colors = serializers.JSONField()
-    bootstrap_colors = serializers.JSONField(required=False, default=dict)
-    version = serializers.CharField(default='1.0')
-    exported_at = serializers.DateTimeField(read_only=True)
-
 class SecuritySettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = SecuritySettings
@@ -105,20 +55,7 @@ class EmailSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailSettings
         fields = '__all__'
-class CategorySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Category
-        fields = ['id', 'name', 'parent', 'slug']
-        read_only_fields = ['slug']
-        ref_name = 'SettingsCategory'
-    def to_representation(self, instance):
-        ret = super().to_representation(instance)
-        ret['slug'] = instance.slug
-        return ret
-class TagSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Tag
-        fields = ['id', 'name', 'category']
+
 class UserAvatarSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(read_only=True)
     image_path = serializers.CharField(write_only=True, required=False)

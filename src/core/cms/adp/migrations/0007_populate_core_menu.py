@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Миграция данных: заполнение базового меню из core модулей.
-Включает элементы из: cms, ai-assistant, shortcodes, categories.
+Включает элементы из: cms, ai-assistant.
 
 Порядок элементов определяется последовательностью создания.
 """
@@ -53,45 +53,10 @@ def populate_core_menu(apps, schema_editor):
         ('Политики и права', 'PermissionsPanel'),
         ('Ограничения', 'LiminationPanel'),
         ('Управление меню', 'MenuPanel'),
+        ('Темы оформления', 'ThemeEditor'),
     ], parent=admin_panel)
     
-    # Остальные настройки
-    cms.create_routes_batch([
-        ('Общие настройки', 'SiteSettings'),
-        ('Управление файлами', 'FileManager'),
-    ], parent=settings_menu)
-    
-    # === Shortcodes: Редактор страниц (внутри Настройки сайта) ===
-    shortcodes = MenuMigrationHelper(apps, 'core/shortcodes')
-    shortcodes.clear_module_items()
-    
-    pages_editor = shortcodes.create_group(
-        'Редактор страниц', 'Shortcodes', 
-        icon='Braces', 
-        parent=settings_menu
-    )
-    shortcodes.create_routes_batch([
-        ('Главная', 'MainShortcodePage'),
-        ('Компоненты', 'Templates'),
-        ('Страницы', 'Pages'),
-        ('Разметка сайта', 'Layouts'),
-        ('Категории шорткодов', 'PageShortcodeCategories'),
-    ], parent=pages_editor)
-    
-    # === Categories: Категории страниц (внутри Настройки сайта) ===
-    categories = MenuMigrationHelper(apps, 'core/categories')
-    categories.clear_module_items()
-    
-    page_categories = categories.create_group(
-        'Категории страниц', 'Categories', 
-        icon='Layers', 
-        parent=settings_menu
-    )
-    categories.create_routes_batch([
-        ('Категории', 'PageCategories'),
-        ('Создание категорий', 'PageCategoriesManager'),
-        ('Создание тегов', 'TagsManager'),
-    ], parent=page_categories)
+    # Остальные настройки — удалены: общие настройки, редактор страниц, категории страниц
 
 def reverse_populate_core_menu(apps, schema_editor):
     """Удаляет элементы меню из core модулей."""

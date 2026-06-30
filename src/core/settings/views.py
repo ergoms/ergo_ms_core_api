@@ -9,24 +9,13 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.http import HttpResponse
 
 from .permissions import IsGlobalAdmin
-
-from .models import Category
-from .serializers import CategorySerializer
-from .models import UserAvatar
-from .serializers import UserAvatarSerializer
-from rest_framework.permissions import IsAuthenticated
 from src.core.utils.mixins import MediaApiFileMixin, read_storage_file_bytes
-from django.forms.models import model_to_dict
-from .audit import log_audit
 from .models import AuditLog
 from .serializers import AuditLogSerializer
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from .models import *
 from .serializers import *
-
-from .models import AuditLog
-from .serializers import AuditLogSerializer
 
 
 def _safe_content_disposition_filename(name):
@@ -37,55 +26,6 @@ def _safe_content_disposition_filename(name):
     s = s[:200] if len(s) > 200 else s
     return s or 'download'
 
-
-class GeneralSettingsViewSet(viewsets.ModelViewSet):
-    queryset = GeneralSettings.objects.all()
-    serializer_class = GeneralSettingsSerializer
-
-    def get_permissions(self):
-        if self.action == 'get_site_name':
-            return [AllowAny()]
-        return [IsAuthenticated(), IsGlobalAdmin()]
-
-    @action(detail=False, methods=['get'], url_path='last')
-    def get_last_settings(self, request):
-        last_settings = self.queryset.order_by('-id').first()
-        if last_settings:
-            from .serializers import GeneralSettingsReadSerializer
-            serializer = GeneralSettingsReadSerializer(last_settings)
-            return Response(serializer.data)
-        return Response({'detail': 'Нет ни одной записи настроек.'}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=False, methods=['get'], url_path='site-name')
-    def get_site_name(self, request):
-        """Легковесный endpoint для получения только названия сайта (для меню)"""
-        last_settings = self.queryset.order_by('-id').first()
-        if last_settings:
-            from .serializers import GeneralSettingsSiteNameSerializer
-            serializer = GeneralSettingsSiteNameSerializer(last_settings)
-            return Response(serializer.data)
-        return Response({'site_name': 'ERGOMS'}, status=status.HTTP_200_OK)
-    
-    def perform_update(self, serializer):
-        old_obj = self.get_object()
-        old_data = model_to_dict(old_obj)
-
-        new_obj = serializer.save()
-        new_data = model_to_dict(new_obj)
-
-        diff = {
-            field: [old_data[field], new_data[field]]
-            for field in old_data
-            if old_data[field] != new_data[field]
-        }
-
-        if diff:
-            log_audit(self.request, new_obj, 'UPDATE', diff)
-
-    def perform_destroy(self, instance):
-        log_audit(self.request, instance, 'DELETE')
-
-        instance.delete()
 
 class _ThemeImportMixin(MediaApiFileMixin):
     """Чтение JSON-темы из прямой загрузки или из пути media_api."""
@@ -98,87 +38,6 @@ class _ThemeImportMixin(MediaApiFileMixin):
             return file.read().decode('utf-8')
         return None
 
-
-class AppearanceSettingsViewSet(_ThemeImportMixin, viewsets.ModelViewSet):
-    queryset = AppearanceSettings.objects.all()
-    serializer_class = AppearanceSettingsSerializer
-    permission_classes = [IsAuthenticated, IsGlobalAdmin]
-    
-    @action(detail=False, methods=['get'], url_path='last')
-    def get_last_settings(self, request):
-        """Получить последние настройки внешнего вида"""
-        last_settings = self.queryset.order_by('-id').first()
-        if last_settings:
-            serializer = self.get_serializer(last_settings)
-            return Response(serializer.data)
-        return Response({'detail': 'Нет ни одной записи настроек.'}, status=status.HTTP_404_NOT_FOUND)
-    
-    @action(detail=False, methods=['post'], url_path='export-theme')
-    def export_theme(self, request):
-        """Экспорт темы в JSON файл"""
-        theme_config = request.data.get('theme_config', {})
-        theme_name = request.data.get('theme_name', 'custom-theme')
-        
-        if not theme_config:
-            return Response(
-                {'error': 'theme_config обязателен'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Формируем JSON для экспорта
-        export_data = {
-            'name': theme_name,
-            'version': '1.0.0',
-            'description': request.data.get('description', ''),
-            'author': request.data.get('author', ''),
-            'config': theme_config,
-            'exported_at': str(timezone.now())
-        }
-        
-        response = HttpResponse(
-            json.dumps(export_data, indent=2, ensure_ascii=False),
-            content_type='application/json; charset=utf-8'
-        )
-        safe_filename = _safe_content_disposition_filename(theme_name) + '.json'
-        response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-        return response
-    
-    @action(detail=False, methods=['post'], url_path='import-theme')
-    def import_theme(self, request):
-        """Импорт темы из JSON файла"""
-        try:
-            file_content = self._read_theme_json(request)
-            if file_content is None:
-                return Response(
-                    {'error': 'Файл не передан'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            theme_data = json.loads(file_content)
-            
-            # Валидация структуры
-            if 'config' not in theme_data:
-                return Response(
-                    {'error': 'Неверный формат файла темы'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Возвращаем конфигурацию темы
-            return Response({
-                'name': theme_data.get('name', 'imported-theme'),
-                'description': theme_data.get('description', ''),
-                'author': theme_data.get('author', ''),
-                'config': theme_data['config']
-            })
-        except json.JSONDecodeError:
-            return Response(
-                {'error': 'Неверный формат JSON'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {'error': f'Ошибка при импорте: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
 class SecuritySettingsViewSet(viewsets.ModelViewSet):
     queryset = SecuritySettings.objects.all()
@@ -198,16 +57,6 @@ class PermalinkSettingsViewSet(viewsets.ModelViewSet):
 class EmailSettingsViewSet(viewsets.ModelViewSet):
     queryset = EmailSettings.objects.all()
     serializer_class = EmailSettingsSerializer
-    permission_classes = [IsAuthenticated, IsGlobalAdmin]
-
-class CategoryViewSet(viewsets.ModelViewSet):
-    queryset = Category.objects.all()
-    serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated, IsGlobalAdmin]
-
-class TagViewSet(viewsets.ModelViewSet):
-    queryset = Tag.objects.all()
-    serializer_class = TagSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
 class UserAvatarViewSet(MediaApiFileMixin, viewsets.ModelViewSet):
@@ -268,7 +117,9 @@ class ThemeViewSet(_ThemeImportMixin, viewsets.ModelViewSet):
     serializer_class = ThemeSerializer
 
     def get_permissions(self):
-        if self.action in ('list', 'retrieve', 'get_active_theme'):
+        if self.action == 'get_active_theme':
+            return [AllowAny()]
+        if self.action in ('list', 'retrieve'):
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsGlobalAdmin()]
     
