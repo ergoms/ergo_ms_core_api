@@ -212,6 +212,27 @@ def _parse_admin_users_pagination(request):
     return page, page_size, search
 
 
+def _apply_admin_users_search(users_qs, search):
+    normalized = (search or '').strip()
+    if not normalized:
+        return users_qs
+
+    tokens = [token for token in normalized.split() if token]
+    if not tokens:
+        return users_qs
+
+    for token in tokens:
+        users_qs = users_qs.filter(
+            Q(username__icontains=token)
+            | Q(email__icontains=token)
+            | Q(first_name__icontains=token)
+            | Q(last_name__icontains=token)
+            | Q(middle_name__icontains=token)
+        )
+
+    return users_qs
+
+
 def _get_admin_users_queryset(search=''):
     active_roles_qs = (
         UserRole.objects
@@ -229,15 +250,7 @@ def _get_admin_users_queryset(search=''):
         .order_by('last_name', 'first_name', 'username')
     )
 
-    if search:
-        users_qs = users_qs.filter(
-            Q(username__icontains=search)
-            | Q(email__icontains=search)
-            | Q(first_name__icontains=search)
-            | Q(last_name__icontains=search)
-        )
-
-    return users_qs
+    return _apply_admin_users_search(users_qs, search)
 
 
 def _build_admin_user_detail(user):
@@ -962,7 +975,7 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
             openapi.Parameter(
                 'search',
                 openapi.IN_QUERY,
-                description='Поиск по username, email, имени и фамилии',
+                description='Поиск по словам (через пробел) по username, email, имени, фамилии и отчеству',
                 type=openapi.TYPE_STRING,
                 required=False,
             ),
