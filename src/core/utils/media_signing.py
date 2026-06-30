@@ -44,6 +44,9 @@ def _get_secret_key() -> str:
 
 
 def _get_media_base_url() -> str:
+    base_url = getattr(settings, 'MEDIA_API_PUBLIC_BASE_URL', '')
+    if base_url:
+        return base_url.rstrip('/')
     host = getattr(settings, 'MEDIA_API_HOST', 'localhost')
     port = getattr(settings, 'MEDIA_API_PORT', 8003)
     protocol = getattr(settings, 'MEDIA_API_PROTOCOL', 'http')

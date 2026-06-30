@@ -22,6 +22,11 @@ from src.core.cms.adp.serializers import (
 from src.core.cms.adp.services.registration import RegistrationService
 from src.core.cms.adp.views_roles import _require_global_admin
 
+_INVITATION_MODE_DISABLED_MESSAGE = (
+    'Режим регистрации по приглашениям не включён. '
+    'Измените настройки сервера.'
+)
+
 
 def _serialize_invitation(invitation):
     return RegistrationInvitationSerializer(invitation).data
@@ -142,7 +147,7 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
 
         if RegistrationService.get_mode() != RegistrationService.MODE_INVITATION:
             return Response(
-                {'error': 'Режим регистрации по приглашениям не включён (API_REGISTRATION_MODE=invitation).'},
+                {'error': _INVITATION_MODE_DISABLED_MESSAGE},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -233,7 +238,7 @@ class RegistrationInvitationBulkCreateView(BaseAPIViewAuthMixin, BaseAPIView):
 
         if RegistrationService.get_mode() != RegistrationService.MODE_INVITATION:
             return Response(
-                {'error': 'Режим регистрации по приглашениям не включён (API_REGISTRATION_MODE=invitation).'},
+                {'error': _INVITATION_MODE_DISABLED_MESSAGE},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

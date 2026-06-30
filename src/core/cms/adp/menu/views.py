@@ -582,16 +582,16 @@ class AvailableIconsView(BaseMenuAPIView):
         return Response(icons)
 
 
-class MenuSyncView(BaseMenuAPIView):
-    """Синхронизация пунктов меню из routes.js модулей."""
+class MenuRestoreView(BaseMenuAPIView):
+    """Восстановление пунктов меню из populate-функций миграций."""
 
     @swagger_auto_schema(
-        operation_description="Синхронизировать меню из routes.js модулей",
+        operation_description="Восстановить меню из миграций ядра и модулей (restore_menu)",
         responses={
-            200: "Меню синхронизировано",
+            200: "Меню восстановлено",
             401: "Не авторизован",
             403: "Нет доступа",
-            400: "Ошибка синхронизации",
+            400: "Ошибка восстановления",
         },
         tags=['Menu Admin'],
     )
@@ -607,9 +607,9 @@ class MenuSyncView(BaseMenuAPIView):
 
         buffer = StringIO()
         try:
-            call_command('sync_menus', stdout=buffer)
+            call_command('restore_menu', stdout=buffer)
             return Response({
-                'message': 'Меню синхронизировано',
+                'message': 'Меню восстановлено из миграций',
                 'details': buffer.getvalue(),
             })
         except Exception as exc:

@@ -9,6 +9,8 @@ from pathlib import Path
 from src.config.nginx_runtime import (
     effective_media_public_host,
     effective_media_public_port,
+    media_api_internal_base_url,
+    media_api_public_base_url,
     nginx_use_https,
 )
 
@@ -84,9 +86,22 @@ TASKS_MAX_ATTACHMENT_SIZE_MB = int(os.getenv('TASKS_MAX_ATTACHMENT_SIZE_MB', '25
 TASKS_MAX_ATTACHMENT_SIZE_BYTES = TASKS_MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
 
 # Media API (CDN / file server)
+MEDIA_API_PUBLIC_BASE_URL = media_api_public_base_url()
+MEDIA_API_INTERNAL_BASE_URL = media_api_internal_base_url()
+# Legacy-поля (деплой-скрипты, обратная совместимость; в .env можно не задавать)
 MEDIA_API_HOST = effective_media_public_host('localhost')
 MEDIA_API_PORT = int(effective_media_public_port('8003'))
 MEDIA_API_PROTOCOL = 'https' if nginx_use_https() else os.getenv('MEDIA_API_PROTOCOL', 'http')
 MEDIA_URL_EXPIRATION = int(os.getenv('MEDIA_URL_EXPIRATION', '3600'))
 MEDIA_UPLOAD_MAX_SIZE = int(os.getenv('MEDIA_UPLOAD_MAX_SIZE', '104857600'))
 MEDIA_UPLOAD_TOKEN_EXPIRATION = int(os.getenv('MEDIA_UPLOAD_TOKEN_EXPIRATION', '300'))
+
+# Режим доступа core/api к файлам: local (прямая ФС) или remote (HTTP к media_api)
+MEDIA_ACCESS_MODE = os.getenv('MEDIA_ACCESS_MODE', 'local').strip().lower()
+MEDIA_API_INTERNAL_KEY = os.getenv('MEDIA_API_INTERNAL_KEY', '').strip()
+
+# Compute-пайплайн (см. core/utils/media_client/pipeline.py, scratch.py)
+# Scratch — эфемерные файлы обработки (никогда в БД и не в signed URL)
+MEDIA_SCRATCH_ROOT = os.getenv('MEDIA_SCRATCH_ROOT', '').strip() or str(VIRTUAL_ENV_DIR / 'cache' / 'scratch')
+# Cache — локальные копии canonical-файлов при MEDIA_ACCESS_MODE=remote (localize)
+MEDIA_CACHE_ROOT = os.getenv('MEDIA_CACHE_ROOT', '').strip() or str(VIRTUAL_ENV_DIR / 'cache' / 'media')

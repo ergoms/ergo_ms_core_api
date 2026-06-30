@@ -12,8 +12,69 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
+from src.config.settings.base import MODULES_DIR
 from src.core.cms.adp.menu.models import MenuItem
 from src.core.utils.auto_api.auto_config import ModuleDiscoverer
+
+
+def _find_menu_config_path(module_name: str) -> Path | None:
+    module_dir = MODULES_DIR / module_name
+    for relative in ('client/js/menu-config.json', 'client/src/js/menu-config.json'):
+        path = module_dir / relative
+        if path.exists():
+            return path
+    return None
+
+
+def _walk_menu_config_node(node: dict, result: dict) -> None:
+    route_name = node.get('routeName')
+    if route_name:
+        result[route_name] = {
+            'icon': node.get('icon'),
+            'name': node.get('name') or node.get('title'),
+        }
+    for key in ('list', 'children'):
+        for child in node.get(key) or []:
+            if isinstance(child, dict):
+                _walk_menu_config_node(child, result)
+
+
+def _load_menu_config_icons(module_name: str) -> dict:
+    config_path = _find_menu_config_path(module_name)
+    if not config_path:
+        return {}
+
+    try:
+        data = json.loads(config_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    icons: dict = {}
+    for section in data.get('menuSections') or []:
+        if isinstance(section, dict):
+            _walk_menu_config_node(section, icons)
+    return icons
+
+
+def _snapshot_module_menu_items(module_source: str) -> dict:
+    return {
+        item.route_name: item
+        for item in MenuItem.objects.filter(module_source=module_source)
+        if item.route_name
+    }
+
+
+def _resolve_menu_icon(route_name: str, menu_icons: dict, existing_items: dict):
+    menu_entry = menu_icons.get(route_name) or {}
+    existing = existing_items.get(route_name)
+    icon = menu_entry.get('icon') or (existing.icon if existing else None)
+    return icon or None
+
+
+def _resolve_menu_name(route_name: str, fallback: str, menu_icons: dict, existing_items: dict) -> str:
+    menu_entry = menu_icons.get(route_name) or {}
+    existing = existing_items.get(route_name)
+    return menu_entry.get('name') or (existing.name if existing else None) or fallback
 
 
 def _parse_routes_js(content: str) -> dict:
@@ -199,11 +260,6 @@ class Command(BaseCommand):
             if self.module_filter and self.group_name_override
             else (root_data.get('meta') or {}).get('title') or root_route_name
         )
-        group_icon = (
-            self.group_icon_override
-            if self.module_filter and self.group_icon_override
-            else None
-        )
 
         if self.dry_run:
             self.stdout.write(
@@ -212,10 +268,25 @@ class Command(BaseCommand):
             )
             return
 
+        menu_icons = _load_menu_config_icons(module_name)
+        existing_items = _snapshot_module_menu_items(module_source)
+
         # Удаляем старые пункты модуля
         deleted, _ = MenuItem.objects.filter(module_source=module_source).delete()
         if deleted:
             self.stdout.write(f'  {module_name}: удалено {deleted} старых пунктов')
+
+        group_name = _resolve_menu_name(
+            root_route_name,
+            group_name,
+            menu_icons,
+            existing_items,
+        )
+        group_icon = (
+            self.group_icon_override
+            if self.module_filter and self.group_icon_override
+            else _resolve_menu_icon(root_route_name, menu_icons, existing_items)
+        )
 
         # Создаём корневой пункт меню (маршрут с опциональным route_name)
         group = MenuItem.objects.create(
@@ -231,11 +302,16 @@ class Command(BaseCommand):
         # Создаём дочерние route-пункты (order вычисляется в save())
         for route_name, data in child_routes:
             meta = data.get('meta') or {}
-            display_name = meta.get('title') or route_name
+            display_name = _resolve_menu_name(
+                route_name,
+                meta.get('title') or route_name,
+                menu_icons,
+                existing_items,
+            )
             MenuItem.objects.create(
                 name=display_name,
                 route_name=route_name,
-                icon=None,
+                icon=_resolve_menu_icon(route_name, menu_icons, existing_items),
                 item_type='route',
                 parent=group,
                 module_source=module_source,

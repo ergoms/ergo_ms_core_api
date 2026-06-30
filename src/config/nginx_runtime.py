@@ -118,6 +118,42 @@ def effective_media_public_port(default: str = '8003') -> str:
     return env.str('MEDIA_API_BIND_PORT', default=default)
 
 
+def media_api_public_base_url() -> str:
+    """
+    Публичный base URL для подписанных ссылок (/serve/, /upload/).
+
+    Приоритет: MEDIA_API_URL → автовывод из nginx или MEDIA_API_BIND_PORT.
+  """
+    explicit = env.str('MEDIA_API_URL', default='').strip()
+    if explicit:
+        return explicit.rstrip('/')
+
+    host = effective_media_public_host('localhost')
+    port = effective_media_public_port('8003')
+    protocol = 'https' if nginx_use_https() else env.str('MEDIA_API_PROTOCOL', default='http').strip() or 'http'
+    if (protocol == 'http' and str(port) == '80') or (protocol == 'https' and str(port) == '443'):
+        return f'{protocol}://{host}'
+    return f'{protocol}://{host}:{port}'
+
+
+def media_api_internal_base_url() -> str:
+    """
+    Служебный base URL core/api → media_api (MEDIA_ACCESS_MODE=remote).
+
+    Приоритет: MEDIA_API_INTERNAL_URL → MEDIA_API_INTERNAL_BASE_URL (legacy)
+    → http://MEDIA_API_BIND_HOST:MEDIA_API_BIND_PORT.
+    """
+    explicit = env.str('MEDIA_API_INTERNAL_URL', default='').strip()
+    if not explicit:
+        explicit = env.str('MEDIA_API_INTERNAL_BASE_URL', default='').strip()
+    if explicit:
+        return explicit.rstrip('/')
+
+    bind_host = env.str('MEDIA_API_BIND_HOST', default='127.0.0.1').strip() or '127.0.0.1'
+    bind_port = env.str('MEDIA_API_BIND_PORT', default='8003').strip() or '8003'
+    return f'http://{bind_host}:{bind_port}'
+
+
 def effective_cors_origins(default_origins: list[str]) -> list[str]:
     if not nginx_enabled():
         return default_origins
