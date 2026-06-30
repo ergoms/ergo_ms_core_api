@@ -8,19 +8,25 @@ from src.core.cms.models import (
 )
 
 
-def GetUserExpandedPermissions(user:User):
-    groups = user.groups.all()
-    expadedpermissions = []
-    perms = user.user_permissions.all()
-    for group in groups:
-        permissions = group.permissions.all()
-        for permission in permissions:
-            exp = ExpandedPermission.objects.get(permission = permission)
-            expadedpermissions.append(exp)
+def GetUserExpandedPermissions(user: User):
+    result = []
+    seen_ids = set()
 
-    for perm in perms:
-        exp = ExpandedPermission.objects.get(permission = perm)
-        expadedpermissions.append(exp)
-        expadedpermissions = list(set(expadedpermissions))
+    def append_expanded(permission):
+        if permission.id in seen_ids:
+            return
+        try:
+            exp = ExpandedPermission.objects.get(permission=permission)
+        except ExpandedPermission.DoesNotExist:
+            return
+        seen_ids.add(permission.id)
+        result.append(exp)
 
-    return expadedpermissions
+    for group in user.groups.all():
+        for permission in group.permissions.all():
+            append_expanded(permission)
+
+    for perm in user.user_permissions.all():
+        append_expanded(perm)
+
+    return result

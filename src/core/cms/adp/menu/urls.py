@@ -13,6 +13,7 @@ from .views import (
     MenuSeparatorDetailView,
     MenuAccessLogView,
     AvailableIconsView,
+    MenuSyncView,
 )
 
 urlpatterns = [
@@ -24,4 +25,5 @@ urlpatterns = [
     path('separators/<int:separator_id>/', MenuSeparatorDetailView.as_view(), name='menu_separator_detail'),
     path('access-log/', MenuAccessLogView.as_view(), name='menu_access_log'),
     path('available-icons/', AvailableIconsView.as_view(), name='available_icons'),
+    path('sync/', MenuSyncView.as_view(), name='menu_sync'),
 ]
