@@ -35,11 +35,27 @@ class _MigrationApps:
         return apps.get_model(app_label, model_name)
 
 
+def _menu_access_key(item) -> tuple:
+    """Уникальный ключ пункта меню для сохранения/восстановления доступа."""
+    parent_ref = ''
+    if item.parent_id:
+        parent = item.parent
+        parent_ref = parent.route_name or parent.name or ''
+    return (
+        item.route_name or '',
+        item.module_source or '',
+        item.name or '',
+        parent_ref,
+    )
+
+
 def _save_access_map():
-    """Сохраняет маппинг доступа (route_name, module_source) -> {roles, groups}."""
+    """Сохраняет маппинг доступа (route_name, module_source, name, parent_ref) -> {roles, groups}."""
     access_map = {}
-    for item in MenuItem.objects.prefetch_related('allowed_roles', 'allowed_role_groups').all():
-        key = (item.route_name or '', item.module_source or '')
+    for item in MenuItem.objects.select_related('parent').prefetch_related(
+        'allowed_roles', 'allowed_role_groups',
+    ).all():
+        key = _menu_access_key(item)
         role_ids = list(item.allowed_roles.values_list('id', flat=True))
         group_ids = list(item.allowed_role_groups.values_list('id', flat=True))
         if role_ids or group_ids:
@@ -49,14 +65,34 @@ def _save_access_map():
 
 def _restore_access_map(access_map):
     """Восстанавливает allowed_roles и allowed_role_groups из access_map."""
-    for item in MenuItem.objects.all():
-        key = (item.route_name or '', item.module_source or '')
-        if key in access_map:
-            mapping = access_map[key]
-            if mapping.get('roles'):
-                item.allowed_roles.set(mapping['roles'])
-            if mapping.get('groups'):
-                item.allowed_role_groups.set(mapping['groups'])
+    for item in MenuItem.objects.select_related('parent').all():
+        key = _menu_access_key(item)
+        if key not in access_map:
+            continue
+        mapping = access_map[key]
+        if mapping.get('roles'):
+            item.allowed_roles.set(mapping['roles'])
+        if mapping.get('groups'):
+            item.allowed_role_groups.set(mapping['groups'])
+
+
+def _reapply_module_sidebar_role_groups(module_names):
+    """
+    Повторно применяет allowed_role_groups из menu_sidebar модулей после restore.
+
+    populate вызывает apply до _restore_access_map; сохранённые группы могут
+    перезаписать сброс на папках — модульная apply-функция выравнивает состояние.
+    """
+    for module_name in module_names:
+        try:
+            sidebar_mod = importlib.import_module(
+                f'modules.{module_name}.api.menu_sidebar'
+            )
+        except (ImportError, ModuleNotFoundError):
+            continue
+        apply_fn = getattr(sidebar_mod, 'apply_sidebar_allowed_role_groups', None)
+        if callable(apply_fn):
+            apply_fn()
 
 
 def _topological_sort(items, dep_fn):
@@ -298,6 +334,7 @@ class Command(BaseCommand):
             func(apps, schema_editor)
             self.stdout.write(f'  core: {func_name} ({stem})')
 
+        populated_modules = []
         if not self.core_only:
             discovered = _discover_module_menu_migrations()
             if self.module_filter:
@@ -308,6 +345,7 @@ class Command(BaseCommand):
             for module_name, migration_stem, populate_func in discovered:
                 try:
                     populate_func(apps, schema_editor)
+                    populated_modules.append(module_name)
                     self.stdout.write(self.style.SUCCESS(f'  {module_name}: {migration_stem}'))
                 except Exception as e:
                     self.stderr.write(
@@ -317,4 +355,7 @@ class Command(BaseCommand):
 
         _restore_access_map(access_map)
         self.stdout.write(f'Восстановлено настроек доступа: {len(access_map)}')
+        if populated_modules:
+            _reapply_module_sidebar_role_groups(populated_modules)
+            self.stdout.write('Повторно применены allowed_role_groups модулей с menu_sidebar')
         self.stdout.write(self.style.SUCCESS('Готово. Обновите страницу (F5) для отображения меню.'))
