@@ -11,6 +11,14 @@ from src.core.integrations import bridge
 PERMISSION_CHECK_EVENT = 'adp.permission_check'
 
 
+class RoleAssignmentError(Exception):
+    """Недопустимое изменение роли пользователя."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+
 class PermissionService:
     """
     Сервис для работы с правами доступа пользователей.
@@ -29,9 +37,9 @@ class PermissionService:
         ).first()
         
         if user_role:
-            PermissionService._sync_user_admin_flag(
+            PermissionService._sync_django_admin_flags(
                 user,
-                PermissionService._is_admin_role(user_role.role)
+                PermissionService._is_admin_role(user_role.role),
             )
             return user_role
         
@@ -111,17 +119,51 @@ class PermissionService:
         return role.role_type == 'admin'
 
     @staticmethod
-    def _sync_user_admin_flag(user: User, should_be_admin: bool):
+    def _sync_django_admin_flags(user: User, should_be_admin: bool):
         """
-        Синхронизирует значение django-поля is_staff пользователя с назначенной ролью.
+        Синхронизирует is_staff и is_superuser с ADP-ролью администратора (единая сущность).
         """
         if not getattr(user, 'pk', None):
             return
-        
-        current_is_staff = getattr(user, 'is_staff', False)
-        if current_is_staff != should_be_admin:
+
+        update_fields = []
+        if getattr(user, 'is_staff', False) != should_be_admin:
             user.is_staff = should_be_admin
-            user.save(update_fields=['is_staff'])
+            update_fields.append('is_staff')
+        if getattr(user, 'is_superuser', False) != should_be_admin:
+            user.is_superuser = should_be_admin
+            update_fields.append('is_superuser')
+        if update_fields:
+            user.save(update_fields=update_fields)
+
+    @staticmethod
+    def count_global_admins() -> int:
+        from django.db.models import Q
+
+        admin_role = PermissionService._get_or_create_admin_role()
+        return (
+            User.objects.filter(
+                Q(is_superuser=True)
+                | Q(user_roles__role=admin_role, user_roles__is_active=True)
+            )
+            .distinct()
+            .count()
+        )
+
+    @staticmethod
+    def validate_role_change(
+        user: User,
+        role: Role,
+        assigned_by: User = None,
+    ) -> Optional[str]:
+        was_admin = PermissionService._is_global_admin(user)
+        will_be_admin = PermissionService._is_admin_role(role)
+        if was_admin and not will_be_admin:
+            if assigned_by and assigned_by.pk == user.pk:
+                return 'Нельзя снять с себя роль администратора.'
+            if PermissionService.count_global_admins() <= 1:
+                return 'Нельзя снять роль у последнего администратора системы.'
+        return None
 
     @staticmethod
     def ensure_system_roles():
@@ -150,35 +192,45 @@ class PermissionService:
         if not created and not user_role.is_active:
             user_role.is_active = True
             user_role.save(update_fields=['is_active'])
-        PermissionService._sync_user_admin_flag(user, False)
+        PermissionService._sync_django_admin_flags(user, False)
         return user_role
     
     @staticmethod
-    def is_admin(user: User) -> bool:
-        """Проверить, является ли пользователь администратором"""
-        if getattr(user, 'is_superuser', False):
-            return True
-        
-        if getattr(user, 'is_staff', False):
-            return True
-        
-        user_role = PermissionService.get_user_role(user)
-        if user_role and PermissionService._is_admin_role(user_role.role):
-            return True
-        
-        return False
+    def _get_active_user_role(user: User) -> Optional[UserRole]:
+        """Активная роль без побочных эффектов (не назначает роль по умолчанию)."""
+        if not user or not getattr(user, 'pk', None):
+            return None
+        return UserRole.objects.select_related('role').filter(
+            user=user,
+            is_active=True,
+        ).first()
 
     @staticmethod
-    def can_manage_users_as_global_admin(user: User) -> bool:
-        """Суперпользователь или активная глобальная роль администратора."""
+    def _is_global_admin(user: User) -> bool:
+        """
+        Глобальный администратор: is_superuser и активная ADP-роль admin синхронизированы
+        (_sync_django_admin_flags). Проверяем оба источника для устойчивости.
+        """
+        if not user or not getattr(user, 'is_authenticated', False):
+            return False
         if getattr(user, 'is_superuser', False):
             return True
-        user_role = PermissionService.get_user_role(user)
+        user_role = PermissionService._get_active_user_role(user)
         return bool(
             user_role
             and user_role.is_active
             and PermissionService._is_admin_role(user_role.role)
         )
+
+    @staticmethod
+    def is_admin(user: User) -> bool:
+        """Проверить, является ли пользователь глобальным администратором."""
+        return PermissionService._is_global_admin(user)
+
+    @staticmethod
+    def can_manage_users_as_global_admin(user: User) -> bool:
+        """Глобальный администратор (эквивалент is_admin)."""
+        return PermissionService._is_global_admin(user)
 
     @staticmethod
     def resolve_display_role(
@@ -187,19 +239,14 @@ class PermissionService:
         *,
         admin_role: Optional[Role] = None,
     ) -> Optional[Role]:
-        """
-        Эффективная роль для отображения в админ-панели.
-
-        Суперпользователь и is_staff без явной роли показываются как «Администратор».
-        """
-        if getattr(user, 'is_superuser', False):
+        """Эффективная роль для отображения в админ-панели."""
+        if PermissionService._is_global_admin(user):
+            if user_role and user_role.role:
+                return user_role.role
             return admin_role or PermissionService._get_or_create_admin_role()
 
         if user_role and user_role.role:
             return user_role.role
-
-        if getattr(user, 'is_staff', False):
-            return admin_role or PermissionService._get_or_create_admin_role()
 
         return None
     
@@ -462,6 +509,10 @@ class PermissionService:
         Returns:
             Объект UserRole
         """
+        validation_error = PermissionService.validate_role_change(user, role, assigned_by)
+        if validation_error:
+            raise RoleAssignmentError(validation_error)
+
         # Деактивируем все существующие роли пользователя
         UserRole.objects.filter(user=user, is_active=True).update(is_active=False)
         
@@ -484,9 +535,9 @@ class PermissionService:
         if role_groups:
             user_role.role_groups.set(role_groups)
         
-        PermissionService._sync_user_admin_flag(
+        PermissionService._sync_django_admin_flags(
             user,
-            PermissionService._is_admin_role(role)
+            PermissionService._is_admin_role(role),
         )
-        
+
         return user_role

@@ -98,11 +98,22 @@ class RegistrationService:
         return bool(getattr(settings, 'REGISTRATION_CHECK_EMAIL_EXISTS', False))
 
     @staticmethod
-    def _email_already_registered(email: str) -> bool:
+    def _email_already_registered(email: str, *, exclude_user_id: Optional[int] = None) -> bool:
         normalized = (email or '').strip().lower()
         if not normalized:
             return False
-        return User.objects.filter(email__iexact=normalized).exists()
+        qs = User.objects.filter(email__iexact=normalized)
+        if exclude_user_id is not None:
+            qs = qs.exclude(pk=exclude_user_id)
+        return qs.exists()
+
+    @staticmethod
+    def validate_email_uniqueness(email: str, *, exclude_user_id: Optional[int] = None) -> Optional[str]:
+        if not RegistrationService.is_email_existence_check_enabled():
+            return None
+        if RegistrationService._email_already_registered(email, exclude_user_id=exclude_user_id):
+            return 'Пользователь с таким email уже существует.'
+        return None
 
     @staticmethod
     def validate_email_for_registration(email: str) -> Optional[str]:

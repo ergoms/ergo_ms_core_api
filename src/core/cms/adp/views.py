@@ -37,6 +37,22 @@ from src.core.utils.mixins import MediaApiFileMixin, read_storage_file_bytes
 from django.contrib.auth.models import User
 import os
 import logging
+from django.http import HttpResponse
+from django.utils import timezone
+
+from src.core.cms.adp.services.import_users_passwords import (
+    ImportPasswordsAccessError,
+    build_passwords_excel,
+    consume_import_passwords,
+    is_passwords_download_available,
+)
+from src.core.cms.adp.services.import_users_welcome import (
+    ImportWelcomeEmailError,
+    get_welcome_email_defaults,
+    normalize_welcome_templates,
+    parse_send_welcome_emails_flag,
+)
+from src.core.settings.views import _safe_content_disposition_filename
 
 from src.core.cms.adp.password_policy import validate_new_password_pair
 from src.core.cms.adp.services.password_reset import PasswordResetService
@@ -952,7 +968,8 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
     """
     Импорт пользователей из Excel или CSV файла через Celery с real-time прогрессом.
     Ожидаемые столбцы: Фамилия, Имя, Отчество, Логин, E-mail.
-    Пароль по умолчанию: "1".
+    Для каждого создаваемого пользователя генерируется случайный пароль;
+    пароли доступны для одноразовой выгрузки в Excel после импорта.
     Проверка дубликатов по ФИО.
     """
     parser_classes = [JSONParser, MultiPartParser, FormParser]
@@ -973,7 +990,19 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
                 ),
                 'skip_welcome_emails': openapi.Schema(
                     type=openapi.TYPE_BOOLEAN,
-                    description='Не отправлять приветственные письма (по умолчанию: false)',
+                    description='Устарело: используйте send_welcome_emails (инверсия)',
+                ),
+                'send_welcome_emails': openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description='Отправлять приветственные письма (по умолчанию: false)',
+                ),
+                'welcome_email_subject': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='Тема приветственного письма (шаблон с плейсхолдерами)',
+                ),
+                'welcome_email_body': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='Текст приветственного письма (шаблон с плейсхолдерами)',
                 ),
             },
         ),
@@ -995,12 +1024,37 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
     def post(self, request):
         from src.core.cms.adp.tasks import import_users_task
 
-        skip_raw = request.data.get('skip_welcome_emails', request.POST.get('skip_welcome_emails', 'false'))
-        skip_welcome_emails = str(skip_raw).lower() in ('true', '1', 'yes')
+        if 'send_welcome_emails' in request.data or 'send_welcome_emails' in request.POST:
+            send_welcome_emails = parse_send_welcome_emails_flag(
+                request.data.get('send_welcome_emails', request.POST.get('send_welcome_emails')),
+            )
+        elif 'skip_welcome_emails' in request.data or 'skip_welcome_emails' in request.POST:
+            skip_welcome_emails = parse_send_welcome_emails_flag(
+                request.data.get('skip_welcome_emails', request.POST.get('skip_welcome_emails')),
+            )
+            send_welcome_emails = not skip_welcome_emails
+        else:
+            send_welcome_emails = False
+
+        welcome_email_subject = (
+            request.data.get('welcome_email_subject')
+            or request.POST.get('welcome_email_subject')
+            or ''
+        )
+        welcome_email_body = (
+            request.data.get('welcome_email_body')
+            or request.POST.get('welcome_email_body')
+            or ''
+        )
+
+        try:
+            normalize_welcome_templates(welcome_email_subject, welcome_email_body)
+        except ImportWelcomeEmailError as exc:
+            return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
 
         logger.warning(
-            'Запуск импорта пользователей через Celery. Пользователь: %s (ID: %s), skip_welcome_emails: %s',
-            request.user.username, request.user.id, skip_welcome_emails,
+            'Запуск импорта пользователей через Celery. Пользователь: %s (ID: %s), send_welcome_emails: %s',
+            request.user.username, request.user.id, send_welcome_emails,
         )
 
         file, file_path = self.get_file_or_path('file')
@@ -1032,7 +1086,10 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
             task = import_users_task.delay(
                 file_content=file_content,
                 file_name=original_name,
-                skip_welcome_emails=skip_welcome_emails,
+                initiated_by_user_id=request.user.id,
+                send_welcome_emails=send_welcome_emails,
+                welcome_email_subject=welcome_email_subject,
+                welcome_email_body=welcome_email_body,
             )
             
             logger.warning(f'Celery задача запущена: task_id={task.id}')
@@ -1125,7 +1182,7 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
                 'status': 'Обработка...'
             }
         elif task.state == 'SUCCESS':
-            result = task.result
+            result = task.result or {}
             response = {
                 'state': task.state,
                 'current': result.get('total', 0),
@@ -1134,7 +1191,8 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
                 'skipped': result.get('skipped', 0),
                 'progress': 100,
                 'status': 'Завершено',
-                'result': result
+                'result': result,
+                'passwords_available': is_passwords_download_available(task_id, request.user),
             }
         elif task.state == 'FAILURE':
             response = {
@@ -1160,3 +1218,55 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
             }
         
         return Response(response, status=status.HTTP_200_OK)
+
+
+class ImportUsersWelcomeEmailDefaultsView(BaseAPIViewAuthMixin):
+    """Шаблон приветственного письма для массового импорта пользователей."""
+
+    @swagger_auto_schema(
+        operation_description='Получить шаблон приветственного письма для импорта пользователей',
+        responses={200: openapi.Response(description='Шаблон и список плейсхолдеров')},
+        security=[{'Bearer': []}],
+    )
+    def get(self, request):
+        return Response(get_welcome_email_defaults(), status=status.HTTP_200_OK)
+
+
+class ImportUsersPasswordsDownloadView(BaseAPIViewAuthMixin):
+    """Одноразовая выгрузка Excel с паролями импортированных пользователей."""
+
+    @swagger_auto_schema(
+        operation_description=(
+            'Скачать Excel с паролями пользователей, созданных при импорте. '
+            'Файл доступен только один раз.'
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                'task_id',
+                openapi.IN_PATH,
+                type=openapi.TYPE_STRING,
+                description='ID Celery задачи импорта',
+            ),
+        ],
+        responses={
+            200: 'Excel-файл с паролями',
+            403: 'Недостаточно прав',
+            410: 'Файл уже был скачан или недоступен',
+        },
+        security=[{'Bearer': []}],
+    )
+    def get(self, request, task_id):
+        try:
+            entries = consume_import_passwords(task_id, request.user)
+        except ImportPasswordsAccessError as exc:
+            return Response({'error': exc.message}, status=exc.status_code)
+
+        excel_bytes = build_passwords_excel(entries)
+        timestamp = timezone.now().strftime('%Y%m%d-%H%M')
+        filename = _safe_content_disposition_filename(f'import-users-passwords-{timestamp}') + '.xlsx'
+        response = HttpResponse(
+            excel_bytes,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response

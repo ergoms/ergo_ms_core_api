@@ -178,6 +178,61 @@ class AdminResetUserPasswordSerializer(Serializer):
         return validate_new_password_pair(attrs)
 
 
+class AdminCreateUserSerializer(Serializer):
+    username = CharField(required=True, max_length=150)
+    password = CharField(
+        required=False,
+        allow_blank=True,
+        write_only=True,
+        style={'input_type': 'password'},
+    )
+    confirm_password = CharField(
+        required=False,
+        allow_blank=True,
+        write_only=True,
+        style={'input_type': 'password'},
+    )
+    first_name = CharField(required=False, allow_blank=True, default='')
+    last_name = CharField(required=False, allow_blank=True, default='')
+    middle_name = CharField(required=False, allow_blank=True, default='')
+    email = CharField(required=False, allow_blank=True, default='')
+    role_id = IntegerField(required=False, allow_null=True)
+    role_group_ids = ListField(child=IntegerField(), required=False, default=list)
+    send_password_notification = BooleanField(required=False, default=True)
+
+    def validate_username(self, value):
+        normalized = (value or '').strip()
+        if not normalized:
+            raise ValidationError('Логин обязателен.')
+        if User.objects.filter(username__iexact=normalized).exists():
+            raise ValidationError('Данный логин уже занят, попробуйте другой.')
+        return normalized
+
+    def validate_email(self, value):
+        normalized = (value or '').strip().lower()
+        if not normalized:
+            return ''
+        error = RegistrationService.validate_email_uniqueness(normalized)
+        if error:
+            raise ValidationError(error)
+        return normalized
+
+    def validate(self, attrs):
+        password = (attrs.get('password') or '').strip()
+        confirm_password = (attrs.get('confirm_password') or '').strip()
+        if not password and not confirm_password:
+            return attrs
+        if not password or not confirm_password:
+            raise ValidationError('Укажите пароль и подтверждение.')
+        validate_new_password_pair({
+            'new_password': password,
+            'confirm_password': confirm_password,
+        })
+        attrs['password'] = password
+        attrs['confirm_password'] = confirm_password
+        return attrs
+
+
 class UserDeviceSerializer(ModelSerializer):
     is_current = SerializerMethodField()
     browser = SerializerMethodField()
@@ -312,7 +367,7 @@ class UpdateUserProfileSerializer(ModelSerializer):
     first_name = CharField(source='user.first_name', required=False, allow_blank=True)
     last_name = CharField(source='user.last_name', required=False, allow_blank=True)
     middle_name = CharField(source='user.middle_name', required=False, allow_blank=True)
-    email = EmailField(source='user.email', required=False)
+    email = EmailField(source='user.email', required=False, allow_blank=True)
     phone = CharField(required=False, allow_blank=True, allow_null=True)
     website = URLField(required=False, allow_blank=True, allow_null=True)
     bio = CharField(required=False, allow_blank=True, allow_null=True)
@@ -332,14 +387,15 @@ class UpdateUserProfileSerializer(ModelSerializer):
 
         normalized = value.strip().lower()
         if not normalized:
-            raise ValidationError('Email обязателен.')
+            return ''
 
-        duplicate_qs = User.objects.filter(email__iexact=normalized)
-        if self.instance is not None:
-            duplicate_qs = duplicate_qs.exclude(pk=self.instance.user_id)
-
-        if duplicate_qs.exists():
-            raise ValidationError('Пользователь с таким email уже существует.')
+        exclude_user_id = self.instance.user_id if self.instance is not None else None
+        error = RegistrationService.validate_email_uniqueness(
+            normalized,
+            exclude_user_id=exclude_user_id,
+        )
+        if error:
+            raise ValidationError(error)
 
         return normalized
 

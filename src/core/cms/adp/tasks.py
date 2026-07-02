@@ -8,6 +8,14 @@ from django.db import transaction
 from django.contrib.auth.models import User
 
 from src.core.integrations import bridge
+from src.core.cms.adp.services.import_users_passwords import store_import_passwords
+from src.core.cms.adp.services.import_users_welcome import (
+    normalize_welcome_templates,
+    render_welcome_email,
+    send_import_welcome_email,
+)
+from src.core.cms.adp.services.registration import RegistrationService
+from src.core.utils.methods import generate_secure_random_password
 
 logger = logging.getLogger('celery.core.cms.adp')
 
@@ -30,20 +38,20 @@ def _import_meta(current, total, created, skipped, progress, accumulated_logs, l
 
 
 @shared_task(bind=True, name='core.cms.adp.import_users')
-def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
+def import_users_task(
+    self,
+    file_content,
+    file_name,
+    initiated_by_user_id=None,
+    send_welcome_emails=False,
+    welcome_email_subject='',
+    welcome_email_body='',
+):
     """
-    Celery задача для импорта пользователей из Excel/CSV файла
-    
-    Args:
-        self: Task instance (bind=True)
-        file_content: Содержимое файла в байтах
-        file_name: Имя файла для определения типа
-        skip_welcome_emails: Подавлять создание LMS UserProfile при массовом импорте
-            (исторически называется так; фактически управляет событием
-            'core.bulk_user_create' на ModuleBridge)
-    
-    Returns:
-        dict: Результаты импорта
+    Celery задача для импорта пользователей из Excel/CSV файла.
+
+    send_welcome_emails: отправлять приветственные письма пользователям с email.
+    welcome_email_subject/body: шаблоны с плейсхолдерами {username}, {full_name}, ...
     """
     logger.info(f'Начало импорта пользователей из файла: {file_name}')
     
@@ -101,8 +109,16 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
             'created': 0,
             'skipped': 0,
             'errors': [],
-            'logs': []
+            'logs': [],
+            'emails_sent': 0,
+            'emails_failed': 0,
+            'emails_skipped_no_email': 0,
         }
+        created_credentials = []
+        welcome_subject_template, welcome_body_template = normalize_welcome_templates(
+            welcome_email_subject,
+            welcome_email_body,
+        )
         
         logger.info(f'Файл прочитан. Всего строк: {total_rows}')
         
@@ -117,150 +133,198 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
             meta=_import_meta(0, total_rows, 0, 0, 0, accumulated_logs, start_log)
         )
         
-        # Обрабатываем каждую строку
-        for index, row in df.iterrows():
-            log_entry = None
-            
-            try:
-                # Извлекаем данные
-                last_name = str(row.get(found_columns['фамилия'], '')).strip()
-                first_name = str(row.get(found_columns['имя'], '')).strip()
-                middle_name = ''
-                if 'отчество' in found_columns:
-                    middle_name = str(row.get(found_columns['отчество'], '')).strip()
-                    if pd.isna(row.get(found_columns['отчество'])):
-                        middle_name = ''
-                
-                username = str(row.get(found_columns['логин'], '')).strip()
-                email = ''
-                if 'email' in found_columns:
-                    email = str(row.get(found_columns['email'], '')).strip()
-                    if pd.isna(row.get(found_columns['email'])):
-                        email = ''
-                
-                # Очищаем от NaN
-                if pd.isna(last_name) or last_name == 'nan':
-                    last_name = ''
-                if pd.isna(first_name) or first_name == 'nan':
-                    first_name = ''
-                if pd.isna(middle_name) or middle_name == 'nan':
-                    middle_name = ''
-                if pd.isna(username) or username == 'nan':
-                    username = ''
-                if pd.isna(email) or email == 'nan':
-                    email = ''
-                
-                # Проверяем обязательные поля
-                if not last_name or not first_name or not username:
-                    error_msg = f'Строка {index + 2}: пропущена - пустые обязательные поля'
-                    logger.warning(error_msg)
-                    results['errors'].append(error_msg)
-                    log_entry = {'level': 'warn', 'message': error_msg}
-                    results['logs'].append(log_entry)
-                    accumulated_logs.append(log_entry)
-                    results['skipped'] += 1
-                    # Обновляем прогресс перед continue
-                    progress = int((index + 1) / total_rows * 100)
-                    self.update_state(
-                        state='PROGRESS',
-                        meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
-                    )
-                    continue
-                
-                # Проверяем дубликат по ФИО
-                if User.objects.filter(
-                    last_name__iexact=last_name,
-                    first_name__iexact=first_name,
-                    middle_name__iexact=middle_name if middle_name else ''
-                ).exists():
-                    skip_msg = f'Строка {index + 2}: пользователь "{last_name} {first_name}" уже существует'
-                    logger.warning(skip_msg)
-                    log_entry = {'level': 'warn', 'message': skip_msg}
-                    results['logs'].append(log_entry)
-                    accumulated_logs.append(log_entry)
-                    results['skipped'] += 1
-                    # Обновляем прогресс перед continue
-                    progress = int((index + 1) / total_rows * 100)
-                    self.update_state(
-                        state='PROGRESS',
-                        meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
-                    )
-                    continue
-                
-                # Проверяем дубликат логина
-                if User.objects.filter(username__iexact=username).exists():
-                    skip_msg = f'Строка {index + 2}: логин "{username}" уже занят'
-                    logger.warning(skip_msg)
-                    log_entry = {'level': 'warn', 'message': skip_msg}
-                    results['logs'].append(log_entry)
-                    accumulated_logs.append(log_entry)
-                    results['skipped'] += 1
-                    # Обновляем прогресс перед continue
-                    progress = int((index + 1) / total_rows * 100)
-                    self.update_state(
-                        state='PROGRESS',
-                        meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
-                    )
-                    continue
-                
-                # Проверяем дубликат email
-                if email and User.objects.filter(email__iexact=email).exists():
-                    skip_msg = f'Строка {index + 2}: email "{email}" уже используется'
-                    logger.warning(skip_msg)
-                    log_entry = {'level': 'warn', 'message': skip_msg}
-                    results['logs'].append(log_entry)
-                    accumulated_logs.append(log_entry)
-                    results['skipped'] += 1
-                    # Обновляем прогресс перед continue
-                    progress = int((index + 1) / total_rows * 100)
-                    self.update_state(
-                        state='PROGRESS',
-                        meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
-                    )
-                    continue
-                
-                # Создаём пользователя
-                with transaction.atomic():
-                    # Подавляем создание LMS UserProfile при массовом импорте.
-                    # LMS подписан на 'core.bulk_user_create' через ModuleBridge
-                    # и сам отключает свой post_save-сигнал на время импорта.
-                    if skip_welcome_emails:
-                        bridge.emit('core.bulk_user_create', phase='start')
+        # Обрабатываем каждую строку; подавляем LMS UserProfile на время всего импорта.
+        bridge.emit('core.bulk_user_create', phase='start')
+        try:
+            for index, row in df.iterrows():
+                log_entry = None
 
-                    try:
+                try:
+                    last_name = str(row.get(found_columns['фамилия'], '')).strip()
+                    first_name = str(row.get(found_columns['имя'], '')).strip()
+                    middle_name = ''
+                    if 'отчество' in found_columns:
+                        middle_name = str(row.get(found_columns['отчество'], '')).strip()
+                        if pd.isna(row.get(found_columns['отчество'])):
+                            middle_name = ''
+
+                    username = str(row.get(found_columns['логин'], '')).strip()
+                    email = ''
+                    if 'email' in found_columns:
+                        email = str(row.get(found_columns['email'], '')).strip()
+                        if pd.isna(row.get(found_columns['email'])):
+                            email = ''
+
+                    if pd.isna(last_name) or last_name == 'nan':
+                        last_name = ''
+                    if pd.isna(first_name) or first_name == 'nan':
+                        first_name = ''
+                    if pd.isna(middle_name) or middle_name == 'nan':
+                        middle_name = ''
+                    if pd.isna(username) or username == 'nan':
+                        username = ''
+                    if pd.isna(email) or email == 'nan':
+                        email = ''
+
+                    if not last_name or not first_name or not username:
+                        error_msg = f'Строка {index + 2}: пропущена - пустые обязательные поля'
+                        logger.warning(error_msg)
+                        results['errors'].append(error_msg)
+                        log_entry = {'level': 'warn', 'message': error_msg}
+                        results['logs'].append(log_entry)
+                        accumulated_logs.append(log_entry)
+                        results['skipped'] += 1
+                        progress = int((index + 1) / total_rows * 100)
+                        self.update_state(
+                            state='PROGRESS',
+                            meta=_import_meta(
+                                index + 1, total_rows, results['created'], results['skipped'],
+                                progress, accumulated_logs, log_entry,
+                            ),
+                        )
+                        continue
+
+                    if User.objects.filter(
+                        last_name__iexact=last_name,
+                        first_name__iexact=first_name,
+                        middle_name__iexact=middle_name if middle_name else '',
+                    ).exists():
+                        skip_msg = f'Строка {index + 2}: пользователь "{last_name} {first_name}" уже существует'
+                        logger.warning(skip_msg)
+                        log_entry = {'level': 'warn', 'message': skip_msg}
+                        results['logs'].append(log_entry)
+                        accumulated_logs.append(log_entry)
+                        results['skipped'] += 1
+                        progress = int((index + 1) / total_rows * 100)
+                        self.update_state(
+                            state='PROGRESS',
+                            meta=_import_meta(
+                                index + 1, total_rows, results['created'], results['skipped'],
+                                progress, accumulated_logs, log_entry,
+                            ),
+                        )
+                        continue
+
+                    if User.objects.filter(username__iexact=username).exists():
+                        skip_msg = f'Строка {index + 2}: логин "{username}" уже занят'
+                        logger.warning(skip_msg)
+                        log_entry = {'level': 'warn', 'message': skip_msg}
+                        results['logs'].append(log_entry)
+                        accumulated_logs.append(log_entry)
+                        results['skipped'] += 1
+                        progress = int((index + 1) / total_rows * 100)
+                        self.update_state(
+                            state='PROGRESS',
+                            meta=_import_meta(
+                                index + 1, total_rows, results['created'], results['skipped'],
+                                progress, accumulated_logs, log_entry,
+                            ),
+                        )
+                        continue
+
+                    if email and RegistrationService.validate_email_uniqueness(email):
+                        skip_msg = f'Строка {index + 2}: email "{email}" уже используется'
+                        logger.warning(skip_msg)
+                        log_entry = {'level': 'warn', 'message': skip_msg}
+                        results['logs'].append(log_entry)
+                        accumulated_logs.append(log_entry)
+                        results['skipped'] += 1
+                        progress = int((index + 1) / total_rows * 100)
+                        self.update_state(
+                            state='PROGRESS',
+                            meta=_import_meta(
+                                index + 1, total_rows, results['created'], results['skipped'],
+                                progress, accumulated_logs, log_entry,
+                            ),
+                        )
+                        continue
+
+                    with transaction.atomic():
+                        user_password = generate_secure_random_password()
                         user = User.objects.create_user(
                             username=username,
                             first_name=first_name,
                             last_name=last_name,
                             middle_name=middle_name if middle_name else '',
                             email=email if email else '',
-                            password='1'
+                            password=user_password,
                         )
-                    finally:
-                        if skip_welcome_emails:
-                            bridge.emit('core.bulk_user_create', phase='end')
-                
-                results['created'] += 1
-                success_msg = f'Строка {index + 2}: создан "{last_name} {first_name}" ({username})'
-                logger.info(f'Создан пользователь ID={user.id}')
-                log_entry = {'level': 'success', 'message': success_msg}
-                results['logs'].append(log_entry)
-                accumulated_logs.append(log_entry)
-                
-            except Exception as e:
-                error_msg = f'Строка {index + 2}: ошибка - {str(e)}'
-                logger.error(error_msg, exc_info=True)
-                results['errors'].append(error_msg)
-                log_entry = {'level': 'error', 'message': error_msg}
-                results['logs'].append(log_entry)
-                accumulated_logs.append(log_entry)
-            
-            # Обновляем прогресс задачи с последним логом
-            progress = int((index + 1) / total_rows * 100)
-            self.update_state(
-                state='PROGRESS',
-                meta=_import_meta(index + 1, total_rows, results['created'], results['skipped'], progress, accumulated_logs, log_entry)
-            )
+
+                        created_credentials.append({
+                            'last_name': last_name,
+                            'first_name': first_name,
+                            'middle_name': middle_name,
+                            'username': username,
+                            'email': email,
+                            'password': user_password,
+                        })
+
+                        if send_welcome_emails:
+                            if email:
+                                rendered_subject, rendered_body = render_welcome_email(
+                                    user,
+                                    subject_template=welcome_subject_template,
+                                    body_template=welcome_body_template,
+                                    password=user_password,
+                                )
+                                email_sent, email_error = send_import_welcome_email(
+                                    email,
+                                    rendered_subject,
+                                    rendered_body,
+                                )
+                                if email_sent:
+                                    results['emails_sent'] += 1
+                                else:
+                                    results['emails_failed'] += 1
+                                    warn_msg = (
+                                        f'Строка {index + 2}: пользователь создан, '
+                                        f'но письмо не отправлено'
+                                    )
+                                    log_entry = {'level': 'warn', 'message': warn_msg}
+                                    results['logs'].append(log_entry)
+                                    accumulated_logs.append(log_entry)
+                                    if email_error:
+                                        logger.warning(
+                                            'Не удалось отправить приветственное письмо для %s: %s',
+                                            username,
+                                            email_error,
+                                        )
+                            else:
+                                results['emails_skipped_no_email'] += 1
+
+                        del user_password
+
+                    results['created'] += 1
+                    if not log_entry or log_entry.get('level') != 'warn':
+                        success_msg = f'Строка {index + 2}: создан "{last_name} {first_name}" ({username})'
+                        logger.info('Создан пользователь ID=%s', user.id)
+                        log_entry = {'level': 'success', 'message': success_msg}
+                        results['logs'].append(log_entry)
+                        accumulated_logs.append(log_entry)
+
+                except Exception as e:
+                    error_msg = f'Строка {index + 2}: ошибка - {str(e)}'
+                    logger.error(error_msg, exc_info=True)
+                    results['errors'].append(error_msg)
+                    log_entry = {'level': 'error', 'message': error_msg}
+                    results['logs'].append(log_entry)
+                    accumulated_logs.append(log_entry)
+
+                progress = int((index + 1) / total_rows * 100)
+                self.update_state(
+                    state='PROGRESS',
+                    meta=_import_meta(
+                        index + 1,
+                        total_rows,
+                        results['created'],
+                        results['skipped'],
+                        progress,
+                        accumulated_logs,
+                        log_entry,
+                    ),
+                )
+        finally:
+            bridge.emit('core.bulk_user_create', phase='end')
         
         # Финальные результаты
         logger.info(f'Импорт завершен. Создано: {results["created"]}, пропущено: {results["skipped"]}')
@@ -272,14 +336,22 @@ def import_users_task(self, file_content, file_name, skip_welcome_emails=False):
             state='PROGRESS',
             meta=_import_meta(total_rows, total_rows, results['created'], results['skipped'], 100, accumulated_logs, final_log)
         )
-        
+
+        passwords_available = bool(created_credentials)
+        if passwords_available and initiated_by_user_id:
+            store_import_passwords(self.request.id, initiated_by_user_id, created_credentials)
+
         return {
             'success': True,
             'created': results['created'],
             'skipped': results['skipped'],
             'total': total_rows,
             'errors': results['errors'],
-            'logs': results['logs']
+            'logs': results['logs'],
+            'passwords_available': passwords_available,
+            'emails_sent': results['emails_sent'],
+            'emails_failed': results['emails_failed'],
+            'emails_skipped_no_email': results['emails_skipped_no_email'],
         }
         
     except Exception as e:

@@ -4,7 +4,7 @@ from src.core.cms.adp.services.permissions import PermissionService
 
 
 class IsGlobalAdmin(BasePermission):
-    """Глобальный администратор: UserRole «Администратор» или is_superuser."""
+    """Глобальный администратор: роль «Администратор» или is_superuser (эквивалентны)."""
 
     message = 'Доступ запрещён. Требуются права администратора.'
 

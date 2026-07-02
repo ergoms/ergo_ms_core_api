@@ -2,38 +2,30 @@ import asyncio
 import logging
 
 from channels.db import database_sync_to_async
-from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
+from src.core.cms.adp.consumers.base import JwtMessageAuthConsumer, WsAuthRejectedError
 from src.core.cms.adp.services import presence as presence_service
 from src.core.cms.adp.services.permissions import PermissionService
-from src.core.cms.adp.ws_auth import authenticate_ws_scope
 
 logger = logging.getLogger('core.cms.adp')
 
 PRESENCE_ADMIN_SNAPSHOT_INTERVAL = 10
 
 
-class PresenceConsumer(AsyncJsonWebsocketConsumer):
-    """WebSocket presence текущего пользователя: ws/presence/?token=<JWT>."""
+class PresenceConsumer(JwtMessageAuthConsumer):
+    """WebSocket presence текущего пользователя: ws/presence/ + auth-сообщение."""
 
     user_id: int | None = None
 
-    async def connect(self):
-        user = await authenticate_ws_scope(self.scope)
-        if user is None or not getattr(user, 'is_authenticated', False):
-            await self.close(code=4401)
-            return
-
-        self.scope['user'] = user
-        self.user_id = user.pk
+    async def on_ws_authenticated(self):
+        self.user_id = self.ws_user.pk
         await self._register_connection(self.user_id)
-        await self.accept()
 
-    async def disconnect(self, close_code):
+    async def on_ws_disconnect(self, close_code):
         if self.user_id is not None:
             await self._unregister_connection(self.user_id)
 
-    async def receive_json(self, content, **kwargs):
+    async def receive_authenticated_json(self, content, **kwargs):
         if content.get('type') != 'ping' or self.user_id is None:
             return
         await self._touch(self.user_id)
@@ -54,27 +46,19 @@ class PresenceConsumer(AsyncJsonWebsocketConsumer):
         presence_service.touch(user_id)
 
 
-class PresenceAdminConsumer(AsyncJsonWebsocketConsumer):
-    """Admin feed presence snapshot: ws/presence/admin/?token=<JWT>."""
+class PresenceAdminConsumer(JwtMessageAuthConsumer):
+    """Admin feed presence snapshot: ws/presence/admin/ + auth-сообщение."""
 
     snapshot_task: asyncio.Task | None = None
 
-    async def connect(self):
-        user = await authenticate_ws_scope(self.scope)
-        if user is None or not getattr(user, 'is_authenticated', False):
-            await self.close(code=4401)
-            return
+    async def on_ws_authenticated(self):
+        if not await self._is_global_admin(self.ws_user):
+            raise WsAuthRejectedError(4403)
 
-        if not await self._is_global_admin(user):
-            await self.close(code=4403)
-            return
-
-        self.scope['user'] = user
-        await self.accept()
         await self._send_snapshot()
         self.snapshot_task = asyncio.create_task(self._snapshot_loop())
 
-    async def disconnect(self, close_code):
+    async def on_ws_disconnect(self, close_code):
         if self.snapshot_task is not None:
             self.snapshot_task.cancel()
             try:

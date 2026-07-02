@@ -2,6 +2,7 @@
 """Проверка видимости пункта меню для пользователя."""
 
 from src.core.cms.adp.models import UserRole
+from src.core.cms.adp.services.permissions import PermissionService
 
 
 def user_can_see_menu_item(item, user) -> bool:
@@ -9,7 +10,7 @@ def user_can_see_menu_item(item, user) -> bool:
     is_admin_only, allowed_roles, allowed_role_groups.
     Ограничение по правам модуля — через M2M allowed_role_groups на пункте.
     """
-    if user.is_superuser:
+    if PermissionService.is_admin(user):
         return True
 
     user_role = UserRole.objects.filter(user=user, is_active=True).first()

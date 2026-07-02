@@ -20,6 +20,8 @@ from src.core.cms.adp.views import (
     UserSecuritySettingsView,
     ImportUsersView,
     ImportUsersTaskStatusView,
+    ImportUsersWelcomeEmailDefaultsView,
+    ImportUsersPasswordsDownloadView,
 )
 
 from src.core.cms.adp.views_roles import (
@@ -110,7 +112,17 @@ urlpatterns = [
     ),
     path('presence/', UserPresenceBatchView.as_view(), name='user_presence_batch'),
     path('import-users/', ImportUsersView.as_view(), name='import_users'),
+    path(
+        'import-users/welcome-email-defaults/',
+        ImportUsersWelcomeEmailDefaultsView.as_view(),
+        name='import_users_welcome_email_defaults',
+    ),
     path('import-users/status/<str:task_id>/', ImportUsersTaskStatusView.as_view(), name='import_users_status'),
+    path(
+        'import-users/passwords/<str:task_id>/',
+        ImportUsersPasswordsDownloadView.as_view(),
+        name='import_users_passwords',
+    ),
     
     # Menu Management endpoints (подключаем подмодуль menu)
     path('menu/', include('src.core.cms.adp.menu.urls')),

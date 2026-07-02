@@ -27,14 +27,16 @@ from src.core.cms.adp.serializers import (
     CMSUserSerializer,
     UpdateUserProfileSerializer,
     AdminResetUserPasswordSerializer,
+    AdminCreateUserSerializer,
 )
-from src.core.cms.adp.services.permissions import PermissionService
+from src.core.cms.adp.services.permissions import PermissionService, RoleAssignmentError
 from src.core.cms.adp.services import presence as presence_service
 from src.core.cms.adp.services.user_deletion import (
     UserDeletionBlockedError,
     delete_admin_user,
     revoke_user_auth,
 )
+from src.core.cms.adp.services.admin_user import AdminUserCreateError, create_admin_user
 from src.config.settings.auth import IS_DEVELOPMENT
 from src.core.utils.methods import (
     parse_errors_to_dict,
@@ -76,11 +78,12 @@ def _validate_admin_user_deletion(request, target_user):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    if target_user.is_superuser and not request.user.is_superuser:
-        return Response(
-            {'error': 'Нельзя удалить суперпользователя.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    if PermissionService.can_manage_users_as_global_admin(target_user):
+        if not PermissionService.can_manage_users_as_global_admin(request.user):
+            return Response(
+                {'error': 'Нельзя удалить глобального администратора.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     return None
 
@@ -140,7 +143,7 @@ def _get_admin_user_role_for_display(user):
         .prefetch_related('role_groups')
         .first()
     )
-    if user_role or getattr(user, 'is_superuser', False):
+    if user_role or PermissionService.is_admin(user):
         return user_role
 
     return PermissionService.get_user_role(user)
@@ -680,10 +683,15 @@ class UserRoleAssignView(BaseAPIViewAuthMixin, BaseAPIView):
                 role_groups=role_groups,
                 assigned_by=request.user
             )
-            
+
             serializer = UserRoleSerializer(user_role)
             return Response(serializer.data)
-            
+
+        except RoleAssignmentError as exc:
+            return Response(
+                {'error': exc.message},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except User.DoesNotExist:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -986,6 +994,45 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
             'page': page,
             'page_size': page_size,
         })
+
+    @swagger_auto_schema(
+        operation_description=(
+            "Создать пользователя вручную (без приглашения и независимо от режима регистрации)."
+        ),
+        request_body=AdminCreateUserSerializer,
+        responses={201: CMSUserSerializer(), 400: 'Ошибка валидации данных.'},
+    )
+    def post(self, request):
+        forbidden = _require_global_admin(request)
+        if forbidden:
+            return forbidden
+
+        serializer = AdminCreateUserSerializer(data=request.data)
+        if not serializer.is_valid():
+            errors = parse_errors_to_dict(serializer.errors)
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        try:
+            user, meta = create_admin_user(
+                username=data['username'],
+                created_by=request.user,
+                password=data.get('password') or '',
+                first_name=data.get('first_name') or '',
+                last_name=data.get('last_name') or '',
+                middle_name=data.get('middle_name') or '',
+                email=data.get('email') or '',
+                role_id=data.get('role_id'),
+                role_group_ids=data.get('role_group_ids') or [],
+                send_password_notification=data.get('send_password_notification', True),
+            )
+        except AdminUserCreateError as exc:
+            return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.select_related('adp_profile').get(pk=user.pk)
+        response_data = _build_admin_user_detail(user)
+        response_data.update(meta)
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 class AdminUserDetailView(BaseAPIViewAuthMixin, BaseAPIView):
