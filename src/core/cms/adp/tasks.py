@@ -184,27 +184,6 @@ def import_users_task(
                         )
                         continue
 
-                    if User.objects.filter(
-                        last_name__iexact=last_name,
-                        first_name__iexact=first_name,
-                        middle_name__iexact=middle_name if middle_name else '',
-                    ).exists():
-                        skip_msg = f'Строка {index + 2}: пользователь "{last_name} {first_name}" уже существует'
-                        logger.warning(skip_msg)
-                        log_entry = {'level': 'warn', 'message': skip_msg}
-                        results['logs'].append(log_entry)
-                        accumulated_logs.append(log_entry)
-                        results['skipped'] += 1
-                        progress = int((index + 1) / total_rows * 100)
-                        self.update_state(
-                            state='PROGRESS',
-                            meta=_import_meta(
-                                index + 1, total_rows, results['created'], results['skipped'],
-                                progress, accumulated_logs, log_entry,
-                            ),
-                        )
-                        continue
-
                     if User.objects.filter(username__iexact=username).exists():
                         skip_msg = f'Строка {index + 2}: логин "{username}" уже занят'
                         logger.warning(skip_msg)
@@ -222,8 +201,9 @@ def import_users_task(
                         )
                         continue
 
-                    if email and RegistrationService.validate_email_uniqueness(email):
-                        skip_msg = f'Строка {index + 2}: email "{email}" уже используется'
+                    email_duplicate_error = RegistrationService.validate_email_uniqueness(email)
+                    if email and email_duplicate_error:
+                        skip_msg = f'Строка {index + 2}: {email_duplicate_error}'
                         logger.warning(skip_msg)
                         log_entry = {'level': 'warn', 'message': skip_msg}
                         results['logs'].append(log_entry)

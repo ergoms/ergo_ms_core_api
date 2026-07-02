@@ -970,7 +970,7 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
     Ожидаемые столбцы: Фамилия, Имя, Отчество, Логин, E-mail.
     Для каждого создаваемого пользователя генерируется случайный пароль;
     пароли доступны для одноразовой выгрузки в Excel после импорта.
-    Проверка дубликатов по ФИО.
+    Проверка дубликатов по логину; по email — если включено REGISTRATION_CHECK_EMAIL_EXISTS.
     """
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
