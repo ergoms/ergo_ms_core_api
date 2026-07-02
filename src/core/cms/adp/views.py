@@ -56,6 +56,7 @@ from src.core.settings.views import _safe_content_disposition_filename
 
 from src.core.cms.adp.password_policy import validate_new_password_pair
 from src.core.cms.adp.services.password_reset import PasswordResetService
+from src.core.cms.adp.services.profile_settings import ProfileSettingsService
 from src.core.utils.database.main import OrderedDictQueryExecutor
 from src.config.settings.auth import get_token_lifetime
 from src.core.cms.adp.services.session_devices import (
@@ -878,6 +879,16 @@ class UserProfileView(BaseAPIViewAuthMixin):
         security=[{'Bearer': []}]
     )
     def put(self, request):
+        blocked_profile_fields = ProfileSettingsService.get_blocked_profile_fields(request.data, request.user)
+        if blocked_profile_fields:
+            return Response(
+                {
+                    'error': ProfileSettingsService.get_self_edit_disabled_message(),
+                    'blocked_fields': sorted(blocked_profile_fields),
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Создаем профиль если его нет
         profile, created = UserProfile.objects.get_or_create(user=request.user)
         

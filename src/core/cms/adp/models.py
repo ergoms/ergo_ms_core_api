@@ -375,3 +375,58 @@ class RegistrationInvitation(models.Model):
 
     def __str__(self):
         return f'{self.email} ({self.token[:8]}...)'
+
+
+class UserProfileChangeRequest(models.Model):
+    """Заявка пользователя на изменение email и ФИО."""
+
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'На рассмотрении'),
+        (STATUS_APPROVED, 'Одобрено'),
+        (STATUS_REJECTED, 'Отклонено'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='profile_change_requests',
+        verbose_name='Пользователь',
+    )
+    email = models.EmailField(blank=True, default='', verbose_name='Email')
+    first_name = models.CharField(max_length=150, blank=True, default='', verbose_name='Имя')
+    last_name = models.CharField(max_length=150, blank=True, default='', verbose_name='Фамилия')
+    middle_name = models.CharField(max_length=150, blank=True, default='', verbose_name='Отчество')
+    comment = models.CharField(max_length=500, blank=True, default='', verbose_name='Комментарий пользователя')
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+        verbose_name='Статус',
+    )
+    admin_comment = models.CharField(max_length=500, blank=True, default='', verbose_name='Комментарий администратора')
+    reviewed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_profile_change_requests',
+        verbose_name='Обработал',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата обработки')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создано')
+
+    class Meta:
+        app_label = 'cms_adp'
+        verbose_name = 'Заявка на изменение данных профиля'
+        verbose_name_plural = 'Заявки на изменение данных профиля'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'status']),
+        ]
+
+    def __str__(self):
+        return f'{self.user_id}: {self.last_name} {self.first_name} ({self.status})'

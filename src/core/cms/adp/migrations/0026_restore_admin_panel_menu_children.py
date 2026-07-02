@@ -15,8 +15,6 @@ def _ensure_admin_panel_children(cms, MenuItem, admin_panel):
             is_admin_only=True,
         )
 
-    if not MenuItem.objects.filter(parent=users_menu, route_name='UsersPanel', name='Все').exists():
-        cms.create_route('Все', 'UsersPanel', parent=users_menu, is_admin_only=True)
     if not MenuItem.objects.filter(parent=users_menu, route_name='OnlineUsersPanel').exists():
         cms.create_route('В сети', 'OnlineUsersPanel', parent=users_menu, is_admin_only=True)
 

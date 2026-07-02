@@ -48,6 +48,13 @@ from src.core.cms.adp.views_presence import (
     UserPresenceHeartbeatView,
     UserPresenceOfflineView,
 )
+from src.core.cms.adp.views_profile_change import (
+    ProfileSettingsView,
+    UserProfileChangeRequestListCreateView,
+    AdminProfileChangeRequestListView,
+    AdminProfileChangeRequestApproveView,
+    AdminProfileChangeRequestRejectView,
+)
 from src.core.cms.adp.views_invitations import (
     RegistrationSettingsView,
     ValidateInvitationView,
@@ -61,6 +68,23 @@ from src.core.cms.adp.views_invitations import (
 
 urlpatterns = [
     # Authentication endpoints
+    path('profile-settings/', ProfileSettingsView.as_view(), name='profile_settings'),
+    path('profile-change-requests/', UserProfileChangeRequestListCreateView.as_view(), name='profile_change_requests'),
+    path(
+        'profile-change-requests/admin/',
+        AdminProfileChangeRequestListView.as_view(),
+        name='profile_change_requests_admin',
+    ),
+    path(
+        'profile-change-requests/<int:request_id>/approve/',
+        AdminProfileChangeRequestApproveView.as_view(),
+        name='profile_change_request_approve',
+    ),
+    path(
+        'profile-change-requests/<int:request_id>/reject/',
+        AdminProfileChangeRequestRejectView.as_view(),
+        name='profile_change_request_reject',
+    ),
     path('registration-settings/', RegistrationSettingsView.as_view(), name='registration_settings'),
     path('password-reset-settings/', PasswordResetSettingsView.as_view(), name='password_reset_settings'),
     path('invitations/validate/', ValidateInvitationView.as_view(), name='validate_invitation'),

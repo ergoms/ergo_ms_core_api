@@ -51,7 +51,6 @@ def populate_core_menu(apps, schema_editor):
         order=10,
     )
     cms.create_routes_batch([
-        ('Все', 'UsersPanel'),
         ('В сети', 'OnlineUsersPanel'),
     ], parent=users_menu)
     cms.create_routes_batch([
