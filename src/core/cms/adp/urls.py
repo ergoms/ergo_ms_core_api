@@ -42,7 +42,12 @@ from src.core.cms.adp.views_roles import (
     AdminUserResetPasswordView,
 )
 
-from src.core.cms.adp.views_presence import UserPresenceBatchView
+from src.core.cms.adp.views_presence import (
+    UserPresenceAdminSnapshotView,
+    UserPresenceBatchView,
+    UserPresenceHeartbeatView,
+    UserPresenceOfflineView,
+)
 from src.core.cms.adp.views_invitations import (
     RegistrationSettingsView,
     ValidateInvitationView,
@@ -111,6 +116,9 @@ urlpatterns = [
         name='admin_user_reset_password',
     ),
     path('presence/', UserPresenceBatchView.as_view(), name='user_presence_batch'),
+    path('presence/heartbeat/', UserPresenceHeartbeatView.as_view(), name='user_presence_heartbeat'),
+    path('presence/offline/', UserPresenceOfflineView.as_view(), name='user_presence_offline'),
+    path('presence/admin-snapshot/', UserPresenceAdminSnapshotView.as_view(), name='user_presence_admin_snapshot'),
     path('import-users/', ImportUsersView.as_view(), name='import_users'),
     path(
         'import-users/welcome-email-defaults/',

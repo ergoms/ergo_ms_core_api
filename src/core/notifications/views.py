@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from django.db.models import Q
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -49,6 +50,21 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
                 | Q(is_read=True, read_at__gte=week_ago)
                 | Q(is_read=True, read_at__isnull=True, created_at__gte=week_ago)
             )
+
+        created_after = self.request.query_params.get('created_after')
+        if created_after:
+            parsed = parse_datetime(created_after.strip())
+            if parsed is not None:
+                if timezone.is_naive(parsed):
+                    parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+                qs = qs.filter(created_at__gt=parsed)
+
+        after_id = self.request.query_params.get('after_id')
+        if after_id:
+            try:
+                qs = qs.filter(id__gt=int(after_id))
+            except (TypeError, ValueError):
+                pass
 
         return qs
 

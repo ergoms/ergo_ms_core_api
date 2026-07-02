@@ -47,9 +47,19 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
                             return Message.objects.none()
                 except model_class.DoesNotExist:
                     return Message.objects.none()
-            return queryset.filter(content_type=ct, object_id=object_id).order_by('created_at')
+            filtered = queryset.filter(content_type=ct, object_id=object_id).order_by('created_at')
+            return self._apply_after_id_filter(filtered)
 
         return Message.objects.none()
+
+    def _apply_after_id_filter(self, queryset):
+        after_id = self.request.query_params.get('after_id')
+        if not after_id:
+            return queryset
+        try:
+            return queryset.filter(id__gt=int(after_id))
+        except (TypeError, ValueError):
+            return queryset
 
     def _check_author(self, instance):
         if instance.author != self.request.user:

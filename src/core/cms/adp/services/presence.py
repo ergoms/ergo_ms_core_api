@@ -67,6 +67,17 @@ def touch(user_id: int) -> PresenceEntry:
     return _to_entry(presence)
 
 
+def http_heartbeat(user_id: int) -> PresenceEntry:
+    """HTTP polling: регистрация сессии при первом heartbeat, далее touch."""
+    try:
+        presence = UserPresence.objects.get(user_id=user_id)
+    except UserPresence.DoesNotExist:
+        return register_connection(user_id)
+    if presence.connection_count == 0:
+        return register_connection(user_id)
+    return touch(user_id)
+
+
 def reset_user(user_id: int) -> None:
     now = timezone.now()
     UserPresence.objects.filter(user_id=user_id).update(
