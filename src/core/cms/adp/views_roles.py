@@ -218,7 +218,11 @@ def _get_admin_users_queryset(search='', online_only=False):
     )
 
     if online_only:
-        users_qs = users_qs.filter(presence__connection_count__gt=0)
+        cutoff = presence_service.get_presence_stale_cutoff()
+        users_qs = users_qs.filter(
+            presence__connection_count__gt=0,
+            presence__last_seen__gte=cutoff,
+        )
 
     return apply_user_search(users_qs, search)
 

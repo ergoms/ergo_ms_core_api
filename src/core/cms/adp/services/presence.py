@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.db.models import F
 from django.utils import timezone
 
@@ -17,9 +18,34 @@ class PresenceEntry:
     last_seen: datetime | None
 
 
+def get_presence_stale_threshold_seconds() -> int:
+    interval = getattr(settings, 'REALTIME_POLL_PRESENCE_INTERVAL', 45)
+    return interval * 2
+
+
+def get_presence_stale_cutoff() -> datetime:
+    return timezone.now() - timedelta(seconds=get_presence_stale_threshold_seconds())
+
+
+def effective_is_online(presence: UserPresence) -> bool:
+    if presence.connection_count <= 0:
+        return False
+    if presence.last_seen is None:
+        return False
+    return presence.last_seen >= get_presence_stale_cutoff()
+
+
+def _maybe_cleanup_stale(presence: UserPresence) -> UserPresence:
+    if presence.connection_count > 0 and not effective_is_online(presence):
+        UserPresence.objects.filter(pk=presence.pk).update(connection_count=0)
+        presence.connection_count = 0
+    return presence
+
+
 def _to_entry(presence: UserPresence) -> PresenceEntry:
+    presence = _maybe_cleanup_stale(presence)
     return PresenceEntry(
-        is_online=presence.is_online,
+        is_online=effective_is_online(presence),
         last_seen=presence.last_seen,
     )
 
@@ -84,6 +110,16 @@ def reset_user(user_id: int) -> None:
         connection_count=0,
         last_seen=now,
     )
+
+
+def http_offline(user_id: int) -> PresenceEntry:
+    """HTTP polling: сброс виртуальной сессии (не decrement WS-подключений)."""
+    reset_user(user_id)
+    try:
+        presence = UserPresence.objects.get(user_id=user_id)
+    except UserPresence.DoesNotExist:
+        return _offline_entry()
+    return _to_entry(presence)
 
 
 def get_presence_map(user_ids: list[int] | None = None) -> dict[int, PresenceEntry]:

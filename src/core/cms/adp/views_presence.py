@@ -66,7 +66,7 @@ class UserPresenceOfflineView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: UserPresenceEntrySerializer()},
     )
     def post(self, request):
-        entry = presence_service.unregister_connection(request.user.pk)
+        entry = presence_service.http_offline(request.user.pk)
         return Response(presence_service.serialize_presence_entry(entry))
 
 

@@ -112,7 +112,9 @@ class UserPresence(models.Model):
 
     @property
     def is_online(self):
-        return self.connection_count > 0
+        from src.core.cms.adp.services.presence import effective_is_online
+
+        return effective_is_online(self)
 
 
 class Role(Group):
