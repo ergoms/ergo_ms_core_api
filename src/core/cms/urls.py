@@ -21,7 +21,6 @@ urlpatterns = [
 
     path('get_user_name/', GetUserName.as_view(), name='get user name'),
     path('users/by-ref/<uuid:ref>/public-info/', UserPublicInfoView.as_view(), name='user public info by ref'),
-    path('users/<int:user_id>/public-info/', UserPublicInfoView.as_view(), name='user public info'),
 
     path('patch-all-project-pages', PatchAllProgectPages.as_view(), name='set all pages'),
     path('get-cms-pages', GetCMSPages.as_view(), name='get all pages'),

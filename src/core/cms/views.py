@@ -109,23 +109,20 @@ class GetUserName(BaseAPIViewAuthMixin):
 class UserPublicInfoView(BaseAPIViewAuthMixin):
     """Публичные данные пользователя (имя, аватар).
 
-    Резолвится по public_id (UUID, непоследовательная ссылка — предпочтительно)
-    или по числовому id (legacy-путь для ещё не мигрированных потребителей).
+    Резолвится только по public_id (UUID, непоследовательная ссылка) — без
+    числового id, чтобы исключить перебор пользователей (enumeration).
     """
 
     @swagger_auto_schema(
-        operation_description="Получение публичных данных пользователя по public_id или id",
+        operation_description="Получение публичных данных пользователя по public_id",
         responses={
             200: "Публичные данные пользователя",
             401: "Пользователь не авторизован",
             404: "Пользователь не найден",
         },
     )
-    def get(self, request: Request, user_id: int = None, ref=None):
-        if ref is not None:
-            user = User.objects.select_related('avatar').filter(public_id=ref).first()
-        else:
-            user = User.objects.select_related('avatar').filter(id=user_id).first()
+    def get(self, request: Request, ref):
+        user = User.objects.select_related('avatar').filter(public_id=ref).first()
         if user is None:
             return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
