@@ -11,7 +11,6 @@
 import logging
 
 from django.core.management.base import BaseCommand
-from django.conf import settings
 
 from src.core.utils.server.daphne import Daphne
 
@@ -35,17 +34,10 @@ class Command(BaseCommand):
             **options: Именованные аргументы
         """
         logger.info('Запуск команды stop_prod')
-        
-        server_process_name = getattr(settings, 'SERVER_PROCESS_NAME', None)
-        if not server_process_name:
-            msg = 'SERVER_PROCESS_NAME не настроен в настройках Django'
-            logger.error(msg)
-            self.stdout.write(self.style.ERROR(msg))
-            return
 
         daphne = Daphne()
-        logger.info(f'Поиск процесса сервера: {server_process_name}')
-        is_stopped = daphne.stop_process(server_process_name)
+        logger.info('Поиск процесса daphne (production API)')
+        is_stopped = daphne.stop_process('daphne')
 
         if is_stopped:
             msg = 'Сервер успешно остановлен'

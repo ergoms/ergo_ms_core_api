@@ -63,8 +63,10 @@ REMEMBER_ME_ACCESS_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_ACCESS_TOKEN_LIFETI
 REMEMBER_ME_REFRESH_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_REFRESH_TOKEN_LIFETIME', default=10080)
 
 # Тип развертывания (используется в других частях API, не влияет на JWT)
-DEPLOY_TYPE = env.str('API_DEPLOY_TYPE', default='production')
-IS_DEVELOPMENT = DEPLOY_TYPE == 'development'
+from src.config.deploy import get_deploy_type, is_development
+
+DEPLOY_TYPE = get_deploy_type()
+IS_DEVELOPMENT = is_development()
 
 # Ограничение срока жизни JWT (true/false, не зависит от API_DEPLOY_TYPE).
 # true  — используются API_ACCESS_TOKEN_LIFETIME и API_REFRESH_TOKEN_LIFETIME

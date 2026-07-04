@@ -12,6 +12,7 @@ import logging
 
 from django.core.management.base import BaseCommand, CommandParser
 
+from src.config.deploy import is_production
 from src.core.utils.enums import LogLevel
 from src.core.utils.server.daphne import Daphne
 
@@ -50,7 +51,15 @@ class Command(BaseCommand):
             **options: Именованные аргументы, включая log_level
         """
         logger.info('Запуск команды start_prod')
-        
+
+        if not is_production():
+            msg = (
+                'API_DEPLOY_TYPE не production — для автовыбора режима используйте '
+                'ergoms start-api или core/api/scripts/start_api.py'
+            )
+            logger.warning(msg)
+            self.stdout.write(self.style.WARNING(msg))
+
         log_level = LogLevel(options['log_level'])
         daphne = Daphne()
         

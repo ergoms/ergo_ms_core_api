@@ -1,4 +1,5 @@
 import re
+import logging
 
 from rest_framework.response import Response
 from rest_framework import status
@@ -14,6 +15,8 @@ from src.core.cms.models import Accession, CMSPage, CMSPageComponent
 from src.core.settings.models import UserAvatar
 from src.core.cms.commands import GetUserExpandedPermissions
 from src.core.utils.auto_api.auto_config import ModuleDiscoverer
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_path(path: str) -> str:
@@ -140,7 +143,6 @@ class UserPublicInfoView(BaseAPIViewAuthMixin):
         full_name = ' '.join(p for p in [last_name, first_name, middle_name] if p) or user.username
 
         return Response({
-            'user_id': user.id,
             'public_id': str(user.public_id) if getattr(user, 'public_id', None) else None,
             'username': user.username,
             'first_name': first_name,
@@ -182,8 +184,12 @@ class PatchAllProgectPages(BaseAPIViewAuthMixin):
                     CMSPage.objects.create(path=normalized)
 
             return Response(sorted(normalized_paths), status=status.HTTP_200_OK)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Ошибка синхронизации страниц CMS')
+            return Response(
+                {'error': 'Не удалось обновить страницы CMS.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 class GetCMSPages(BaseAPIViewAuthMixin):

@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import logging
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework import viewsets, status
@@ -14,6 +15,9 @@ from src.core.audit.mixin import AuditedModelMixin
 
 from .models import *
 from .serializers import *
+
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_content_disposition_filename(name):
@@ -253,10 +257,11 @@ class ThemeViewSet(AuditedModelMixin, _ThemeImportMixin, viewsets.ModelViewSet):
                 {'error': 'Неверный формат JSON'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
+        except Exception:
+            logger.exception('Ошибка импорта темы')
             return Response(
-                {'error': f'Ошибка при импорте: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {'error': 'Не удалось импортировать тему.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
     
     @action(detail=True, methods=['post'], url_path='reset-defaults')

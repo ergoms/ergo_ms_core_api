@@ -79,6 +79,41 @@ def is_current_device(request, device: UserDevice) -> bool:
     return str(device.ip_address) == get_client_ip(request)
 
 
+def ensure_legacy_device(request) -> UserDevice | None:
+    """Создаёт запись устройства для старых токенов без device_id."""
+    user = getattr(request, 'user', None)
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return None
+
+    from src.core.cms.adp.user_agent_utils import (
+        build_device_display_name,
+        detect_device_type,
+        get_client_ip,
+    )
+
+    ip_address = get_client_ip(request)
+    user_agent = request.META.get('HTTP_USER_AGENT', '')
+    if UserDevice.objects.filter(
+        user=user,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        is_active=True,
+    ).exists():
+        return None
+
+    device_type = detect_device_type(user_agent)
+    return UserDevice.objects.create(
+        user=user,
+        ip_address=ip_address,
+        device_type=device_type,
+        device_name=build_device_display_name(user_agent, device_type),
+        user_agent=user_agent,
+        city='Неизвестно',
+        country='Неизвестно',
+        is_active=True,
+    )
+
+
 def touch_device_activity(request) -> UserDevice | None:
     user = getattr(request, 'user', None)
     if user is None or not getattr(user, 'is_authenticated', False):

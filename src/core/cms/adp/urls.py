@@ -2,15 +2,17 @@ from django.urls import path, include
 
 from src.core.cms.adp.token_refresh import DeviceBoundTokenRefreshView
 
-from src.core.cms.adp.views import (
+from src.core.cms.adp.views_auth import (
     UserRegistrationValidationView,
     UserRegistrationView,
     UserAuthorizationView,
-    LogoutView,
     PasswordResetSettingsView,
     SendConfirmationCodeView,
     VerifyConfirmationCodeView,
     ResetPasswordView,
+)
+from src.core.cms.adp.views import (
+    LogoutView,
     ProtectedView,
     ChangePasswordView,
     UserDevicesView,
@@ -18,6 +20,8 @@ from src.core.cms.adp.views import (
     UserProfileView,
     UserMenuView,
     UserSecuritySettingsView,
+)
+from src.core.cms.adp.views_import import (
     ImportUsersView,
     ImportUsersTaskStatusView,
     ImportUsersWelcomeEmailDefaultsView,
@@ -36,6 +40,8 @@ from src.core.cms.adp.views_roles import (
     CheckURLAccessView,
     ModulePermissionListView,
     ModulePermissionDetailView,
+)
+from src.core.cms.adp.views_admin_users import (
     AdminUserRoleListView,
     AdminUserDetailView,
     AdminUserAvatarView,

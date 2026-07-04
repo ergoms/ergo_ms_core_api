@@ -3,9 +3,9 @@
 """
 
 from src.config.env import env
+from src.config.deploy import is_development
 
-_deploy_type = env.str('API_DEPLOY_TYPE', default='production').strip().lower()
-_default_swagger_enabled = _deploy_type != 'production'
+_default_swagger_enabled = is_development()
 
 SWAGGER_ENABLED = env.bool('API_SWAGGER_ENABLED', default=_default_swagger_enabled)
 

@@ -333,15 +333,9 @@ def check_app_config_name(directory: str, config_name: str) -> bool:
     return False
 
 def get_env_deploy_type():
-    development = 'src.config.patterns.development'
-    production = 'src.config.patterns.production'
+    from src.config.deploy import get_settings_module
 
-    deploy_type = env.str('API_DEPLOY_TYPE', default='development')
-
-    if deploy_type == 'production':
-        return production
-    else:
-        return development
+    return get_settings_module()
     
 def is_valid_module_name(module_name: str) -> bool:
     """

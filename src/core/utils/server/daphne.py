@@ -110,21 +110,17 @@ class Daphne:
         Raises:
             ValueError: Если не настроены необходимые параметры сервера
         """
-        server_process_name = getattr(settings, 'SERVER_PROCESS_NAME', None)
+        from src.config.deploy import build_daphne_command
+
         server_port = getattr(settings, 'SERVER_PORT', None)
         server_host = getattr(settings, 'SERVER_HOST', None)
 
-        if not all([server_process_name, server_port, server_host]):
-            msg = 'Не все параметры сервера настроены в конфигурации'
+        if not all([server_port, server_host]):
+            msg = 'SERVER_HOST или SERVER_PORT не настроены в конфигурации'
             logger.error(msg)
             raise ValueError(msg)
 
-        cmd: List[str] = [
-            server_process_name, 
-            '-p', server_port, 
-            '-b', server_host, 
-            'src.config.asgi:application'
-        ]
+        cmd: List[str] = build_daphne_command()
 
         logger.info(f'Запуск Daphne сервера с командой: {" ".join(cmd)}')
         process = subprocess.Popen(

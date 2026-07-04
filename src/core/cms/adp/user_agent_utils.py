@@ -59,6 +59,19 @@ def get_device_type_display(device_type: str) -> str:
     return DEVICE_TYPE_LABELS.get(device_type, device_type or 'Устройство')
 
 
+def detect_device_type(user_agent: str) -> str:
+    ua = (user_agent or '').lower()
+    if 'mobile' in ua or 'android' in ua or 'iphone' in ua:
+        return 'mobile'
+    if 'tablet' in ua or 'ipad' in ua:
+        return 'tablet'
+    if 'macintosh' in ua or 'mac os' in ua:
+        return 'laptop'
+    if 'windows' in ua or 'linux' in ua:
+        return 'desktop'
+    return 'desktop'
+
+
 def build_device_display_name(user_agent: str, device_type: str) -> str:
     parsed = parse_user_agent(user_agent)
     browser = parsed['browser']
