@@ -2,7 +2,6 @@ from rest_framework.serializers import (
     ModelSerializer,
     CharField,
     EmailField,
-    URLField,
     IntegerField,
     ValidationError,
     Serializer,
@@ -286,7 +285,7 @@ class CMSUserProfileSerializer(ModelSerializer):
     class Meta:
         model = UserProfile
         fields = [
-            'phone', 'website', 'bio', 'country', 'city', 
+            'phone', 'bio',
             'language', 'timezone', 'created_at'
         ]
         read_only_fields = ['created_at']
@@ -369,16 +368,13 @@ class UpdateUserProfileSerializer(ModelSerializer):
     middle_name = CharField(source='user.middle_name', required=False, allow_blank=True)
     email = EmailField(source='user.email', required=False, allow_blank=True)
     phone = CharField(required=False, allow_blank=True, allow_null=True)
-    website = URLField(required=False, allow_blank=True, allow_null=True)
     bio = CharField(required=False, allow_blank=True, allow_null=True)
-    country = CharField(required=False, allow_blank=True, allow_null=True)
-    city = CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = UserProfile
         fields = [
-            'first_name', 'last_name', 'middle_name', 'email', 'phone', 'website', 'bio',
-            'country', 'city', 'language', 'timezone'
+            'first_name', 'last_name', 'middle_name', 'email', 'phone', 'bio',
+            'language', 'timezone'
         ]
 
     def validate_email(self, value):
@@ -416,7 +412,7 @@ class UpdateUserProfileSerializer(ModelSerializer):
                 setattr(instance.user, attr, value)
             instance.user.save()
 
-        nullable_profile_fields = ['phone', 'website', 'bio', 'country', 'city']
+        nullable_profile_fields = ['phone', 'bio']
         for attr, value in validated_data.items():
             if attr in nullable_profile_fields:
                 value = self._normalize_blank_profile_value(value)

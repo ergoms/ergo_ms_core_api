@@ -64,7 +64,7 @@ class UserProfileChangeRequestListCreateView(BaseAPIViewAuthMixin, BaseAPIView):
         queryset = (
             UserProfileChangeRequest.objects
             .filter(user=request.user)
-            .select_related('user', 'reviewed_by')
+            .select_related('user', 'user__adp_profile', 'reviewed_by')
             .order_by('-created_at')[:20]
         )
         return Response({
@@ -99,6 +99,7 @@ class UserProfileChangeRequestListCreateView(BaseAPIViewAuthMixin, BaseAPIView):
                 first_name=serializer.validated_data.get('first_name', ''),
                 last_name=serializer.validated_data.get('last_name', ''),
                 middle_name=serializer.validated_data.get('middle_name', ''),
+                phone=serializer.validated_data.get('phone', ''),
                 comment=serializer.validated_data.get('comment', ''),
             )
         except ValueError as exc:
@@ -126,6 +127,7 @@ class AdminProfileChangeRequestListView(BaseAPIViewAuthMixin, BaseAPIView):
         page, page_size, status_filter, search = _parse_pagination(request)
         queryset = UserProfileChangeRequest.objects.select_related(
             'user',
+            'user__adp_profile',
             'reviewed_by',
         ).order_by('-created_at')
 
@@ -148,6 +150,7 @@ class AdminProfileChangeRequestListView(BaseAPIViewAuthMixin, BaseAPIView):
                 | Q(first_name__icontains=search)
                 | Q(last_name__icontains=search)
                 | Q(middle_name__icontains=search)
+                | Q(phone__icontains=search)
                 | Q(comment__icontains=search)
             )
 

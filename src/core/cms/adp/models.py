@@ -17,10 +17,7 @@ class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='adp_profile')
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
-    website = models.URLField(blank=True, null=True)
     bio = models.TextField(max_length=500, blank=True, null=True)
-    country = models.CharField(max_length=100, blank=True, null=True)
-    city = models.CharField(max_length=100, blank=True, null=True)
     language = models.CharField(max_length=10, default='ru')
     timezone = models.CharField(max_length=50, default='Europe/Moscow')
     
@@ -380,7 +377,7 @@ class RegistrationInvitation(models.Model):
 
 
 class UserProfileChangeRequest(models.Model):
-    """Заявка пользователя на изменение email и ФИО."""
+    """Заявка пользователя на изменение email, ФИО и телефона."""
 
     STATUS_PENDING = 'pending'
     STATUS_APPROVED = 'approved'
@@ -401,6 +398,7 @@ class UserProfileChangeRequest(models.Model):
     first_name = models.CharField(max_length=150, blank=True, default='', verbose_name='Имя')
     last_name = models.CharField(max_length=150, blank=True, default='', verbose_name='Фамилия')
     middle_name = models.CharField(max_length=150, blank=True, default='', verbose_name='Отчество')
+    phone = models.CharField(max_length=20, blank=True, default='', verbose_name='Телефон')
     comment = models.CharField(max_length=500, blank=True, default='', verbose_name='Комментарий пользователя')
     status = models.CharField(
         max_length=20,

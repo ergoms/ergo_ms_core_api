@@ -26,6 +26,7 @@ class CreateUserProfileChangeRequestSerializer(Serializer):
     first_name = CharField(required=False, allow_blank=True, max_length=150)
     last_name = CharField(required=False, allow_blank=True, max_length=150)
     middle_name = CharField(required=False, allow_blank=True, max_length=150)
+    phone = CharField(required=False, allow_blank=True, max_length=20)
     comment = CharField(required=False, allow_blank=True, max_length=500)
 
 
@@ -39,6 +40,7 @@ class UserProfileChangeRequestSerializer(ModelSerializer):
     user_email = SerializerMethodField(read_only=True)
     current_email = SerializerMethodField(read_only=True)
     current_full_name = SerializerMethodField(read_only=True)
+    current_phone = SerializerMethodField(read_only=True)
     requested_full_name = SerializerMethodField(read_only=True)
     reviewed_by_name = SerializerMethodField(read_only=True)
 
@@ -54,6 +56,8 @@ class UserProfileChangeRequestSerializer(ModelSerializer):
             'first_name',
             'last_name',
             'middle_name',
+            'phone',
+            'current_phone',
             'current_full_name',
             'requested_full_name',
             'comment',
@@ -79,6 +83,12 @@ class UserProfileChangeRequestSerializer(ModelSerializer):
 
     def get_current_full_name(self, obj):
         return _format_user_fio(obj.user)
+
+    def get_current_phone(self, obj):
+        profile = getattr(obj.user, 'adp_profile', None)
+        if profile is None:
+            return ''
+        return ProfileChangeRequestService.normalize_phone(profile.phone)
 
     def get_requested_full_name(self, obj):
         parts = [

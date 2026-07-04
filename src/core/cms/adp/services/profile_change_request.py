@@ -1,6 +1,8 @@
 """
-Сервис заявок пользователей на изменение email и ФИО.
+Сервис заявок пользователей на изменение email, ФИО и телефона.
 """
+
+import re
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -8,9 +10,11 @@ from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
 
-from src.core.cms.adp.models import UserProfileChangeRequest
+from src.core.cms.adp.models import UserProfile, UserProfileChangeRequest
 from src.core.cms.adp.services.profile_settings import ProfileSettingsService
 from src.core.cms.adp.services.registration import RegistrationService
+
+_PHONE_PATTERN = re.compile(r'^[\+]?[\d\s().-]{7,20}$')
 
 
 class ProfileChangeRequestService:
@@ -19,6 +23,7 @@ class ProfileChangeRequestService:
     NO_CHANGES_MESSAGE = 'Новые данные совпадают с текущими.'
     ALREADY_REVIEWED_MESSAGE = 'Заявка уже обработана.'
     INVALID_EMAIL_MESSAGE = 'Укажите корректный email.'
+    INVALID_PHONE_MESSAGE = 'Некорректный формат телефона.'
 
     @staticmethod
     def is_request_flow_enabled() -> bool:
@@ -41,7 +46,20 @@ class ProfileChangeRequestService:
         return str(value).strip().lower()
 
     @staticmethod
+    def normalize_phone(value) -> str:
+        if value is None:
+            return ''
+        if isinstance(value, str):
+            return value.strip()
+        return str(value).strip()
+
+    @staticmethod
     def get_user_profile_data(user: User) -> dict[str, str]:
+        phone = ''
+        profile = getattr(user, 'adp_profile', None)
+        if profile is not None:
+            phone = ProfileChangeRequestService.normalize_phone(profile.phone)
+
         return {
             'email': ProfileChangeRequestService.normalize_email(user.email),
             'first_name': ProfileChangeRequestService.normalize_name_part(user.first_name),
@@ -49,6 +67,7 @@ class ProfileChangeRequestService:
             'middle_name': ProfileChangeRequestService.normalize_name_part(
                 getattr(user, 'middle_name', ''),
             ),
+            'phone': phone,
         }
 
     @staticmethod
@@ -59,6 +78,7 @@ class ProfileChangeRequestService:
         first_name: str,
         last_name: str,
         middle_name: str,
+        phone: str,
     ) -> bool:
         current = ProfileChangeRequestService.get_user_profile_data(user)
         requested = {
@@ -66,6 +86,7 @@ class ProfileChangeRequestService:
             'first_name': ProfileChangeRequestService.normalize_name_part(first_name),
             'last_name': ProfileChangeRequestService.normalize_name_part(last_name),
             'middle_name': ProfileChangeRequestService.normalize_name_part(middle_name),
+            'phone': ProfileChangeRequestService.normalize_phone(phone),
         }
         return current != requested
 
@@ -88,6 +109,16 @@ class ProfileChangeRequestService:
         return normalized
 
     @staticmethod
+    def validate_requested_phone(phone: str) -> str:
+        normalized = ProfileChangeRequestService.normalize_phone(phone)
+        if not normalized:
+            return ''
+        compact = normalized.replace(' ', '')
+        if not _PHONE_PATTERN.match(compact):
+            raise ValueError(ProfileChangeRequestService.INVALID_PHONE_MESSAGE)
+        return normalized
+
+    @staticmethod
     def has_pending_request(user: User) -> bool:
         return UserProfileChangeRequest.objects.filter(
             user=user,
@@ -102,6 +133,7 @@ class ProfileChangeRequestService:
         first_name: str,
         last_name: str,
         middle_name: str,
+        phone: str = '',
         comment: str = '',
     ):
         if not ProfileChangeRequestService.is_request_flow_enabled():
@@ -111,10 +143,12 @@ class ProfileChangeRequestService:
             email,
             exclude_user_id=user.pk,
         )
+        normalized_phone = ProfileChangeRequestService.validate_requested_phone(phone)
         normalized = {
             'first_name': ProfileChangeRequestService.normalize_name_part(first_name),
             'last_name': ProfileChangeRequestService.normalize_name_part(last_name),
             'middle_name': ProfileChangeRequestService.normalize_name_part(middle_name),
+            'phone': normalized_phone,
             'comment': (comment or '').strip(),
         }
 
@@ -127,6 +161,7 @@ class ProfileChangeRequestService:
             first_name=normalized['first_name'],
             last_name=normalized['last_name'],
             middle_name=normalized['middle_name'],
+            phone=normalized['phone'],
         ):
             raise ValueError(ProfileChangeRequestService.NO_CHANGES_MESSAGE)
 
@@ -139,6 +174,7 @@ class ProfileChangeRequestService:
             first_name=normalized['first_name'],
             last_name=normalized['last_name'],
             middle_name=normalized['middle_name'],
+            phone=normalized['phone'],
             comment=normalized['comment'],
         )
 
@@ -153,11 +189,16 @@ class ProfileChangeRequestService:
             request_obj.email,
             exclude_user_id=user.pk,
         )
+        normalized_phone = ProfileChangeRequestService.validate_requested_phone(request_obj.phone)
         user.email = normalized_email
         user.first_name = request_obj.first_name
         user.last_name = request_obj.last_name
         user.middle_name = request_obj.middle_name
         user.save(update_fields=['email', 'first_name', 'last_name', 'middle_name'])
+
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile.phone = normalized_phone or None
+        profile.save(update_fields=['phone'])
 
         request_obj.status = UserProfileChangeRequest.STATUS_APPROVED
         request_obj.reviewed_by = reviewer

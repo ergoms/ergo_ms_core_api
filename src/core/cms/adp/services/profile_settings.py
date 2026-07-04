@@ -8,11 +8,11 @@ from src.core.cms.adp.services.permissions import PermissionService
 
 
 class ProfileSettingsService:
-    RESTRICTED_FIELDS = frozenset({'email', 'first_name', 'last_name', 'middle_name'})
+    RESTRICTED_FIELDS = frozenset({'email', 'first_name', 'last_name', 'middle_name', 'phone'})
     FIO_FIELDS = frozenset({'first_name', 'last_name', 'middle_name'})
 
     SELF_EDIT_DISABLED_MESSAGE = (
-        'Изменение email и ФИО доступно только администратору. '
+        'Изменение email, ФИО и телефона доступно только администратору. '
         'Отправьте заявку на изменение данных.'
     )
 
