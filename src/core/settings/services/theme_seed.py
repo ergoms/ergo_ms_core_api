@@ -41,6 +41,32 @@ SYSTEM_THEMES = (
 )
 
 
+def _system_spec_for_theme(theme):
+    for spec in SYSTEM_THEMES:
+        if theme.name == spec['name']:
+            return spec
+    for spec in SYSTEM_THEMES:
+        if theme.base_theme == spec['base_theme']:
+            return spec
+    return None
+
+
+def reset_system_theme_to_defaults(theme):
+    """Сбрасывает одну системную тему к начальным значениям."""
+    if not theme.is_system:
+        return False
+
+    spec = _system_spec_for_theme(theme)
+    if spec is None:
+        return False
+
+    theme.description = spec['description']
+    theme.colors = DEFAULT_THEME_COLORS[spec['base_theme']]
+    theme.bootstrap_colors = {}
+    theme.save(update_fields=['description', 'colors', 'bootstrap_colors', 'updated_at'])
+    return True
+
+
 def ensure_system_themes(theme_model, *, update_existing=False):
     """Создаёт системные темы light/dark, если их ещё нет."""
     created = []
@@ -66,9 +92,7 @@ def ensure_system_themes(theme_model, *, update_existing=False):
             continue
         if not update_existing:
             continue
-        theme.colors = DEFAULT_THEME_COLORS[spec['base_theme']]
-        theme.bootstrap_colors = {}
-        theme.save(update_fields=['colors', 'bootstrap_colors', 'updated_at'])
+        reset_system_theme_to_defaults(theme)
         updated.append(theme)
 
     return created, updated

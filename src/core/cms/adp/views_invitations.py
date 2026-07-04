@@ -20,7 +20,7 @@ from src.core.cms.adp.serializers import (
     ValidateInvitationSerializer,
 )
 from src.core.cms.adp.services.registration import RegistrationService
-from src.core.cms.adp.views_roles import _require_global_admin
+from src.core.cms.adp.views_roles import _require_global_admin, _audit
 
 _INVITATION_MODE_DISABLED_MESSAGE = (
     'Режим регистрации по приглашениям не включён. '
@@ -42,7 +42,8 @@ def _parse_pagination(request, default_page_size=12):
     except (TypeError, ValueError):
         page_size = default_page_size
     search = (request.query_params.get('search') or '').strip()
-    return page, page_size, search
+    status = (request.query_params.get('status') or '').strip().lower()
+    return page, page_size, search, status
 
 
 class RegistrationSettingsView(BaseAPIView):
@@ -107,7 +108,7 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
         if forbidden:
             return forbidden
 
-        page, page_size, search = _parse_pagination(request)
+        page, page_size, search, status_filter = _parse_pagination(request)
         queryset = RegistrationInvitation.objects.select_related('invited_by').order_by('-created_at')
 
         if search:
@@ -117,6 +118,8 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
                 | Q(invited_by__username__icontains=search)
             )
 
+        queryset = RegistrationService.filter_invitations_queryset_by_status(queryset, status_filter)
+
         total = queryset.count()
         total_all = RegistrationInvitation.objects.count()
         offset = (page - 1) * page_size
@@ -124,11 +127,13 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
         serializer = RegistrationInvitationSerializer(invitations, many=True)
 
         inactive_count = RegistrationService.get_inactive_invitations_queryset().count()
+        pending_count = RegistrationService.get_pending_invitations_queryset().count()
 
         return Response({
             'invitations': serializer.data,
             'total': total,
             'total_all': total_all,
+            'pending_count': pending_count,
             'page': page,
             'page_size': page_size,
             'inactive_count': inactive_count,
@@ -164,6 +169,9 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
         if error and not invitation:
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
+        _audit('invitation.created', request=request,
+               entity={'type': 'invitation', 'label': invitation.email})
+
         response_data = _serialize_invitation(invitation)
         if error:
             response_data['email_warning'] = error
@@ -193,10 +201,13 @@ class RegistrationInvitationDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         if not invitation:
             return Response({'error': 'Приглашение не найдено'}, status=status.HTTP_404_NOT_FOUND)
 
+        invitation_email = invitation.email
         success, error = RegistrationService.revoke_invitation(invitation)
         if not success:
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
+        _audit('invitation.revoked', request=request,
+               entity={'type': 'invitation', 'label': invitation_email})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -252,6 +263,9 @@ class RegistrationInvitationBulkCreateView(BaseAPIViewAuthMixin, BaseAPIView):
             note=serializer.validated_data.get('note', ''),
             send_email=serializer.validated_data.get('send_email', False),
         )
+        _audit('invitation.bulk_created', request=request,
+               meta={'requested': len(serializer.validated_data['emails']),
+                     'created': result.get('created')})
         return Response(result, status=status.HTTP_201_CREATED)
 
 
@@ -290,6 +304,8 @@ class RegistrationInvitationClearView(BaseAPIViewAuthMixin, BaseAPIView):
                 'message': 'Нет приглашений для удаления',
             })
 
+        _audit('invitation.cleared', request=request, severity='security',
+               meta={'scope': scope, 'deleted': result.get('deleted')})
         return Response(result)
 
 

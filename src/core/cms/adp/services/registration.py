@@ -218,6 +218,39 @@ class RegistrationService:
         )
 
     @staticmethod
+    def get_pending_invitations_queryset():
+        now = timezone.now()
+        return RegistrationInvitation.objects.filter(
+            is_revoked=False,
+            used_at__isnull=True,
+            expires_at__gt=now,
+        )
+
+    @staticmethod
+    def filter_invitations_queryset_by_status(queryset, status: str):
+        if not status or status == 'all':
+            return queryset
+
+        now = timezone.now()
+        if status == 'pending':
+            return queryset.filter(
+                is_revoked=False,
+                used_at__isnull=True,
+                expires_at__gt=now,
+            )
+        if status == 'used':
+            return queryset.filter(used_at__isnull=False)
+        if status == 'expired':
+            return queryset.filter(
+                is_revoked=False,
+                used_at__isnull=True,
+                expires_at__lte=now,
+            )
+        if status == 'revoked':
+            return queryset.filter(is_revoked=True)
+        return queryset
+
+    @staticmethod
     def count_invitations_by_scope(scope: str = 'all') -> int:
         if scope == 'inactive':
             return RegistrationService.get_inactive_invitations_queryset().count()

@@ -10,6 +10,7 @@ from django.http import HttpResponse
 
 from .permissions import IsGlobalAdmin
 from src.core.utils.mixins import MediaApiFileMixin, read_storage_file_bytes
+from src.core.audit.mixin import AuditedModelMixin
 from .models import AuditLog
 from .serializers import AuditLogSerializer
 from rest_framework.viewsets import ReadOnlyModelViewSet
@@ -39,22 +40,29 @@ class _ThemeImportMixin(MediaApiFileMixin):
         return None
 
 
-class SecuritySettingsViewSet(viewsets.ModelViewSet):
+class _SettingsAuditMixin(AuditedModelMixin):
+    """Изменения настроек-синглтонов пишутся единым действием settings.changed."""
+    audit_module = 'core.settings'
+    audit_severity = 'security'
+    audit_action_map = {'create': 'settings.changed', 'update': 'settings.changed'}
+
+
+class SecuritySettingsViewSet(_SettingsAuditMixin, viewsets.ModelViewSet):
     queryset = SecuritySettings.objects.all()
     serializer_class = SecuritySettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
-class MediaSettingsViewSet(viewsets.ModelViewSet):
+class MediaSettingsViewSet(_SettingsAuditMixin, viewsets.ModelViewSet):
     queryset = MediaSettings.objects.all()
     serializer_class = MediaSettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
-class PermalinkSettingsViewSet(viewsets.ModelViewSet):
+class PermalinkSettingsViewSet(_SettingsAuditMixin, viewsets.ModelViewSet):
     queryset = PermalinkSettings.objects.all()
     serializer_class = PermalinkSettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
-class EmailSettingsViewSet(viewsets.ModelViewSet):
+class EmailSettingsViewSet(_SettingsAuditMixin, viewsets.ModelViewSet):
     queryset = EmailSettings.objects.all()
     serializer_class = EmailSettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
@@ -111,10 +119,13 @@ class AuditLogViewSet(ReadOnlyModelViewSet):
     ordering = ['-timestamp']
 
 
-class ThemeViewSet(_ThemeImportMixin, viewsets.ModelViewSet):
+class ThemeViewSet(AuditedModelMixin, _ThemeImportMixin, viewsets.ModelViewSet):
     """ViewSet для управления темами оформления"""
     queryset = Theme.objects.all()
     serializer_class = ThemeSerializer
+    audit_module = 'core.settings'
+    audit_entity_type = 'theme'
+    audit_action_map = {'create': 'theme.created', 'update': 'theme.updated', 'destroy': 'theme.deleted'}
 
     def get_permissions(self):
         if self.action == 'get_active_theme':
@@ -259,6 +270,25 @@ class ThemeViewSet(_ThemeImportMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @action(detail=True, methods=['post'], url_path='reset-defaults')
+    def reset_defaults(self, request, pk=None):
+        """Сбросить системную тему к начальным значениям"""
+        from src.core.settings.services.theme_seed import reset_system_theme_to_defaults
+
+        theme = self.get_object()
+        if not theme.is_system:
+            return Response(
+                {'error': 'Сброс доступен только для системных тем'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not reset_system_theme_to_defaults(theme):
+            return Response(
+                {'error': 'Не удалось определить начальные значения темы'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        theme.refresh_from_db()
+        return Response(ThemeSerializer(theme).data)
+
     @action(detail=False, methods=['post'], url_path='create-system-themes')
     def create_system_themes(self, request):
         """Создать или обновить системные темы (light и dark)"""

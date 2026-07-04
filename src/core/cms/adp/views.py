@@ -76,6 +76,25 @@ from src.core.cms.adp.auth_cookies import (
 
 logger = logging.getLogger(__name__)
 
+
+def _audit_event(action, *, request=None, actor=None, severity='info', meta=None, entity=None):
+    """Безопасная запись действия в единый журнал ядра через ModuleBridge."""
+    try:
+        from src.core.integrations import bridge
+        bridge.call(
+            'audit.record',
+            action=action,
+            source_module='core.cms.adp',
+            request=request,
+            actor=actor,
+            severity=severity,
+            meta=meta,
+            entity=entity,
+        )
+    except Exception:
+        logger.debug('Не удалось записать аудит %s', action, exc_info=True)
+
+
 class UserRegistrationValidationView(BaseAPIView):
     @swagger_auto_schema(
         operation_description="Регистрация нового пользователя.",
@@ -327,6 +346,9 @@ class ResetPasswordView(BaseAPIView):
         # Удаляем использованный код
         confirmation_code.delete()
 
+        _audit_event('user.password_reset', request=request, actor=user, severity='security',
+                     entity={'type': 'user', 'label': user.get_full_name() or user.username})
+
         return Response(
             {"message": "Пароль успешно изменён"}, 
             status=status.HTTP_200_OK
@@ -465,8 +487,20 @@ class UserAuthorizationView(BaseAPIView):
                     str(refresh),
                     refresh_cookie_max_age(refresh_lifetime),
                 )
+                _audit_event(
+                    'auth.login',
+                    request=request,
+                    actor=user,
+                    severity='security',
+                )
                 return response
             else:
+                _audit_event(
+                    'auth.login_failed',
+                    request=request,
+                    severity='security',
+                    meta={'username': username},
+                )
                 return Response(
                     {
                         "message": "Неверные учетные данные."
@@ -631,6 +665,9 @@ class LogoutView(BaseAPIView):
     def post(self, request):
         response = Response(status=status.HTTP_204_NO_CONTENT)
         clear_auth_cookies(response)
+        actor = request.user if getattr(request.user, 'is_authenticated', False) else None
+        if actor is not None:
+            _audit_event('auth.logout', request=request, actor=actor)
         return response
 
     def _ensure_legacy_device(self, request):
@@ -748,7 +785,10 @@ class ChangePasswordView(BaseAPIViewAuthMixin):
             user = request.user
             user.set_password(serializer.validated_data['new_password'])
             user.save()
-            
+
+            _audit_event('user.password_changed', request=request, actor=user, severity='security',
+                         entity={'type': 'user', 'label': user.get_full_name() or user.username})
+
             return Response(
                 {"message": "Пароль успешно изменён."}, 
                 status=status.HTTP_200_OK

@@ -17,7 +17,7 @@ from src.core.cms.adp.profile_change_serializers import (
 )
 from src.core.cms.adp.services.profile_change_request import ProfileChangeRequestService
 from src.core.cms.adp.services.profile_settings import ProfileSettingsService
-from src.core.cms.adp.views_roles import _require_global_admin
+from src.core.cms.adp.views_roles import _require_global_admin, _audit
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
 
 
@@ -195,6 +195,9 @@ class AdminProfileChangeRequestApproveView(BaseAPIViewAuthMixin, BaseAPIView):
         except ValueError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        _audit('profile_change.approved', request=request,
+               entity={'type': 'user', 'label': change_request.user.get_full_name() or change_request.user.username})
+
         change_request.refresh_from_db()
         change_request = UserProfileChangeRequest.objects.select_related(
             'user',
@@ -235,6 +238,9 @@ class AdminProfileChangeRequestRejectView(BaseAPIViewAuthMixin, BaseAPIView):
             )
         except ValueError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        _audit('profile_change.rejected', request=request,
+               entity={'type': 'user', 'label': change_request.user.get_full_name() or change_request.user.username})
 
         change_request.refresh_from_db()
         change_request = UserProfileChangeRequest.objects.select_related(

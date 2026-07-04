@@ -17,6 +17,7 @@ from src.config.settings.base import CORE_DIR, MODULES_DIR
 from src.core.cms.adp.menu.models import MenuItem, MenuSeparator
 
 MENU_MARKERS = ('MenuMigrationHelper', 'MenuItem', 'MenuSeparator')
+MODULE_MENU_POPULATE_MARKERS = ('populate_lms_menu', 'populate_mct_menu')
 
 _RE_HELPER_SOURCE = re.compile(r"MenuMigrationHelper\s*\(\s*apps\s*,\s*['\"]([^'\"]+)['\"]")
 _RE_DELETE_SOURCE = re.compile(
@@ -200,80 +201,139 @@ def _discover_core_menu_migrations():
     ]
 
 
+def _is_module_menu_migration(content: str) -> bool:
+    """Миграция данных меню модуля (в т.ч. через seed/populate-хелперы)."""
+    if not any(marker in content for marker in MENU_MARKERS):
+        return False
+    if 'MenuMigrationHelper' in content:
+        return True
+    if any(marker in content for marker in MODULE_MENU_POPULATE_MARKERS):
+        return True
+    return 'MenuItem' in content and 'module_source' in content
+
+
+def _iter_module_migration_dirs(module_dir):
+    """
+    Каталоги миграций модуля: api/migrations и вложенные api/*/migrations
+    (например lms/api/mct/migrations).
+    """
+    api_dir = module_dir / 'api'
+    if not api_dir.is_dir():
+        return
+
+    main = api_dir / 'migrations'
+    if main.is_dir():
+        yield (), main
+
+    for sub in sorted(api_dir.iterdir()):
+        if not sub.is_dir() or sub.name in ('migrations', '__pycache__'):
+            continue
+        nested = sub / 'migrations'
+        if nested.is_dir():
+            yield (sub.name,), nested
+
+
+def _module_menu_migration_import_path(module_name, subpath_parts, stem):
+    base = f'modules.{module_name}.api'
+    if subpath_parts:
+        base += '.' + '.'.join(subpath_parts)
+    return f'{base}.migrations.{stem}'
+
+
 def _discover_module_menu_migrations():
     """
-    Сканирует modules/*/api/migrations/*.py на наличие MenuMigrationHelper.
+    Сканирует modules/*/api/migrations и modules/*/api/*/migrations на menu data migrations.
+    Для каждого каталога берёт последнюю по номеру миграцию с populate_menu.
     Возвращает список (module_name, migration_stem, populate_func) в порядке зависимостей.
     """
     if not MODULES_DIR.exists():
         return []
 
-    module_migrations = {}
+    module_entries = {}
+
     for module_dir in MODULES_DIR.iterdir():
         if not module_dir.is_dir() or module_dir.name.startswith('.'):
             continue
-        migrations_dir = module_dir / 'api' / 'migrations'
-        if not migrations_dir.exists():
-            continue
 
-        menu_migrations = []
-        for path in migrations_dir.glob('*.py'):
-            if path.name == '__init__.py':
-                continue
-            try:
-                content = path.read_text(encoding='utf-8')
-            except (OSError, UnicodeDecodeError):
-                continue
-            if 'MenuMigrationHelper' not in content:
-                continue
-            stem = path.stem
-            if stem[0].isdigit():
-                menu_migrations.append((stem, path))
-
-        if not menu_migrations:
-            continue
-
-        menu_migrations.sort(key=lambda x: x[0])
-        latest_stem, _ = menu_migrations[-1]
         module_name = module_dir.name
+        entries = []
 
-        try:
-            mod = importlib.import_module(
-                f'modules.{module_name}.api.migrations.{latest_stem}'
-            )
-        except (ImportError, ModuleNotFoundError):
-            continue
+        for subpath_parts, migrations_dir in _iter_module_migration_dirs(module_dir):
+            menu_migrations = []
+            for path in migrations_dir.glob('*.py'):
+                if path.name == '__init__.py':
+                    continue
+                try:
+                    content = path.read_text(encoding='utf-8')
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if not _is_module_menu_migration(content):
+                    continue
+                stem = path.stem
+                if stem[0].isdigit():
+                    menu_migrations.append(stem)
 
-        migration_class = getattr(mod, 'Migration', None)
-        if not migration_class or not issubclass(migration_class, migrations.Migration):
-            continue
+            if not menu_migrations:
+                continue
 
-        populate_func = None
-        for op in migration_class.operations:
-            if isinstance(op, migrations.RunPython):
-                populate_func = op.code
-                break
-        if not populate_func:
-            continue
+            menu_migrations.sort()
+            latest_stem = menu_migrations[-1]
 
-        module_migrations[module_name] = (latest_stem, populate_func, migration_class.dependencies)
+            try:
+                mod = importlib.import_module(
+                    _module_menu_migration_import_path(
+                        module_name, subpath_parts, latest_stem
+                    )
+                )
+            except (ImportError, ModuleNotFoundError):
+                continue
 
-    if not module_migrations:
+            migration_class = getattr(mod, 'Migration', None)
+            if not migration_class or not issubclass(migration_class, migrations.Migration):
+                continue
+
+            populate_func = None
+            for op in migration_class.operations:
+                if isinstance(op, migrations.RunPython):
+                    populate_func = op.code
+                    break
+            if not populate_func:
+                continue
+
+            subpath_key = subpath_parts[0] if subpath_parts else ''
+            entries.append((
+                latest_stem,
+                populate_func,
+                migration_class.dependencies,
+                subpath_key,
+            ))
+
+        if entries:
+            module_entries[module_name] = entries
+
+    if not module_entries:
         return []
 
     def get_deps(module_name):
-        _, _, deps = module_migrations[module_name]
         result = []
-        for dep_app, _ in deps:
-            if dep_app in module_migrations and dep_app != module_name:
-                result.append(dep_app)
+        for _, _, deps, _ in module_entries[module_name]:
+            for dep_app, _ in deps:
+                if dep_app in module_entries and dep_app != module_name:
+                    result.append(dep_app)
         return result
 
-    sorted_modules = _topological_sort(list(module_migrations.keys()), get_deps)
-    return [
-        (name, module_migrations[name][0], module_migrations[name][1])
-        for name in sorted_modules
-    ]
+    sorted_modules = _topological_sort(list(module_entries.keys()), get_deps)
+
+    discovered = []
+    for module_name in sorted_modules:
+        entries = sorted(
+            module_entries[module_name],
+            key=lambda item: (item[3] != '', item[3], item[0]),
+        )
+        for stem, populate_func, _, _ in entries:
+            discovered.append((module_name, stem, populate_func))
+
+    return discovered
 
 
 class Command(BaseCommand):

@@ -48,6 +48,20 @@ from src.core.utils.methods import (
 ADMIN_FORBIDDEN_MESSAGE = 'Доступ запрещен. Требуются права администратора.'
 
 
+def _audit(action, *, request=None, severity='info', entity=None, changes=None, meta=None):
+    """Запись действия администрирования в единый журнал (безопасно к сбоям)."""
+    from src.core.audit.shortcuts import audit_log
+    audit_log(
+        action,
+        source_module='core.cms.adp',
+        request=request,
+        severity=severity,
+        entity=entity,
+        changes=changes,
+        meta=meta,
+    )
+
+
 def _admin_user_forbidden_response():
     return Response(
         {'error': ADMIN_FORBIDDEN_MESSAGE},
@@ -284,7 +298,9 @@ class RoleListView(BaseAPIViewAuthMixin, BaseAPIView):
         
         serializer = RoleSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
+            role = serializer.save()
+            _audit('role.created', request=request, severity='security',
+                   entity={'type': 'role', 'label': role.name})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -349,6 +365,8 @@ class RoleDetailView(BaseAPIViewAuthMixin, BaseAPIView):
             serializer = RoleSerializer(role, data=payload, partial=True)
             if serializer.is_valid():
                 serializer.save()
+                _audit('role.updated', request=request, severity='security',
+                       entity={'type': 'role', 'label': role.name})
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Role.DoesNotExist:
@@ -379,7 +397,10 @@ class RoleDetailView(BaseAPIViewAuthMixin, BaseAPIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            role_name = role.name
             role.delete()
+            _audit('role.deleted', request=request, severity='security',
+                   entity={'type': 'role', 'label': role_name})
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Role.DoesNotExist:
             return Response(
@@ -428,7 +449,9 @@ class RoleGroupListView(BaseAPIViewAuthMixin, BaseAPIView):
         
         serializer = RoleGroupSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
+            group = serializer.save()
+            _audit('role_group.created', request=request, severity='security',
+                   entity={'type': 'role_group', 'label': getattr(group, 'name', '')})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -489,6 +512,8 @@ class RoleGroupDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         serializer = RoleGroupSerializer(group, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            _audit('role_group.updated', request=request, severity='security',
+                   entity={'type': 'role_group', 'label': getattr(group, 'name', '')})
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
@@ -510,7 +535,10 @@ class RoleGroupDetailView(BaseAPIViewAuthMixin, BaseAPIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
+        group_name = getattr(group, 'name', '')
         group.delete()
+        _audit('role_group.deleted', request=request, severity='security',
+               entity={'type': 'role_group', 'label': group_name})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -552,7 +580,9 @@ class PolicyListView(BaseAPIViewAuthMixin, BaseAPIView):
         
         serializer = PolicySerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
+            policy = serializer.save()
+            _audit('policy.created', request=request, severity='security',
+                   entity={'type': 'policy', 'label': str(policy)})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -613,6 +643,8 @@ class PolicyDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         serializer = PolicySerializer(policy, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            _audit('policy.updated', request=request, severity='security',
+                   entity={'type': 'policy', 'label': str(policy)})
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
@@ -634,7 +666,10 @@ class PolicyDetailView(BaseAPIViewAuthMixin, BaseAPIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
+        policy_label = str(policy)
         policy.delete()
+        _audit('policy.deleted', request=request, severity='security',
+               entity={'type': 'policy', 'label': policy_label})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -687,6 +722,21 @@ class UserRoleAssignView(BaseAPIViewAuthMixin, BaseAPIView):
                 role_groups=role_groups,
                 assigned_by=request.user
             )
+
+            try:
+                from src.core.integrations import bridge
+                bridge.call(
+                    'audit.record',
+                    action='user.role_assigned',
+                    source_module='core.cms.adp',
+                    request=request,
+                    severity='security',
+                    entity={'type': 'user', 'ref': '', 'label': user.get_full_name() or user.username},
+                    changes=[{'field': 'role', 'label': 'Роль', 'old': '', 'new': role.name}],
+                    meta={'target_username': user.username},
+                )
+            except Exception:
+                pass
 
             serializer = UserRoleSerializer(user_role)
             return Response(serializer.data)
@@ -835,10 +885,14 @@ class ModulePermissionListView(BaseAPIViewAuthMixin, BaseAPIView):
                 serializer = ModulePermissionSerializer(existing, data=request.data, partial=True)
                 if serializer.is_valid():
                     serializer.save()
+                    _audit('module_permission.updated', request=request, severity='security',
+                           entity={'type': 'module_permission', 'label': str(existing)})
                     return Response(serializer.data)
             else:
                 # Создаем новое
-                serializer.save()
+                perm = serializer.save()
+                _audit('module_permission.created', request=request, severity='security',
+                       entity={'type': 'module_permission', 'label': str(perm)})
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -900,6 +954,8 @@ class ModulePermissionDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         serializer = ModulePermissionSerializer(permission, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            _audit('module_permission.updated', request=request, severity='security',
+                   entity={'type': 'module_permission', 'label': str(permission)})
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
@@ -921,7 +977,10 @@ class ModulePermissionDetailView(BaseAPIViewAuthMixin, BaseAPIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
+        permission_label = str(permission)
         permission.delete()
+        _audit('module_permission.deleted', request=request, severity='security',
+               entity={'type': 'module_permission', 'label': permission_label})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1034,6 +1093,9 @@ class AdminUserRoleListView(BaseAPIViewAuthMixin, BaseAPIView):
             return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.select_related('adp_profile').get(pk=user.pk)
+        _audit('user.created', request=request, severity='security',
+               entity={'type': 'user', 'label': user.get_full_name() or user.username},
+               meta={'username': user.username})
         response_data = _build_admin_user_detail(user)
         response_data.update(meta)
         return Response(response_data, status=status.HTTP_201_CREATED)
@@ -1093,6 +1155,9 @@ class AdminUserDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         if serializer.is_valid():
             serializer.save()
             user = User.objects.select_related('adp_profile').get(pk=user_id)
+            _audit('user.updated', request=request,
+                   entity={'type': 'user', 'label': user.get_full_name() or user.username},
+                   meta={'username': user.username})
             return Response(_build_admin_user_detail(user), status=status.HTTP_200_OK)
 
         errors = parse_errors_to_dict(serializer.errors)
@@ -1122,10 +1187,15 @@ class AdminUserDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         if validation_error:
             return validation_error
 
+        target_label = user.get_full_name() or user.username
+        target_username = user.username
         deletion_error = _perform_admin_user_deletion(user)
         if deletion_error:
             return deletion_error
 
+        _audit('user.deleted', request=request, severity='security',
+               entity={'type': 'user', 'label': target_label},
+               meta={'username': target_username})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1252,6 +1322,9 @@ class AdminUserResetPasswordView(BaseAPIViewAuthMixin, BaseAPIView):
             user.save(update_fields=['password'])
             revoke_user_auth(user)
 
+            _audit('user.password_reset_by_admin', request=request, severity='security',
+                   entity={'type': 'user', 'label': user.get_full_name() or user.username},
+                   meta={'username': user.username, 'mode': 'manual'})
             return Response(
                 {
                     'message': 'Пароль установлен.',
@@ -1264,6 +1337,10 @@ class AdminUserResetPasswordView(BaseAPIViewAuthMixin, BaseAPIView):
 
         _apply_system_password_reset(user)
         revoke_user_auth(user)
+
+        _audit('user.password_reset_by_admin', request=request, severity='security',
+               entity={'type': 'user', 'label': user.get_full_name() or user.username},
+               meta={'username': user.username, 'mode': 'system'})
 
         email_sent = False
         email_error = None
