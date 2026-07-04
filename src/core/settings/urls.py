@@ -8,7 +8,6 @@ router.register(r'security-settings', SecuritySettingsViewSet)
 router.register(r'media-settings', MediaSettingsViewSet)
 router.register(r'permalink-settings', PermalinkSettingsViewSet)
 router.register(r'email-settings', EmailSettingsViewSet)
-router.register('audit-logs', AuditLogViewSet, basename='auditlog')
 router.register(r'user-avatars', UserAvatarViewSet, basename='user-avatars')
 router.register(r'themes', ThemeViewSet, basename='themes')
 

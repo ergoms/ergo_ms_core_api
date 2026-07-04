@@ -4,7 +4,7 @@ from .models import UserAvatar
 from src.core.utils.mixins import validate_media_path
 from .models import (
     Theme,
-    SecuritySettings, MediaSettings, PermalinkSettings, EmailSettings, AuditLog
+    SecuritySettings, MediaSettings, PermalinkSettings, EmailSettings
 )
 
 class ThemeSerializer(serializers.ModelSerializer):
@@ -91,31 +91,3 @@ class UserAvatarListSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAvatar
         fields = ['image']
-
-class AuditLogSerializer(serializers.ModelSerializer):
-    content_type = serializers.SlugRelatedField(
-        read_only=True,
-        slug_field='model'
-    )
-    user = serializers.CharField(
-        source='user.username',
-        default=None,
-        read_only=True
-    )
-    action = serializers.SerializerMethodField()
-
-    class Meta:
-        model = AuditLog
-        fields = [
-            'id',
-            'content_type',
-            'object_id',
-            'action',
-            'changes',
-            'user',
-            'timestamp',
-        ]
-        read_only_fields = fields
-
-    def get_action(self, obj):
-        return obj.get_action_display()

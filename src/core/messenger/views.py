@@ -38,19 +38,36 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
             ct = get_content_type(content_type_name)
             if ct is None:
                 return Message.objects.none()
-            model_class = ct.model_class()
-            if model_class is not None:
-                try:
-                    obj = model_class.objects.get(pk=object_id)
-                    if hasattr(obj, 'has_messenger_access'):
-                        if not obj.has_messenger_access(self.request.user):
-                            return Message.objects.none()
-                except model_class.DoesNotExist:
-                    return Message.objects.none()
+            if not self._has_messenger_access(ct, object_id):
+                return Message.objects.none()
             filtered = queryset.filter(content_type=ct, object_id=object_id).order_by('created_at')
             return self._apply_after_id_filter(filtered)
 
         return Message.objects.none()
+
+    def _has_messenger_access(self, content_type, object_id):
+        """Доступ определяется родительским объектом сообщения (has_messenger_access).
+
+        Если у объекта нет метода — доступ разрешён (объект без ограничений).
+        Если объект не найден — доступа нет.
+        """
+        model_class = content_type.model_class() if content_type else None
+        if model_class is None:
+            return False
+        try:
+            obj = model_class.objects.get(pk=object_id)
+        except model_class.DoesNotExist:
+            return False
+        if hasattr(obj, 'has_messenger_access'):
+            return obj.has_messenger_access(self.request.user)
+        return True
+
+    def get_object(self):
+        """Проверяем доступ к родительскому объекту и при retrieve по pk (защита от IDOR)."""
+        instance = super().get_object()
+        if not self._has_messenger_access(instance.content_type, instance.object_id):
+            raise PermissionDenied('Нет доступа к сообщению.')
+        return instance
 
     def _apply_after_id_filter(self, queryset):
         after_id = self.request.query_params.get('after_id')

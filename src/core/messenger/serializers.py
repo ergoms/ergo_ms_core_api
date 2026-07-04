@@ -168,6 +168,7 @@ class MessageSerializer(serializers.ModelSerializer):
             pass
         return {
             'id': user.id,
+            'public_id': str(user.public_id) if getattr(user, 'public_id', None) else None,
             'username': getattr(user, 'username', ''),
             'full_name': full_name or getattr(user, 'username', ''),
             'avatar_url': avatar_url,

@@ -11,9 +11,6 @@ from django.http import HttpResponse
 from .permissions import IsGlobalAdmin
 from src.core.utils.mixins import MediaApiFileMixin, read_storage_file_bytes
 from src.core.audit.mixin import AuditedModelMixin
-from .models import AuditLog
-from .serializers import AuditLogSerializer
-from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from .models import *
 from .serializers import *
@@ -110,14 +107,6 @@ class UserAvatarViewSet(MediaApiFileMixin, viewsets.ModelViewSet):
             {'detail': 'Аватар не найден'},
             status=status.HTTP_404_NOT_FOUND
         )
-
-class AuditLogViewSet(ReadOnlyModelViewSet):
-    queryset = AuditLog.objects.all()
-    serializer_class = AuditLogSerializer
-    permission_classes = [IsAuthenticated, IsGlobalAdmin]
-    filterset_fields = ['content_type__model', 'object_id', 'action']
-    ordering = ['-timestamp']
-
 
 class ThemeViewSet(AuditedModelMixin, _ThemeImportMixin, viewsets.ModelViewSet):
     """ViewSet для управления темами оформления"""

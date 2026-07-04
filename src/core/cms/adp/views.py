@@ -136,11 +136,8 @@ class UserRegistrationValidationView(BaseAPIView):
     )
     def post(self, request):
         serializer = UserRegistrationValidationSerializer(data=request.data)
-        
-        #Command.handle('createsuperuser',username='myusername', email='myemail@example.com', password='mypassword')
-        
+
         if serializer.is_valid():
-            #User.objects.create_user(username=serializer.field_name, email= serializer.email, password= serializer.password, is_superuser=True).save()
             successful_response = Response(
                 {"message": "Валидация успешна."}, 
                 status=status.HTTP_200_OK

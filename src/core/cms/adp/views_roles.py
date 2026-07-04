@@ -179,6 +179,7 @@ def _build_admin_user_list_item(user, user_role=None, admin_role=None, presence_
 
     return {
         'user_id': user.id,
+        'public_id': str(user.public_id) if getattr(user, 'public_id', None) else None,
         'username': user.username,
         'email': user.email or '',
         'full_name': _build_admin_user_full_name(user),
@@ -253,6 +254,7 @@ def _build_admin_user_detail(user):
 
     data = CMSUserSerializer(user).data
     data['user_id'] = user.id
+    data['public_id'] = str(user.public_id) if getattr(user, 'public_id', None) else None
     data['role'] = RoleSerializer(role).data if role else None
     data['role_groups'] = RoleGroupSerializer(role_groups, many=True).data
     data['avatar_url'] = _get_user_avatar_url(user)
