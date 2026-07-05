@@ -102,14 +102,17 @@ def ensure_legacy_device(request) -> UserDevice | None:
         return None
 
     device_type = detect_device_type(user_agent)
+    from src.core.utils.geoip import resolve_ip_location
+
+    city, country = resolve_ip_location(ip_address)
     return UserDevice.objects.create(
         user=user,
         ip_address=ip_address,
         device_type=device_type,
         device_name=build_device_display_name(user_agent, device_type),
         user_agent=user_agent,
-        city='Неизвестно',
-        country='Неизвестно',
+        city=city,
+        country=country,
         is_active=True,
     )
 

@@ -482,14 +482,18 @@ class UserAuthorizationView(BaseAPIView):
             device.save(update_fields=['is_active', 'device_name', 'device_type', 'last_activity'])
             return device
 
+        from src.core.utils.geoip import resolve_ip_location
+
+        city, country = resolve_ip_location(ip_address)
+
         return UserDevice.objects.create(
             user=user,
             ip_address=ip_address,
             device_type=device_type,
             device_name=device_name,
             user_agent=user_agent,
-            city='Неизвестно',
-            country='Неизвестно',
+            city=city,
+            country=country,
             is_active=True,
         )
 

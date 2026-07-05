@@ -100,3 +100,46 @@ def get_modules() -> list[dict]:
         {'module': section['module'], 'module_label': section['module_label']}
         for section in get_catalog().values()
     ]
+
+
+def get_distinct_actors(limit: int = 500) -> list[dict]:
+    """Уникальные инициаторы из журнала для фильтра UI.
+
+    Привязанные пользователи — по public_id; «осиротевшие» записи — по actor_label.
+    """
+    from urllib.parse import quote
+
+    from django.db.models import Max
+
+    from .models import AuditEvent
+
+    linked = (
+        AuditEvent.objects
+        .filter(actor_id__isnull=False, actor__public_id__isnull=False)
+        .values('actor__public_id')
+        .annotate(label=Max('actor_label'))
+        .order_by('label')[:limit]
+    )
+    orphans = (
+        AuditEvent.objects
+        .filter(actor_id__isnull=True)
+        .exclude(actor_label='')
+        .values('actor_label')
+        .distinct()
+        .order_by('actor_label')
+    )
+
+    result: list[dict] = []
+    for row in linked:
+        public_id = row['actor__public_id']
+        label = (row['label'] or '').strip() or str(public_id)
+        result.append({'value': str(public_id), 'label': label})
+
+    for row in orphans:
+        label = (row['actor_label'] or '').strip()
+        if not label:
+            continue
+        result.append({'value': f'label:{quote(label, safe="")}', 'label': label})
+
+    result.sort(key=lambda item: item['label'].casefold())
+    return result

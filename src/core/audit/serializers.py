@@ -8,10 +8,15 @@ class AuditEventSerializer(serializers.ModelSerializer):
     """Запись журнала с обогащением из каталога действий."""
 
     actor_username = serializers.CharField(source='actor.username', default=None, read_only=True)
+    actor_ref = serializers.SerializerMethodField()
+    actor_first_name = serializers.SerializerMethodField()
+    actor_last_name = serializers.SerializerMethodField()
+    actor_middle_name = serializers.SerializerMethodField()
     action_label = serializers.SerializerMethodField()
     module_label = serializers.SerializerMethodField()
     category_label = serializers.SerializerMethodField()
     icon = serializers.SerializerMethodField()
+    ip_location = serializers.SerializerMethodField()
 
     class Meta:
         model = AuditEvent
@@ -21,6 +26,10 @@ class AuditEventSerializer(serializers.ModelSerializer):
             'created_at',
             'actor',
             'actor_username',
+            'actor_ref',
+            'actor_first_name',
+            'actor_last_name',
+            'actor_middle_name',
             'actor_label',
             'source_module',
             'module_label',
@@ -37,6 +46,7 @@ class AuditEventSerializer(serializers.ModelSerializer):
             'organization_id',
             'department_id',
             'ip_address',
+            'ip_location',
             'user_agent',
             'request_id',
         )
@@ -59,6 +69,25 @@ class AuditEventSerializer(serializers.ModelSerializer):
             return None
         return section['actions'].get(obj.action or '')
 
+    def get_actor_ref(self, obj):
+        actor = obj.actor
+        if actor is None:
+            return None
+        public_id = getattr(actor, 'public_id', None)
+        return str(public_id) if public_id else None
+
+    def get_actor_first_name(self, obj):
+        actor = obj.actor
+        return (actor.first_name or '') if actor else ''
+
+    def get_actor_last_name(self, obj):
+        actor = obj.actor
+        return (actor.last_name or '') if actor else ''
+
+    def get_actor_middle_name(self, obj):
+        actor = obj.actor
+        return (getattr(actor, 'middle_name', None) or '') if actor else ''
+
     def get_action_label(self, obj):
         spec = self._spec(obj)
         return spec['label'] if spec else obj.action
@@ -74,3 +103,8 @@ class AuditEventSerializer(serializers.ModelSerializer):
     def get_icon(self, obj):
         spec = self._spec(obj)
         return spec['icon'] if spec else ''
+
+    def get_ip_location(self, obj):
+        from src.core.utils.geoip import format_ip_location
+
+        return format_ip_location(obj.ip_address)

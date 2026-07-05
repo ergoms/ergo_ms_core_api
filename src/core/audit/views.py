@@ -1,4 +1,5 @@
 import csv
+import uuid
 
 from django.http import HttpResponse
 from django.utils.dateparse import parse_datetime
@@ -54,6 +55,18 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             except (TypeError, ValueError):
                 pass
 
+        actor_ref = params.get('actor_ref')
+        if actor_ref:
+            try:
+                uuid.UUID(str(actor_ref))
+                qs = qs.filter(actor__public_id=actor_ref)
+            except (ValueError, TypeError):
+                pass
+
+        actor_label = (params.get('actor_label') or '').strip()
+        if actor_label:
+            qs = qs.filter(actor_id__isnull=True, actor_label=actor_label)
+
         organization_id = params.get('organization_id')
         if organization_id:
             try:
@@ -100,6 +113,7 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
                 {'value': value, 'label': label}
                 for value, label in AuditEvent.SEVERITY_CHOICES
             ],
+            'actors': catalog.get_distinct_actors(),
         })
 
     @action(detail=False, methods=['get'], url_path='export')
