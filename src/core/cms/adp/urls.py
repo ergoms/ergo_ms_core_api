@@ -14,11 +14,13 @@ from src.core.cms.adp.views_auth import (
 from src.core.cms.adp.views import (
     LogoutView,
     ProtectedView,
+    UserMenuView,
+)
+from src.core.cms.adp.views_profile import (
     ChangePasswordView,
     UserDevicesView,
     UserDeviceDetailView,
     UserProfileView,
-    UserMenuView,
     UserSecuritySettingsView,
 )
 from src.core.cms.adp.views_import import (

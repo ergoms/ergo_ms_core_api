@@ -1,13 +1,14 @@
 # Сервер (Django API)
 
-Серверная часть ERGO MS: REST API, CMS, права, уведомления, аудит, интеграции между модулями.
+Серверная часть ERGO MS: REST API, CMS, права, уведомления, аудит, интеграции между модулями. Запуск для разработки — через ASGI (Django Channels) для WebSocket.
 
 ## Структура
 
 | Каталог | Назначение |
 |---------|------------|
-| `src/config/` | настройки Django, Celery, URL, окружения (development и production) |
-| `src/core/` | код ядра: CMS, utils, audit, integrations |
+| `src/config/` | настройки Django, Celery, URL, ASGI, окружения (development и production) |
+| `src/core/` | код ядра: CMS, ADP (роли, регистрация, приглашения), utils, audit, integrations |
+| `src/core/cms/adp/` | пользователи, роли, приглашения, WebSocket consumers (presence) |
 | `commands/` | команды ergoms для Django |
 | `scripts/` | точки входа (запуск API, Celery, Jupyter) |
 
@@ -18,7 +19,10 @@
 | Тема | Правило |
 |------|---------|
 | API, ViewSet, Swagger | [`.cursor/rules/api_code.mdc`](../../.cursor/rules/api_code.mdc) |
+| Django, регистрация, ASGI | [`.cursor/rules/django.mdc`](../../.cursor/rules/django.mdc) |
+| WebSocket, realtime | [`.cursor/rules/realtime.mdc`](../../.cursor/rules/realtime.mdc) |
 | Безопасность | [`.cursor/rules/security.mdc`](../../.cursor/rules/security.mdc) |
+| GeoIP | [`../deployment/logic.md`](../deployment/logic.md#geoip-db-ip-city-lite) |
 
 ## Связанные части ядра
 
