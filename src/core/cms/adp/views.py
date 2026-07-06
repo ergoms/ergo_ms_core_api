@@ -3,7 +3,6 @@ from rest_framework import status
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from src.core.cms.adp.models import UserProfile
 from src.core.cms.adp.serializers import CMSUserMenuSerializer
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
 from src.core.cms.adp.services.session_devices import touch_device_activity
@@ -50,8 +49,6 @@ class ProtectedView(BaseAPIViewAuthMixin):
     )
     def get(self, request):
         touch_device_activity(request)
-        UserProfile.objects.get_or_create(user=request.user)
-
         return Response({}, status=status.HTTP_200_OK)
 
 

@@ -166,31 +166,26 @@ class QueueConcurrencyManager:
             logger.debug(f"Очередь {queue_name}: слот освобожден (local)")
     
     def _acquire_distributed(self, queue_name: str, blocking: bool = False) -> bool:
-        """Распределенный захват через Django cache"""
+        """Распределенный захват через Django cache (требует Redis backend с incr)."""
         cache_key = f'celery:queue_concurrency:{queue_name}'
         limit = self._queue_limits.get(queue_name, 0)
-        
-        # Атомарно увеличиваем счетчик
+
         try:
-            current = cache.get(cache_key, 0)
-            if current >= limit:
-                logger.debug(f"Очередь {queue_name}: лимит превышен ({current}/{limit}) (distributed)")
-                return False
-            
-            # Пытаемся увеличить счетчик
             new_value = cache.incr(cache_key)
             if new_value is None:
-                # Ключ не существовал, создаем
                 cache.set(cache_key, 1, self._cache_ttl)
                 new_value = 1
-            
+
             if new_value > limit:
-                # Превысили лимит, откатываем
                 cache.decr(cache_key)
-                logger.debug(f"Очередь {queue_name}: лимит превышен после incr ({new_value}/{limit}) (distributed)")
+                logger.debug(
+                    f"Очередь {queue_name}: лимит превышен ({new_value}/{limit}) (distributed)"
+                )
                 return False
-            
-            logger.debug(f"Очередь {queue_name}: слот захвачен ({new_value}/{limit}) (distributed)")
+
+            logger.debug(
+                f"Очередь {queue_name}: слот захвачен ({new_value}/{limit}) (distributed)"
+            )
             return True
         except Exception as e:
             logger.error(f"Ошибка при захвате слота для очереди {queue_name}: {e}")

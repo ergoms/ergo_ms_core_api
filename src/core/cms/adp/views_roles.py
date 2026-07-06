@@ -433,9 +433,9 @@ class UserPermissionsView(BaseAPIViewAuthMixin, BaseAPIView):
     )
     def get(self, request):
         """Получить все права текущего пользователя"""
-        permissions = PermissionService.get_user_permissions(request.user)
-        serializer = UserPermissionsSerializer(permissions)
-        return Response(serializer.data)
+        from src.core.cms.adp.services.permissions_snapshot_cache import get_user_permissions_payload
+
+        return Response(get_user_permissions_payload(request.user))
 
 
 class CheckURLAccessView(BaseAPIViewAuthMixin, BaseAPIView):

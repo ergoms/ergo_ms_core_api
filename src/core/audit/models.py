@@ -131,3 +131,38 @@ class AuditEvent(models.Model):
 
     def __str__(self):
         return f'{self.action} by {self.actor_label or self.actor_id} @ {self.created_at:%d.%m.%Y %H:%M}'
+
+
+class AuditActor(models.Model):
+    """Справочник инициаторов для фильтра UI (обновляется при записи событий)."""
+
+    filter_value = models.CharField(
+        max_length=128,
+        unique=True,
+        verbose_name='Значение фильтра',
+    )
+    label = models.CharField(
+        max_length=255,
+        verbose_name='Отображаемое имя',
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='audit_actor_entries',
+        verbose_name='Пользователь',
+    )
+    last_seen_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Последнее событие',
+    )
+
+    class Meta:
+        app_label = 'core_audit'
+        verbose_name = 'Инициатор журнала'
+        verbose_name_plural = 'Инициаторы журнала'
+        ordering = ['label']
+
+    def __str__(self):
+        return self.label or self.filter_value

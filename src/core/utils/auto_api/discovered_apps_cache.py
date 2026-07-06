@@ -140,6 +140,21 @@ def _run_discovery() -> List[str]:
 _in_memory_cache: Optional[tuple] = None
 
 
+def clear_discovered_apps_memory_cache() -> None:
+    """Сбрасывает in-process кэш (без удаления файла)."""
+    global _in_memory_cache
+    _in_memory_cache = None
+
+
+def invalidate_discovered_apps_cache() -> None:
+    """Сбрасывает файловый и in-process кэш discovered_apps."""
+    clear_discovered_apps_memory_cache()
+    try:
+        CACHE_FILE.unlink(missing_ok=True)
+    except OSError:
+        logger.warning('Не удалось удалить %s', CACHE_FILE, exc_info=True)
+
+
 def get_discovered_apps(use_cache: Optional[bool] = None, fast_discovery: Optional[bool] = None) -> List[str]:
     """
     Возвращает список обнаруженных приложений.

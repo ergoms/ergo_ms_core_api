@@ -97,7 +97,9 @@ def discover_client_routes_index() -> dict[str, str]:
 
 def extract_paths_from_routes_config() -> set[str]:
     """Все пути client-маршрутов для синхронизации CMSPage."""
-    return set(discover_client_routes_index().keys())
+    from src.core.cms.client_routes_cache import get_client_routes_index
+
+    return set(get_client_routes_index().keys())
 
 
 @dataclass(frozen=True)

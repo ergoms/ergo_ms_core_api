@@ -10,16 +10,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from django.contrib.auth import get_user_model
+from django.conf import settings
 from django.db import transaction
 
+from .actors import upsert_audit_actor
 from .context import resolve_context
 from .models import AuditEvent
 from .redaction import redact, redact_changes
 
 logger = logging.getLogger('core.audit')
-
-User = get_user_model()
 
 _UNSET = object()
 
@@ -115,7 +114,29 @@ class AuditService:
 
     @staticmethod
     def _persist(payload: dict) -> None:
+        if getattr(settings, 'AUDIT_ASYNC_PERSIST', False):
+            AuditService._enqueue_async(payload)
+        else:
+            AuditService._persist_sync(payload)
+
+    @staticmethod
+    def _enqueue_async(payload: dict) -> None:
+        try:
+            from .tasks import persist_audit_event
+
+            persist_audit_event.delay(payload)
+        except Exception:
+            logger.exception('AuditService: не удалось поставить запись аудита в очередь')
+            if getattr(settings, 'AUDIT_ASYNC_PERSIST_FALLBACK_SYNC', True):
+                AuditService._persist_sync(payload)
+
+    @staticmethod
+    def _persist_sync(payload: dict) -> None:
         try:
             AuditEvent.objects.create(**payload)
+            upsert_audit_actor(
+                actor_id=payload.get('actor_id'),
+                actor_label=payload.get('actor_label') or '',
+            )
         except Exception:
             logger.exception('AuditService: не удалось сохранить запись аудита')

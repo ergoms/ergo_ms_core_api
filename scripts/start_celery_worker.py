@@ -88,12 +88,14 @@ def build_cmd(
     hostname: str,
     loglevel: str = 'info',
     concurrency: Optional[int] = None,
+    pool: str = 'threads',
 ) -> List[str]:
     """Формирует команду celery worker. queues=None или [] — без -Q (все очереди)."""
+    effective_pool = (pool or 'threads').strip().lower()
     cmd = [
         sys.executable, '-m', 'celery', '-A', 'src', 'worker',
         f'--hostname={hostname}', f'--loglevel={loglevel}',
-        '--pool=threads', '-E',
+        f'--pool={effective_pool}', '-E',
     ]
     if queues:
         cmd.extend(['-Q', ','.join(queues)])
@@ -110,12 +112,14 @@ def main() -> int:
     parser.add_argument('--queues', type=str, default=None)
     parser.add_argument('--hostname', type=str, default=None)
     parser.add_argument('--concurrency', type=int, default=None)
+    parser.add_argument('--pool', type=str, default=None, help='threads | prefork | solo')
     parser.add_argument('--loglevel', default='info')
     opts = parser.parse_args()
 
     config = load_workers_config()
     workers_config = config.get('workers', {})
     defaults = config.get('defaults', {})
+    default_pool = defaults.get('pool', 'threads')
     print('Celery Worker bootstrap: читаем кэш очередей (warmup_celery при необходимости)...')
     all_queues = ensure_caches()
     if all_queues:
@@ -136,7 +140,8 @@ def main() -> int:
                 qs = ', '.join(q) if q else 'none'
             else:
                 qs = 'none'
-            print(f"  {name}: {w.get('description', '')} queues={qs}")
+            pool = w.get('pool') or default_pool
+            print(f"  {name}: {w.get('description', '')} queues={qs} pool={pool}")
         return 0
 
     worker_name = opts.worker
@@ -144,6 +149,8 @@ def main() -> int:
     hostname_opt = opts.hostname
     loglevel_opt = opts.loglevel or defaults.get('loglevel', 'info')
     concurrency_opt = opts.concurrency
+    pool_opt = opts.pool or default_pool
+    pool = pool_opt
 
     if worker_name:
         if worker_name not in workers_config:
@@ -154,8 +161,13 @@ def main() -> int:
         hostname = w.get('hostname', f'worker@{worker_name}')
         concurrency = w.get('concurrency') or concurrency_opt
         loglevel = w.get('loglevel') or loglevel_opt
+        pool = w.get('pool') or pool_opt
         print(f"\nStarting worker '{worker_name}': {w.get('description', '')}")
-        print(f"  Mode: config worker (--worker), hostname={hostname}, queues={','.join(queues) if queues else 'all'}, concurrency={concurrency or 'default'}")
+        print(
+            f"  Mode: config worker (--worker), hostname={hostname}, "
+            f"queues={','.join(queues) if queues else 'all'}, "
+            f"concurrency={concurrency or 'default'}, pool={pool}"
+        )
     elif queues_opt or hostname_opt:
         if queues_opt:
             queue_list = [q.strip() for q in queues_opt.split(',')]
@@ -170,8 +182,13 @@ def main() -> int:
         hostname = hostname_opt or f"worker@{'_'.join(queues or ['all'])[:50]}"
         concurrency = concurrency_opt
         loglevel = loglevel_opt
+        pool = pool_opt
         print('\nStarting Celery worker')
-        print(f"  Mode: ad-hoc worker (CLI), hostname={hostname}, queues={','.join(queues) if queues else 'all'}, concurrency={concurrency or 'default'}")
+        print(
+            f"  Mode: ad-hoc worker (CLI), hostname={hostname}, "
+            f"queues={','.join(queues) if queues else 'all'}, "
+            f"concurrency={concurrency or 'default'}, pool={pool}"
+        )
     elif workers_config:
         procs = []
         print('\nStarting Celery workers from celery_workers.yaml (multi-worker mode)...')
@@ -182,8 +199,18 @@ def main() -> int:
                 print(f"  {hostname} already running, skip")
                 continue
             queues_display = ','.join(queues) if queues else 'all'
-            cmd = build_cmd(queues, hostname, w.get('loglevel', defaults.get('loglevel', 'info')), w.get('concurrency'))
-            print(f"  Starting '{name}' ({hostname}) -> queues={queues_display}, concurrency={w.get('concurrency') or 'default'}")
+            worker_pool = w.get('pool') or default_pool
+            cmd = build_cmd(
+                queues,
+                hostname,
+                w.get('loglevel', defaults.get('loglevel', 'info')),
+                w.get('concurrency'),
+                pool=worker_pool,
+            )
+            print(
+                f"  Starting '{name}' ({hostname}) -> queues={queues_display}, "
+                f"concurrency={w.get('concurrency') or 'default'}, pool={worker_pool}"
+            )
             env = os.environ.copy()
             env.setdefault('PYTHONPATH', '')
             env['PYTHONPATH'] = str(PROJECT_ROOT) + (os.pathsep + env['PYTHONPATH'] if env['PYTHONPATH'] else '')
@@ -214,6 +241,7 @@ def main() -> int:
         hostname = f"worker@{'_'.join(queues or ['all'])[:50]}"
         concurrency = concurrency_opt
         loglevel = loglevel_opt
+        pool = pool_opt
         print('No celery_workers.yaml. Starting single worker with all queues (no -Q if кэш пуст).')
 
     queues_display = ','.join(queues) if queues else 'all'
@@ -221,8 +249,8 @@ def main() -> int:
         print(f'Worker {hostname} already running')
         return 0
 
-    print(f'  Starting {hostname} for queues: {queues_display}')
-    cmd = build_cmd(queues, hostname, loglevel, concurrency)
+    print(f'  Starting {hostname} for queues: {queues_display}, pool={pool}')
+    cmd = build_cmd(queues, hostname, loglevel, concurrency, pool=pool)
     return run_celery_with_timing(
         cmd, str(API_DIR),
         ready_pattern='Connected to',

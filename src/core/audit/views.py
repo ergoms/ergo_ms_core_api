@@ -1,11 +1,11 @@
 import csv
 import uuid
 
+from django.db import connection
 from django.http import HttpResponse
 from django.utils.dateparse import parse_datetime
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from src.core.settings.permissions import IsGlobalAdmin
@@ -13,13 +13,8 @@ from src.core.utils.mixins import SwaggerSafeMixin
 
 from . import catalog
 from .models import AuditEvent
-from .serializers import AuditEventSerializer
-
-
-class AuditPagination(PageNumberPagination):
-    page_size = 50
-    page_size_query_param = 'page_size'
-    max_page_size = 200
+from .pagination import AuditPagination
+from .serializers import AuditEventDetailSerializer, AuditEventListSerializer
 
 
 class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
@@ -29,9 +24,37 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
     инициатор, важность, период, организация, поиск по объекту/инициатору.
     """
 
-    serializer_class = AuditEventSerializer
     permission_classes = [permissions.IsAuthenticated, IsGlobalAdmin]
     pagination_class = AuditPagination
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return AuditEventDetailSerializer
+        return AuditEventListSerializer
+
+    def _apply_search_filter(self, qs, search: str):
+        if connection.vendor == 'postgresql':
+            from django.contrib.postgres.search import TrigramSimilarity
+
+            return (
+                qs.annotate(
+                    search_rank=(
+                        TrigramSimilarity('actor_label', search)
+                        + TrigramSimilarity('entity_label', search)
+                        + TrigramSimilarity('actor__username', search)
+                    )
+                )
+                .filter(search_rank__gt=0.15)
+                .order_by('-search_rank', '-created_at', '-id')
+            )
+
+        from django.db.models import Q
+
+        return qs.filter(
+            Q(actor_label__icontains=search)
+            | Q(entity_label__icontains=search)
+            | Q(actor__username__icontains=search)
+        )
 
     def _apply_filters(self, qs):
         params = self.request.query_params
@@ -88,12 +111,7 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
         search = (params.get('q') or '').strip()
         if search:
-            from django.db.models import Q
-            qs = qs.filter(
-                Q(actor_label__icontains=search)
-                | Q(entity_label__icontains=search)
-                | Q(actor__username__icontains=search)
-            )
+            qs = self._apply_search_filter(qs, search)
 
         return qs
 
@@ -101,6 +119,8 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         if self.is_swagger_fake_view():
             return AuditEvent.objects.none()
         qs = AuditEvent.objects.select_related('actor').all()
+        if self.action == 'list':
+            qs = qs.defer('changes', 'meta', 'user_agent', 'request_id')
         return self._apply_filters(qs)
 
     @action(detail=False, methods=['get'], url_path='catalog')
@@ -124,7 +144,7 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
         response = HttpResponse(content_type='text/csv; charset=utf-8')
         response['Content-Disposition'] = 'attachment; filename="audit_log.csv"'
-        response.write('\ufeff')  # BOM для корректных кириллических заголовков в Excel
+        response.write('\ufeff')
 
         writer = csv.writer(response, delimiter=';')
         writer.writerow(['Время', 'Модуль', 'Действие', 'Важность', 'Инициатор', 'Объект', 'IP'])

@@ -20,6 +20,7 @@ from src.core.utils.methods import generate_secure_random_password
 logger = logging.getLogger('celery.core.cms.adp')
 
 MAX_LOGS_IN_META = 1000
+PROGRESS_UPDATE_EVERY_ROWS = 10
 
 
 def _import_meta(current, total, created, skipped, progress, accumulated_logs, last_log):
@@ -35,6 +36,65 @@ def _import_meta(current, total, created, skipped, progress, accumulated_logs, l
         'last_log': last_log,
     }
     return meta
+
+
+def _normalize_cell(value):
+    if pd.isna(value) or value == 'nan':
+        return ''
+    return str(value).strip()
+
+
+def _load_existing_usernames() -> set[str]:
+    return {
+        username.lower()
+        for username in User.objects.values_list('username', flat=True)
+        if username
+    }
+
+
+def _load_existing_emails() -> set[str]:
+    return {
+        email.lower()
+        for email in User.objects.exclude(email='').values_list('email', flat=True)
+        if email
+    }
+
+
+def _should_update_progress(index: int, total_rows: int) -> bool:
+    if index == 0 or index + 1 == total_rows:
+        return True
+    if (index + 1) % PROGRESS_UPDATE_EVERY_ROWS == 0:
+        return True
+    return False
+
+
+def _append_skip(
+    *,
+    index,
+    total_rows,
+    message,
+    results,
+    accumulated_logs,
+    task,
+):
+    logger.warning(message)
+    log_entry = {'level': 'warn', 'message': message}
+    results['logs'].append(log_entry)
+    accumulated_logs.append(log_entry)
+    results['skipped'] += 1
+    progress = int((index + 1) / total_rows * 100)
+    task.update_state(
+        state='PROGRESS',
+        meta=_import_meta(
+            index + 1,
+            total_rows,
+            results['created'],
+            results['skipped'],
+            progress,
+            accumulated_logs,
+            log_entry,
+        ),
+    )
 
 
 @shared_task(bind=True, name='core.cms.adp.import_users')
@@ -54,14 +114,12 @@ def import_users_task(
     welcome_email_subject/body: шаблоны с плейсхолдерами {username}, {full_name}, ...
     """
     logger.info(f'Начало импорта пользователей из файла: {file_name}')
-    
+
     try:
-        # Читаем файл
         from io import BytesIO
         file_io = BytesIO(file_content)
-        
+
         if file_name.lower().endswith('.csv'):
-            # Пробуем разные кодировки для CSV
             try:
                 df = pd.read_csv(file_io, encoding='utf-8')
             except UnicodeDecodeError:
@@ -69,28 +127,24 @@ def import_users_task(
                 df = pd.read_csv(file_io, encoding='cp1251')
         else:
             df = pd.read_excel(file_io, header=0)
-        
-        # Нормализуем названия колонок
+
         df.columns = [str(col).strip().lower() for col in df.columns]
-        
-        # Маппинг возможных названий колонок
+
         column_mapping = {
             'фамилия': ['фамилия', 'last_name', 'lastname', 'surname'],
             'имя': ['имя', 'first_name', 'firstname', 'name'],
             'отчество': ['отчество', 'middle_name', 'middlename', 'patronymic'],
             'логин': ['логин', 'login', 'username', 'user'],
-            'email': ['email', 'e-mail', 'почта', 'электронная почта', 'mail']
+            'email': ['email', 'e-mail', 'почта', 'электронная почта', 'mail'],
         }
-        
-        # Находим реальные названия колонок
+
         found_columns = {}
         for target, variants in column_mapping.items():
             for col in df.columns:
                 if col in variants:
                     found_columns[target] = col
                     break
-        
-        # Проверяем наличие обязательных колонок
+
         required = ['фамилия', 'имя', 'логин']
         missing = [col for col in required if col not in found_columns]
         if missing:
@@ -101,9 +155,9 @@ def import_users_task(
                 'error': error_msg,
                 'created': 0,
                 'skipped': 0,
-                'total': 0
+                'total': 0,
             }
-        
+
         total_rows = len(df)
         results = {
             'created': 0,
@@ -115,107 +169,77 @@ def import_users_task(
             'emails_skipped_no_email': 0,
         }
         created_credentials = []
+        pending_welcome_emails = []
         welcome_subject_template, welcome_body_template = normalize_welcome_templates(
             welcome_email_subject,
             welcome_email_body,
         )
-        
+
+        existing_usernames = _load_existing_usernames()
+        check_email = RegistrationService.is_email_existence_check_enabled()
+        existing_emails = _load_existing_emails() if check_email else set()
+
         logger.info(f'Файл прочитан. Всего строк: {total_rows}')
-        
-        # Накопленные логи для передачи клиенту
+
         accumulated_logs = []
-        
-        # Начальное обновление прогресса
         start_log = {'level': 'info', 'message': f'Начало импорта. Всего строк: {total_rows}'}
         accumulated_logs.append(start_log)
         self.update_state(
             state='PROGRESS',
-            meta=_import_meta(0, total_rows, 0, 0, 0, accumulated_logs, start_log)
+            meta=_import_meta(0, total_rows, 0, 0, 0, accumulated_logs, start_log),
         )
-        
-        # Обрабатываем каждую строку; подавляем LMS UserProfile на время всего импорта.
+
         bridge.emit('core.bulk_user_create', phase='start')
         try:
             for index, row in df.iterrows():
                 log_entry = None
 
                 try:
-                    last_name = str(row.get(found_columns['фамилия'], '')).strip()
-                    first_name = str(row.get(found_columns['имя'], '')).strip()
+                    last_name = _normalize_cell(row.get(found_columns['фамилия'], ''))
+                    first_name = _normalize_cell(row.get(found_columns['имя'], ''))
                     middle_name = ''
                     if 'отчество' in found_columns:
-                        middle_name = str(row.get(found_columns['отчество'], '')).strip()
-                        if pd.isna(row.get(found_columns['отчество'])):
-                            middle_name = ''
+                        middle_name = _normalize_cell(row.get(found_columns['отчество'], ''))
 
-                    username = str(row.get(found_columns['логин'], '')).strip()
+                    username = _normalize_cell(row.get(found_columns['логин'], ''))
                     email = ''
                     if 'email' in found_columns:
-                        email = str(row.get(found_columns['email'], '')).strip()
-                        if pd.isna(row.get(found_columns['email'])):
-                            email = ''
-
-                    if pd.isna(last_name) or last_name == 'nan':
-                        last_name = ''
-                    if pd.isna(first_name) or first_name == 'nan':
-                        first_name = ''
-                    if pd.isna(middle_name) or middle_name == 'nan':
-                        middle_name = ''
-                    if pd.isna(username) or username == 'nan':
-                        username = ''
-                    if pd.isna(email) or email == 'nan':
-                        email = ''
+                        email = _normalize_cell(row.get(found_columns['email'], ''))
 
                     if not last_name or not first_name or not username:
-                        error_msg = f'Строка {index + 2}: пропущена - пустые обязательные поля'
-                        logger.warning(error_msg)
-                        results['errors'].append(error_msg)
-                        log_entry = {'level': 'warn', 'message': error_msg}
-                        results['logs'].append(log_entry)
-                        accumulated_logs.append(log_entry)
-                        results['skipped'] += 1
-                        progress = int((index + 1) / total_rows * 100)
-                        self.update_state(
-                            state='PROGRESS',
-                            meta=_import_meta(
-                                index + 1, total_rows, results['created'], results['skipped'],
-                                progress, accumulated_logs, log_entry,
-                            ),
+                        _append_skip(
+                            index=index,
+                            total_rows=total_rows,
+                            message=f'Строка {index + 2}: пропущена - пустые обязательные поля',
+                            results=results,
+                            accumulated_logs=accumulated_logs,
+                            task=self,
                         )
                         continue
 
-                    if User.objects.filter(username__iexact=username).exists():
-                        skip_msg = f'Строка {index + 2}: логин "{username}" уже занят'
-                        logger.warning(skip_msg)
-                        log_entry = {'level': 'warn', 'message': skip_msg}
-                        results['logs'].append(log_entry)
-                        accumulated_logs.append(log_entry)
-                        results['skipped'] += 1
-                        progress = int((index + 1) / total_rows * 100)
-                        self.update_state(
-                            state='PROGRESS',
-                            meta=_import_meta(
-                                index + 1, total_rows, results['created'], results['skipped'],
-                                progress, accumulated_logs, log_entry,
-                            ),
+                    username_key = username.lower()
+                    if username_key in existing_usernames:
+                        _append_skip(
+                            index=index,
+                            total_rows=total_rows,
+                            message=f'Строка {index + 2}: логин "{username}" уже занят',
+                            results=results,
+                            accumulated_logs=accumulated_logs,
+                            task=self,
                         )
                         continue
 
-                    email_duplicate_error = RegistrationService.validate_email_uniqueness(email)
-                    if email and email_duplicate_error:
-                        skip_msg = f'Строка {index + 2}: {email_duplicate_error}'
-                        logger.warning(skip_msg)
-                        log_entry = {'level': 'warn', 'message': skip_msg}
-                        results['logs'].append(log_entry)
-                        accumulated_logs.append(log_entry)
-                        results['skipped'] += 1
-                        progress = int((index + 1) / total_rows * 100)
-                        self.update_state(
-                            state='PROGRESS',
-                            meta=_import_meta(
-                                index + 1, total_rows, results['created'], results['skipped'],
-                                progress, accumulated_logs, log_entry,
+                    email_key = email.lower() if email else ''
+                    if check_email and email_key and email_key in existing_emails:
+                        _append_skip(
+                            index=index,
+                            total_rows=total_rows,
+                            message=(
+                                f'Строка {index + 2}: Пользователь с таким email уже существует.'
                             ),
+                            results=results,
+                            accumulated_logs=accumulated_logs,
+                            task=self,
                         )
                         continue
 
@@ -239,6 +263,10 @@ def import_users_task(
                             'password': user_password,
                         })
 
+                        existing_usernames.add(username_key)
+                        if email_key:
+                            existing_emails.add(email_key)
+
                         if send_welcome_emails:
                             if email:
                                 rendered_subject, rendered_body = render_welcome_email(
@@ -247,40 +275,26 @@ def import_users_task(
                                     body_template=welcome_body_template,
                                     password=user_password,
                                 )
-                                email_sent, email_error = send_import_welcome_email(
-                                    email,
-                                    rendered_subject,
-                                    rendered_body,
-                                )
-                                if email_sent:
-                                    results['emails_sent'] += 1
-                                else:
-                                    results['emails_failed'] += 1
-                                    warn_msg = (
-                                        f'Строка {index + 2}: пользователь создан, '
-                                        f'но письмо не отправлено'
-                                    )
-                                    log_entry = {'level': 'warn', 'message': warn_msg}
-                                    results['logs'].append(log_entry)
-                                    accumulated_logs.append(log_entry)
-                                    if email_error:
-                                        logger.warning(
-                                            'Не удалось отправить приветственное письмо для %s: %s',
-                                            username,
-                                            email_error,
-                                        )
+                                pending_welcome_emails.append({
+                                    'row': index + 2,
+                                    'username': username,
+                                    'email': email,
+                                    'subject': rendered_subject,
+                                    'body': rendered_body,
+                                })
                             else:
                                 results['emails_skipped_no_email'] += 1
 
                         del user_password
 
                     results['created'] += 1
-                    if not log_entry or log_entry.get('level') != 'warn':
-                        success_msg = f'Строка {index + 2}: создан "{last_name} {first_name}" ({username})'
-                        logger.info('Создан пользователь ID=%s', user.id)
-                        log_entry = {'level': 'success', 'message': success_msg}
-                        results['logs'].append(log_entry)
-                        accumulated_logs.append(log_entry)
+                    success_msg = (
+                        f'Строка {index + 2}: создан "{last_name} {first_name}" ({username})'
+                    )
+                    logger.info('Создан пользователь ID=%s', user.id)
+                    log_entry = {'level': 'success', 'message': success_msg}
+                    results['logs'].append(log_entry)
+                    accumulated_logs.append(log_entry)
 
                 except Exception as e:
                     error_msg = f'Строка {index + 2}: ошибка - {str(e)}'
@@ -290,31 +304,73 @@ def import_users_task(
                     results['logs'].append(log_entry)
                     accumulated_logs.append(log_entry)
 
-                progress = int((index + 1) / total_rows * 100)
-                self.update_state(
-                    state='PROGRESS',
-                    meta=_import_meta(
-                        index + 1,
-                        total_rows,
-                        results['created'],
-                        results['skipped'],
-                        progress,
-                        accumulated_logs,
-                        log_entry,
-                    ),
-                )
+                if _should_update_progress(index, total_rows):
+                    progress = int((index + 1) / total_rows * 100)
+                    self.update_state(
+                        state='PROGRESS',
+                        meta=_import_meta(
+                            index + 1,
+                            total_rows,
+                            results['created'],
+                            results['skipped'],
+                            progress,
+                            accumulated_logs,
+                            log_entry,
+                        ),
+                    )
         finally:
             bridge.emit('core.bulk_user_create', phase='end')
-        
-        # Финальные результаты
-        logger.info(f'Импорт завершен. Создано: {results["created"]}, пропущено: {results["skipped"]}')
-        
-        # Финальное обновление прогресса до 100%
-        final_log = {'level': 'success', 'message': f'Импорт завершён! Создано: {results["created"]}, пропущено: {results["skipped"]}'}
+
+        if send_welcome_emails and pending_welcome_emails:
+            for email_payload in pending_welcome_emails:
+                email_sent, email_error = send_import_welcome_email(
+                    email_payload['email'],
+                    email_payload['subject'],
+                    email_payload['body'],
+                )
+                if email_sent:
+                    results['emails_sent'] += 1
+                else:
+                    results['emails_failed'] += 1
+                    warn_msg = (
+                        f'Строка {email_payload["row"]}: пользователь создан, '
+                        f'но письмо не отправлено'
+                    )
+                    log_entry = {'level': 'warn', 'message': warn_msg}
+                    results['logs'].append(log_entry)
+                    accumulated_logs.append(log_entry)
+                    if email_error:
+                        logger.warning(
+                            'Не удалось отправить приветственное письмо для %s: %s',
+                            email_payload['username'],
+                            email_error,
+                        )
+
+        logger.info(
+            'Импорт завершен. Создано: %s, пропущено: %s',
+            results['created'],
+            results['skipped'],
+        )
+
+        final_log = {
+            'level': 'success',
+            'message': (
+                f'Импорт завершён! Создано: {results["created"]}, '
+                f'пропущено: {results["skipped"]}'
+            ),
+        }
         accumulated_logs.append(final_log)
         self.update_state(
             state='PROGRESS',
-            meta=_import_meta(total_rows, total_rows, results['created'], results['skipped'], 100, accumulated_logs, final_log)
+            meta=_import_meta(
+                total_rows,
+                total_rows,
+                results['created'],
+                results['skipped'],
+                100,
+                accumulated_logs,
+                final_log,
+            ),
         )
 
         passwords_available = bool(created_credentials)
@@ -333,7 +389,7 @@ def import_users_task(
             'emails_failed': results['emails_failed'],
             'emails_skipped_no_email': results['emails_skipped_no_email'],
         }
-        
+
     except Exception as e:
         error_msg = f'Критическая ошибка при импорте: {str(e)}'
         logger.error(error_msg, exc_info=True)
@@ -344,5 +400,5 @@ def import_users_task(
             'skipped': 0,
             'total': 0,
             'errors': [error_msg],
-            'logs': [{'level': 'error', 'message': error_msg}]
+            'logs': [{'level': 'error', 'message': error_msg}],
         }

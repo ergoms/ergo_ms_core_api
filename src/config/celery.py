@@ -185,12 +185,22 @@ if IS_CELERY_PROCESS:
         MODULE_MANAGER.setup_queue_concurrency()
         queue_limits = MODULE_MANAGER.get_all_queue_limits()
         if queue_limits:
+            from src.core.utils.celery.concurrency import (
+                queue_concurrency_manager,
+                setup_concurrency_limited_tasks,
+            )
+
+            cache_backend = getattr(settings, 'CACHE_BACKEND', 'file')
+            if cache_backend == 'redis':
+                queue_concurrency_manager.configure(use_distributed=True)
+                logger.info(
+                    "Celery: распределённый лимит параллелизма (Redis cache)"
+                )
+
             logger.info(
                 "Celery: настроены лимиты параллелизма: %s",
                 ", ".join(f"{q}={l}" for q, l in queue_limits.items()),
             )
-            from src.core.utils.celery.concurrency import setup_concurrency_limited_tasks
-
             setup_concurrency_limited_tasks(celery_app)
 
     # Очередь по умолчанию

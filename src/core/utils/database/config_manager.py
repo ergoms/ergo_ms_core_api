@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict, Optional, List, Tuple
 from urllib.parse import quote_plus
 
+from src.config.env import env
+
 logger = logging.getLogger('utils.database.config')
 
 _YAML_CACHE: Dict[Path, tuple] = {}
@@ -444,6 +446,10 @@ class DjangoDatabaseConfigLoader(BaseDatabaseConfigLoader):
                     'driver': 'ODBC Driver 17 for SQL Server',
                     'unicode_results': True,
                 }
+
+            conn_max_age = env.int('API_DATABASE_CONN_MAX_AGE', default=60)
+            if conn_max_age > 0:
+                django_config['CONN_MAX_AGE'] = conn_max_age
         
         return django_config
     

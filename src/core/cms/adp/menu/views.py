@@ -14,6 +14,7 @@ from src.core.cms.adp.services.permissions import PermissionService
 from src.core.audit.shortcuts import audit_log
 from .access import user_can_see_menu_item
 from .models import MenuItem, MenuSeparator, MenuAccessLog
+from .menu_cache import get_user_menu_payload, invalidate_user_menu_cache
 from .serializers import (
     MenuItemSerializer, MenuItemTreeSerializer, MenuSeparatorSerializer,
     MenuItemCreateSerializer, MenuItemUpdateSerializer, 
@@ -59,39 +60,7 @@ class UserMenuView(BaseMenuAPIView):
         tags=['Menu']
     )
     def get(self, request):
-        user = request.user
-        
-        # Получаем корневые элементы меню (без родителя)
-        root_items = MenuItem.objects.filter(
-            parent__isnull=True, 
-            is_active=True
-        ).order_by('order')
-        
-        filtered_items = self._filter_menu_items(root_items, user)
-
-        items_data = MenuItemTreeSerializer(
-            filtered_items,
-            many=True,
-            context={'user': user},
-        ).data
-        
-        # Получаем активные разделители
-        separators = MenuSeparator.objects.filter(is_active=True).order_by('before_order')
-        separators_data = MenuSeparatorSerializer(separators, many=True).data
-        
-        return Response({
-            'menu_items': items_data,
-            'separators': separators_data
-        })
-    
-    def _filter_menu_items(self, items, user):
-        """Фильтрует элементы меню по правам доступа"""
-        filtered_ids = []
-        for item in items:
-            if user_can_see_menu_item(item, user):
-                filtered_ids.append(item.id)
-
-        return items.filter(id__in=filtered_ids)
+        return Response(get_user_menu_payload(request.user))
 
 
 class MenuItemListView(BaseMenuAPIView):
@@ -173,6 +142,7 @@ class MenuItemListView(BaseMenuAPIView):
         serializer = MenuItemCreateSerializer(data=request.data)
         if serializer.is_valid():
             item = serializer.save()
+            invalidate_user_menu_cache()
             audit_log('menu.item_created', request=request,
                    entity={'type': 'menu_item', 'label': getattr(item, 'title', '') or str(item)})
             return Response(
@@ -246,6 +216,7 @@ class MenuItemDetailView(BaseMenuAPIView):
         serializer = MenuItemUpdateSerializer(item, data=request.data, partial=True)
         if serializer.is_valid():
             item = serializer.save()
+            invalidate_user_menu_cache()
             audit_log('menu.item_updated', request=request,
                    entity={'type': 'menu_item', 'label': getattr(item, 'title', '') or str(item)})
             return Response(MenuItemSerializer(item).data)
@@ -279,6 +250,7 @@ class MenuItemDetailView(BaseMenuAPIView):
         
         item_label = getattr(item, 'title', '') or str(item)
         item.delete()
+        invalidate_user_menu_cache()
         audit_log('menu.item_deleted', request=request,
                entity={'type': 'menu_item', 'label': item_label})
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -337,6 +309,7 @@ class MenuItemReorderView(BaseMenuAPIView):
                 except MenuItem.DoesNotExist:
                     continue
             
+            invalidate_user_menu_cache()
             return Response({'message': 'Порядок обновлён'})
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -388,6 +361,7 @@ class MenuSeparatorListView(BaseMenuAPIView):
         serializer = MenuSeparatorSerializer(data=request.data)
         if serializer.is_valid():
             separator = serializer.save()
+            invalidate_user_menu_cache()
             audit_log('menu.item_created', request=request,
                    entity={'type': 'menu_separator', 'label': str(separator)})
             return Response(
@@ -461,6 +435,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
         serializer = MenuSeparatorSerializer(separator, data=request.data, partial=True)
         if serializer.is_valid():
             separator = serializer.save()
+            invalidate_user_menu_cache()
             return Response(MenuSeparatorSerializer(separator).data)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -492,6 +467,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
         
         separator_label = str(separator)
         separator.delete()
+        invalidate_user_menu_cache()
         audit_log('menu.item_deleted', request=request,
                entity={'type': 'menu_separator', 'label': separator_label})
         return Response(status=status.HTTP_204_NO_CONTENT)

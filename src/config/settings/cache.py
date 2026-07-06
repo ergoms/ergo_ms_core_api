@@ -1,0 +1,52 @@
+"""
+Настройки Django CACHES из переменных окружения (.env).
+
+Режимы API_CACHE_BACKEND:
+- file   — файловый кэш в virtual_env/cache/django (по умолчанию)
+- locmem — in-process (один воркер, разработка)
+- redis  — Redis (общий кэш для нескольких воркеров)
+- dummy  — отключён (тесты, отладка)
+"""
+
+from src.config.env import env
+from src.config.settings.base import VIRTUAL_ENV_DIR
+
+CACHE_BACKEND = env.str('API_CACHE_BACKEND', default='file').strip().lower()
+CACHE_DEFAULT_TIMEOUT = env.int('API_CACHE_DEFAULT_TIMEOUT', default=300)
+
+_django_cache_dir = VIRTUAL_ENV_DIR / 'cache' / 'django'
+
+if CACHE_BACKEND == 'redis':
+    _redis_url = env.str('API_CACHE_REDIS_URL', default='redis://127.0.0.1:6379/1')
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': _redis_url,
+            'TIMEOUT': CACHE_DEFAULT_TIMEOUT,
+        },
+    }
+elif CACHE_BACKEND == 'locmem':
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'ergo-default-cache',
+            'TIMEOUT': CACHE_DEFAULT_TIMEOUT,
+        },
+    }
+elif CACHE_BACKEND == 'dummy':
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+        },
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+            'LOCATION': str(_django_cache_dir),
+            'TIMEOUT': CACHE_DEFAULT_TIMEOUT,
+        },
+    }
+
+# TTL сериализованного snapshot прав в Django cache (секунды); 0 — отключить
+PERMISSIONS_SNAPSHOT_CACHE_TTL = env.int('API_PERMISSIONS_SNAPSHOT_CACHE_TTL', default=60)

@@ -4,6 +4,7 @@
 import re
 from typing import List, Dict, Optional
 from django.contrib.auth.models import User
+from src.core.cms.adp.middleware.permission_request_cache import get_request_permission_cache
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
 from src.core.integrations import bridge
 
@@ -30,21 +31,29 @@ class PermissionService:
     
     @staticmethod
     def get_user_role(user: User) -> Optional[UserRole]:
-        """Получить активную роль пользователя"""
-        user_role = UserRole.objects.select_related('role').filter(
-            user=user,
-            is_active=True
-        ).first()
-        
+        """Получить активную роль пользователя (без побочных save на read-path)."""
+        if not user or not getattr(user, 'pk', None):
+            return None
+
+        cache = get_request_permission_cache()
+        cache_key = f'user_role:{user.pk}'
+        if cache_key in cache:
+            return cache[cache_key]
+
+        user_role = (
+            UserRole.objects
+            .select_related('role')
+            .prefetch_related('role_groups')
+            .filter(user=user, is_active=True)
+            .first()
+        )
+
         if user_role:
-            PermissionService._sync_django_admin_flags(
-                user,
-                PermissionService._is_admin_role(user_role.role),
-            )
+            cache[cache_key] = user_role
             return user_role
-        
-        # Если у пользователя нет активной роли - назначаем роль по умолчанию
-        return PermissionService.assign_default_role(user)
+
+        cache[cache_key] = None
+        return None
 
     @staticmethod
     def _get_or_create_role_safe(name: str, description: str, is_system: bool) -> Role:
@@ -213,14 +222,23 @@ class PermissionService:
         """
         if not user or not getattr(user, 'is_authenticated', False):
             return False
+
+        cache = get_request_permission_cache()
+        cache_key = f'is_global_admin:{user.pk}'
+        if cache_key in cache:
+            return cache[cache_key]
+
         if getattr(user, 'is_superuser', False):
+            cache[cache_key] = True
             return True
         user_role = PermissionService._get_active_user_role(user)
-        return bool(
+        result = bool(
             user_role
             and user_role.is_active
             and PermissionService._is_admin_role(user_role.role)
         )
+        cache[cache_key] = result
+        return result
 
     @staticmethod
     def is_admin(user: User) -> bool:
@@ -256,6 +274,65 @@ class PermissionService:
         return None
     
     @staticmethod
+    def _get_url_policies_for_user(user: User, user_role: UserRole) -> list:
+        cache = get_request_permission_cache()
+        cache_key = f'url_policies:{user.pk}'
+        if cache_key in cache:
+            return cache[cache_key]
+
+        policies = list(
+            Policy.objects.filter(
+                role=user_role.role,
+                policy_type='url',
+                is_active=True,
+            )
+        )
+        group_ids = [
+            group.id
+            for group in user_role.role_groups.all()
+            if group.is_active
+        ]
+        if group_ids:
+            policies.extend(
+                Policy.objects.filter(
+                    role_group_id__in=group_ids,
+                    policy_type='url',
+                    is_active=True,
+                )
+            )
+        cache[cache_key] = policies
+        return policies
+
+    @staticmethod
+    def _get_granted_module_permission_keys(user: User) -> set[tuple[str, str]]:
+        cache = get_request_permission_cache()
+        cache_key = f'module_perm_keys:{user.pk}'
+        if cache_key in cache:
+            return cache[cache_key]
+
+        user_role = PermissionService.get_user_role(user)
+        if not user_role:
+            cache[cache_key] = set()
+            return cache[cache_key]
+
+        group_ids = [
+            group.id
+            for group in user_role.role_groups.all()
+            if group.is_active
+        ]
+        if not group_ids:
+            cache[cache_key] = set()
+            return cache[cache_key]
+
+        rows = ModulePermission.objects.filter(
+            role_group_id__in=group_ids,
+            is_granted=True,
+        ).values_list('module_name', 'permission_key')
+        result = {(module_name, permission_key) for module_name, permission_key in rows}
+        cache[cache_key] = result
+        return result
+
+    @staticmethod
     def check_url_access(user: User, url_path: str) -> bool:
         """
         Проверить доступ пользователя к URL.
@@ -280,31 +357,10 @@ class PermissionService:
         # Получаем роль пользователя (автоматически назначается "Пользователь" если нет)
         user_role = PermissionService.get_user_role(user)
         if not user_role:
-            # Этого не должно происходить, т.к. get_user_role назначает роль по умолчанию
             return False
-        
-        # Собираем все политики для роли и групп пользователя
-        policies = []
-        
-        # Политики базовой роли (например, "Пользователь")
-        role_policies = Policy.objects.filter(
-            role=user_role.role,
-            policy_type='url',
-            is_active=True
-        ).order_by('-priority')
-        policies.extend(role_policies)
-        
-        # Политики ролевых групп (переопределяют базовые права)
-        role_groups = user_role.role_groups.filter(is_active=True)
-        for group in role_groups:
-            group_policies = Policy.objects.filter(
-                role_group=group,
-                policy_type='url',
-                is_active=True
-            ).order_by('-priority')
-            policies.extend(group_policies)
-        
-        # Проверяем политики по приоритету (высший приоритет первый)
+
+        policies = PermissionService._get_url_policies_for_user(user, user_role)
+
         for policy in sorted(policies, key=lambda p: p.priority, reverse=True):
             if PermissionService._match_url_pattern(url_path, policy.resource_path, policy.is_pattern):
                 # Найдено совпадение — возвращаем результат политики
@@ -466,28 +522,13 @@ class PermissionService:
         user_role = PermissionService.get_user_role(user)
         if not user_role:
             return False
-        
-        # Проверяем права в глобальных ролевых группах пользователя
-        role_groups = user_role.role_groups.filter(is_active=True)
-        
-        # Если есть ролевые группы — проверяем явно настроенные права
-        if role_groups.exists():
-            for group in role_groups:
-                permission = ModulePermission.objects.filter(
-                    role_group=group,
-                    module_name=module_name,
-                    permission_key=permission_key,
-                    is_granted=True
-                ).first()
-                
-                if permission:
-                    return True
-            
-            # Если в группах нет явного разрешения — запрещаем
-            return False
-        
-        # Если пользователь с базовой ролью без ролевых групп:
-        # Разрешаем базовый просмотр (права с суффиксом _view)
+
+        role_groups = [group for group in user_role.role_groups.all() if group.is_active]
+
+        if role_groups:
+            granted = PermissionService._get_granted_module_permission_keys(user)
+            return (module_name, permission_key) in granted
+
         if user_role.role.name == PermissionService.DEFAULT_ROLE_NAME:
             # Базовые права просмотра для роли "Пользователь"
             if permission_key.endswith('_view'):
@@ -544,5 +585,11 @@ class PermissionService:
             user,
             PermissionService._is_admin_role(role),
         )
+
+        from src.core.cms.adp.services.permissions_snapshot_cache import (
+            invalidate_user_permissions_snapshot,
+        )
+
+        invalidate_user_permissions_snapshot(user.pk)
 
         return user_role

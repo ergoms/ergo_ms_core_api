@@ -12,7 +12,7 @@ from django.contrib.auth.models import User
 from src.core.utils.base.base_views import BaseAPIViewAuthMixin
 from src.core.cms.models import CMSPage
 from src.core.settings.models import UserAvatar
-from src.core.cms.scripts import discover_client_routes_index, normalize_cms_path, sync_cms_pages
+from src.core.cms.scripts import normalize_cms_path, sync_cms_pages
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +140,9 @@ class GetCMSPages(BaseAPIViewAuthMixin):
         if not _has_admin_panel_access(request.user):
             return Response(status=status.HTTP_403_FORBIDDEN)
 
-        path_to_module = discover_client_routes_index()
+        from src.core.cms.client_routes_cache import get_client_routes_index
+
+        path_to_module = get_client_routes_index()
         pages_list = []
         for page in CMSPage.objects.all():
             raw_path = page.path.replace('\\\\', '\\')

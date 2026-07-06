@@ -4,8 +4,8 @@ from . import catalog
 from .models import AuditEvent
 
 
-class AuditEventSerializer(serializers.ModelSerializer):
-    """Запись журнала с обогащением из каталога действий."""
+class _AuditCatalogMixin(serializers.Serializer):
+    """Обогащение записи данными каталога действий."""
 
     actor_username = serializers.CharField(source='actor.username', default=None, read_only=True)
     actor_ref = serializers.SerializerMethodField()
@@ -16,44 +16,8 @@ class AuditEventSerializer(serializers.ModelSerializer):
     module_label = serializers.SerializerMethodField()
     category_label = serializers.SerializerMethodField()
     icon = serializers.SerializerMethodField()
-    ip_location = serializers.SerializerMethodField()
-
-    class Meta:
-        model = AuditEvent
-        ref_name = 'CoreAuditEvent'
-        fields = (
-            'id',
-            'created_at',
-            'actor',
-            'actor_username',
-            'actor_ref',
-            'actor_first_name',
-            'actor_last_name',
-            'actor_middle_name',
-            'actor_label',
-            'source_module',
-            'module_label',
-            'action',
-            'action_label',
-            'category_label',
-            'icon',
-            'severity',
-            'entity_type',
-            'entity_ref',
-            'entity_label',
-            'changes',
-            'meta',
-            'organization_id',
-            'department_id',
-            'ip_address',
-            'ip_location',
-            'user_agent',
-            'request_id',
-        )
-        read_only_fields = fields
 
     def _catalog(self):
-        # Кешируем каталог на инстанс сериализатора (один запрос — один каталог).
         cache = getattr(self, '_catalog_cache', None)
         if cache is None:
             cache = catalog.get_catalog()
@@ -104,7 +68,62 @@ class AuditEventSerializer(serializers.ModelSerializer):
         spec = self._spec(obj)
         return spec['icon'] if spec else ''
 
+
+class AuditEventListSerializer(_AuditCatalogMixin, serializers.ModelSerializer):
+    """Облегчённая запись для таблицы журнала (без changes/meta/user_agent)."""
+
+    class Meta:
+        model = AuditEvent
+        ref_name = 'CoreAuditEventList'
+        fields = (
+            'id',
+            'created_at',
+            'actor',
+            'actor_username',
+            'actor_ref',
+            'actor_first_name',
+            'actor_last_name',
+            'actor_middle_name',
+            'actor_label',
+            'source_module',
+            'module_label',
+            'action',
+            'action_label',
+            'category_label',
+            'icon',
+            'severity',
+            'entity_type',
+            'entity_ref',
+            'entity_label',
+            'organization_id',
+            'department_id',
+            'ip_address',
+        )
+        read_only_fields = fields
+
+
+class AuditEventDetailSerializer(_AuditCatalogMixin, serializers.ModelSerializer):
+    """Полная запись для модалки деталей."""
+
+    ip_location = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AuditEvent
+        ref_name = 'CoreAuditEvent'
+        fields = AuditEventListSerializer.Meta.fields + (
+            'changes',
+            'meta',
+            'user_agent',
+            'request_id',
+            'ip_location',
+        )
+        read_only_fields = fields
+
     def get_ip_location(self, obj):
         from src.core.utils.geoip import format_ip_location
 
         return format_ip_location(obj.ip_address)
+
+
+# Обратная совместимость импортов
+AuditEventSerializer = AuditEventDetailSerializer

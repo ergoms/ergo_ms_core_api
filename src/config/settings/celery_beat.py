@@ -79,6 +79,17 @@ beat_module_manager = CeleryBeatModuleManager()
 # Собираем все расписания из модулей
 CELERY_BEAT_SCHEDULE = beat_module_manager.get_all_beat_schedules()
 
+# Задачи ядра (журнал действий)
+from celery.schedules import crontab
+from src.config.env import env as _env
+
+_audit_retention_days = _env.int('AUDIT_RETENTION_DAYS', default=0)
+if _audit_retention_days > 0:
+    CELERY_BEAT_SCHEDULE['audit-purge-old-events'] = {
+        'task': 'core.audit.purge_old_events',
+        'schedule': crontab(hour=3, minute=30),
+    }
+
 # Дополнительные настройки Beat из модулей
 CELERY_BEAT_ADDITIONAL_CONFIG = beat_module_manager.get_additional_beat_configs()
 

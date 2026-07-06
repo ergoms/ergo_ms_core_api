@@ -35,3 +35,6 @@ FRONTEND_BASE_URL = (
 
 # Публичный хост nginx (для подсказок и интеграций).
 NGINX_PUBLIC_HOST = nginx_public_host() if nginx_enabled() else ''
+
+# Сжатие JSON-ответов (GZipMiddleware). При nginx+brotli можно отключить.
+API_GZIP_ENABLED = env.bool('API_GZIP_ENABLED', default=True)

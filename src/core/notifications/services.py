@@ -10,6 +10,11 @@ from src.core.integrations import bridge
 from .channels_ import get_channels
 from .models import Notification
 from .preferences import PreferenceResolver
+from .unread_cache import (
+    get_cached_unread_count,
+    invalidate_unread_count_cache,
+    set_cached_unread_count,
+)
 
 logger = logging.getLogger('core.notifications')
 
@@ -114,6 +119,9 @@ class NotificationService:
                 logger.exception('Канал %s упал при доставке уведомления #%s',
                                  getattr(channel, 'name', channel), notification.pk)
 
+        if notification.in_app_visible:
+            invalidate_unread_count_cache(recipient_id)
+
         return notification
 
     @staticmethod
@@ -126,22 +134,36 @@ class NotificationService:
             notif.is_read = True
             notif.read_at = timezone.now()
             notif.save(update_fields=['is_read', 'read_at'])
+            invalidate_unread_count_cache(user.pk)
         return True
 
     @staticmethod
     def mark_all_read(user) -> int:
-        return Notification.objects.filter(
+        updated = Notification.objects.filter(
             recipient=user, is_read=False, in_app_visible=True,
         ).update(
             is_read=True,
             read_at=timezone.now(),
         )
+        if updated:
+            invalidate_unread_count_cache(user.pk)
+        return updated
 
     @staticmethod
     def unread_count(user) -> int:
-        return Notification.objects.filter(
+        user_id = getattr(user, 'pk', None)
+        if user_id is None:
+            return 0
+
+        cached = get_cached_unread_count(user_id)
+        if cached is not None:
+            return cached
+
+        count = Notification.objects.filter(
             recipient=user, is_read=False, in_app_visible=True,
         ).count()
+        set_cached_unread_count(user_id, count)
+        return count
 
     @staticmethod
     @transaction.atomic
@@ -220,6 +242,7 @@ class NotificationService:
             update_fields.append('level')
 
         notification.save(update_fields=update_fields)
+        invalidate_unread_count_cache(user.pk)
 
         return {
             'success': True,

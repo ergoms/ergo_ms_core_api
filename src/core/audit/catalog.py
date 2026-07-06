@@ -1,40 +1,22 @@
-"""Каталог действий аудита.
-
-Модули (и ядро) описывают человекочитаемые действия через multi-provider
-группу `audit.action_definitions`:
-
-    bridge.provide_many(
-        'audit.action_definitions',
-        key='<module>',
-        obj={
-            'module': '<module>',
-            'module_label': 'Человекочитаемое имя',
-            'actions': [
-                {
-                    'action': 'course.updated',
-                    'label': 'Курс изменён',
-                    'icon': 'BookOpen',            # Lucide, PascalCase (опц.)
-                    'category': 'courses',          # опц.
-                    'category_label': 'Курсы',      # опц.
-                    'severity': 'info',             # info|security|critical (опц.)
-                },
-            ],
-        },
-    )
-
-Каталог опционален: действие вне каталога отображается с generic-подписью.
-Он нужен только чтобы лента выглядела красиво (label, иконка, важность).
-"""
+"""Кэш каталога аудита и списка инициаторов."""
 
 from __future__ import annotations
 
 import logging
+
+from django.core.cache import cache
+from django.db.models import Max
 
 from src.core.integrations import bridge
 
 logger = logging.getLogger('core.audit')
 
 ACTION_DEFINITIONS_GROUP = 'audit.action_definitions'
+
+CATALOG_CACHE_KEY = 'audit:catalog:v1'
+ACTORS_CACHE_KEY = 'audit:actors:v1'
+CATALOG_CACHE_TTL = 600
+ACTORS_CACHE_TTL = 600
 
 
 def _normalize_action(raw: dict) -> dict | None:
@@ -51,8 +33,7 @@ def _normalize_action(raw: dict) -> dict | None:
     }
 
 
-def get_catalog() -> dict:
-    """{module: {'module_label': str, 'actions': {action: spec}}}."""
+def _build_catalog() -> dict:
     catalog: dict = {}
     for key, section in bridge.all(ACTION_DEFINITIONS_GROUP).items():
         if not isinstance(section, dict):
@@ -71,6 +52,21 @@ def get_catalog() -> dict:
             'module_label': section.get('module_label') or module,
             'actions': actions,
         }
+    return catalog
+
+
+def invalidate_audit_catalog_cache() -> None:
+    cache.delete(CATALOG_CACHE_KEY)
+    cache.delete(ACTORS_CACHE_KEY)
+
+
+def get_catalog() -> dict:
+    """{module: {'module_label': str, 'actions': {action: spec}}}."""
+    cached = cache.get(CATALOG_CACHE_KEY)
+    if cached is not None:
+        return cached
+    catalog = _build_catalog()
+    cache.set(CATALOG_CACHE_KEY, catalog, CATALOG_CACHE_TTL)
     return catalog
 
 
@@ -102,16 +98,21 @@ def get_modules() -> list[dict]:
     ]
 
 
-def get_distinct_actors(limit: int = 500) -> list[dict]:
-    """Уникальные инициаторы из журнала для фильтра UI.
+def _build_distinct_actors(limit: int = 500) -> list[dict]:
+    from .models import AuditActor, AuditEvent
 
-    Привязанные пользователи — по public_id; «осиротевшие» записи — по actor_label.
-    """
+    dimension = list(
+        AuditActor.objects
+        .order_by('label')
+        .values('filter_value', 'label')[:limit]
+    )
+    if dimension:
+        return [
+            {'value': row['filter_value'], 'label': row['label']}
+            for row in dimension
+        ]
+
     from urllib.parse import quote
-
-    from django.db.models import Max
-
-    from .models import AuditEvent
 
     linked = (
         AuditEvent.objects
@@ -142,4 +143,15 @@ def get_distinct_actors(limit: int = 500) -> list[dict]:
         result.append({'value': f'label:{quote(label, safe="")}', 'label': label})
 
     result.sort(key=lambda item: item['label'].casefold())
+    return result
+
+
+def get_distinct_actors(limit: int = 500) -> list[dict]:
+    """Уникальные инициаторы из журнала для фильтра UI."""
+    cache_key = f'{ACTORS_CACHE_KEY}:{limit}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    result = _build_distinct_actors(limit=limit)
+    cache.set(cache_key, result, ACTORS_CACHE_TTL)
     return result

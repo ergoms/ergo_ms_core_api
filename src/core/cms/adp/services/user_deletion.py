@@ -57,7 +57,10 @@ def delete_admin_user(user: User) -> None:
 
 
 def revoke_user_auth(user: User) -> None:
+    from src.core.cms.adp.services.session_devices import invalidate_device_session_cache
+
     UserDevice.objects.filter(user=user).update(is_active=False)
+    invalidate_device_session_cache(user.id)
     presence_service.reset_user(user.id)
 
     try:

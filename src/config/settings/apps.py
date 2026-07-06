@@ -6,6 +6,7 @@
 """
 
 from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
+from src.config.env import env
 
 ALL_MODULES = get_discovered_apps(use_cache=True)
 
@@ -42,8 +43,13 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'src.core.utils.middleware.organization_middleware.OrganizationMiddleware',
+    'src.core.cms.adp.middleware.permission_request_cache.PermissionRequestCacheMiddleware',
     'src.core.audit.context.AuditContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware'
 ]
+
+if env.bool('API_GZIP_ENABLED', default=True):
+    _security_index = MIDDLEWARE.index('django.middleware.security.SecurityMiddleware')
+    MIDDLEWARE.insert(_security_index + 1, 'django.middleware.gzip.GZipMiddleware')
