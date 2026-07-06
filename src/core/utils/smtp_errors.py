@@ -1,5 +1,33 @@
 """Форматирование ошибок SMTP для пользовательских сообщений."""
 
+USER_EMAIL_DELIVERY_FAILED = (
+    'Не удалось отправить письмо. Обратитесь к администратору системы.'
+)
+
+_EMAIL_INTERNAL_MARKERS = (
+    'EMAIL_ENABLED',
+    'EMAIL_HOST',
+    'EMAIL_PORT',
+    'EMAIL_USE_TLS',
+    'EMAIL_USE_SSL',
+    'EMAIL_HOST_USER',
+    'EMAIL_HOST_PASSWORD',
+    'DEFAULT_FROM_EMAIL',
+    'EmailSettings',
+    '.env',
+    'smtp_host',
+    'smtp_port',
+)
+
+
+def sanitize_email_delivery_message(message: str | None) -> str | None:
+    """Убирает из текста имена env-переменных и прочие внутренние детали конфигурации."""
+    if not message:
+        return None
+    if any(marker in message for marker in _EMAIL_INTERNAL_MARKERS):
+        return USER_EMAIL_DELIVERY_FAILED
+    return message
+
 
 def _is_mailbox_unavailable(error_lower: str) -> bool:
     mailbox_markers = ('invalid mailbox', 'does not exist', 'mailbox not found')
@@ -20,19 +48,10 @@ def format_smtp_error(exc: Exception) -> str:
     error_lower = error_str.lower()
 
     if 'SMTPAuthenticationError' in error_type or '535' in error_str:
-        return (
-            'Ошибка аутентификации SMTP. Проверьте:\n'
-            '1. Правильность EMAIL_HOST_USER и EMAIL_HOST_PASSWORD в .env\n'
-            '2. Для Gmail/Mail.ru может потребоваться пароль приложения вместо обычного пароля\n'
-            '3. Убедитесь, что EMAIL_USE_TLS / EMAIL_USE_SSL настроены правильно'
-        )
+        return USER_EMAIL_DELIVERY_FAILED
 
     if 'SMTPConnectError' in error_type or 'connection refused' in error_lower:
-        return (
-            'Не удалось подключиться к SMTP серверу. Проверьте:\n'
-            '1. Правильность EMAIL_HOST и EMAIL_PORT в .env\n'
-            '2. Доступность SMTP сервера'
-        )
+        return 'Не удалось связаться с почтовым сервером. Попробуйте позже.'
 
     if 'timeout' in error_lower or 'timed out' in error_lower:
         return 'Не удалось связаться с почтовым сервером. Попробуйте позже.'
@@ -57,4 +76,4 @@ def format_smtp_error(exc: Exception) -> str:
     if 'SMTPException' in error_type:
         return 'Не удалось связаться с почтовым сервером. Попробуйте позже.'
 
-    return 'Не удалось отправить email. Обратитесь к администратору системы.'
+    return USER_EMAIL_DELIVERY_FAILED

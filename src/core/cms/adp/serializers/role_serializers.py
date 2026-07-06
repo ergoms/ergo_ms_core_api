@@ -6,6 +6,7 @@ from rest_framework.serializers import (
     IntegerField,
     ListField,
     ModelSerializer,
+    PrimaryKeyRelatedField,
     Serializer,
     SerializerMethodField,
     ValidationError,
@@ -43,6 +44,7 @@ class RoleSerializer(ModelSerializer):
 class RoleGroupSerializer(ModelSerializer):
     """Сериализатор для ролевых групп"""
     parent_role_name = CharField(source='parent_role.name', read_only=True)
+    parent_role = PrimaryKeyRelatedField(queryset=Role.objects.all())
 
     class Meta:
         model = RoleGroup
@@ -51,6 +53,15 @@ class RoleGroupSerializer(ModelSerializer):
             'description', 'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate_parent_role(self, value):
+        if value.is_system:
+            raise ValidationError(
+                'Ролевую группу нельзя привязать к системной роли «Администратор». '
+                'У администраторов полный доступ без ролевых групп. '
+                'Выберите роль «Пользователь» или другую пользовательскую роль.'
+            )
+        return value
 
 
 class RoleListMinimalSerializer(ModelSerializer):

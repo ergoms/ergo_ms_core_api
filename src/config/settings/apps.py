@@ -29,11 +29,7 @@ INSTALLED_APPS = ALL_MODULES + [
     'django_celery_beat',
 ]
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
-    }
-}
+# CHANNEL_LAYERS — в src.config.settings.channel_layers
 
 # Определяем список middleware
 MIDDLEWARE = [

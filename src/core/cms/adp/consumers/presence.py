@@ -6,6 +6,10 @@ from channels.db import database_sync_to_async
 from src.core.cms.adp.consumers.base import JwtMessageAuthConsumer, WsAuthRejectedError
 from src.core.cms.adp.services import presence as presence_service
 from src.core.cms.adp.services.permissions import PermissionService
+from src.core.cms.adp.services.presence_realtime import publish_presence_snapshot
+from src.core.realtime.consumer_mixin import RealtimeEnvelopeConsumerMixin
+from src.core.realtime.envelope import PRESENCE_PING_EVENT, parse_envelope
+from src.core.realtime.topics import PRESENCE_ADMIN_GROUP
 
 logger = logging.getLogger('core.cms.adp')
 
@@ -26,7 +30,10 @@ class PresenceConsumer(JwtMessageAuthConsumer):
             await self._unregister_connection(self.user_id)
 
     async def receive_authenticated_json(self, content, **kwargs):
-        if content.get('type') != 'ping' or self.user_id is None:
+        if self.user_id is None:
+            return
+        envelope = parse_envelope(content)
+        if envelope is None or envelope.get('type') != PRESENCE_PING_EVENT:
             return
         await self._touch(self.user_id)
 
@@ -46,19 +53,25 @@ class PresenceConsumer(JwtMessageAuthConsumer):
         presence_service.touch(user_id)
 
 
-class PresenceAdminConsumer(JwtMessageAuthConsumer):
+class PresenceAdminConsumer(RealtimeEnvelopeConsumerMixin, JwtMessageAuthConsumer):
     """Admin feed presence snapshot: ws/presence/admin/ + auth-сообщение."""
 
     snapshot_task: asyncio.Task | None = None
+    _admin_group: str | None = None
 
     async def on_ws_authenticated(self):
         if not await self._is_global_admin(self.ws_user):
             raise WsAuthRejectedError(4403)
 
+        self._admin_group = PRESENCE_ADMIN_GROUP
+        await self.channel_layer.group_add(self._admin_group, self.channel_name)
         await self._send_snapshot()
         self.snapshot_task = asyncio.create_task(self._snapshot_loop())
 
     async def on_ws_disconnect(self, close_code):
+        if self._admin_group:
+            await self.channel_layer.group_discard(self._admin_group, self.channel_name)
+            self._admin_group = None
         if self.snapshot_task is not None:
             self.snapshot_task.cancel()
             try:
@@ -79,10 +92,7 @@ class PresenceAdminConsumer(JwtMessageAuthConsumer):
 
     async def _send_snapshot(self):
         users = await self._build_snapshot()
-        await self.send_json({
-            'type': 'presence_snapshot',
-            'users': users,
-        })
+        await database_sync_to_async(publish_presence_snapshot)(users)
 
     @staticmethod
     @database_sync_to_async

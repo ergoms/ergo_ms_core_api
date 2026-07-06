@@ -19,7 +19,7 @@ from src.core.cms.adp.services.session_devices import (
     revoke_user_device_session,
     touch_device_activity,
 )
-from src.core.cms.adp.views import _audit_event
+from src.core.audit.shortcuts import audit_log
 from src.core.utils.base.base_views import BaseAPIViewAuthMixin
 from src.core.utils.methods import parse_errors_to_dict
 
@@ -66,7 +66,7 @@ class ChangePasswordView(BaseAPIViewAuthMixin):
             user.set_password(serializer.validated_data['new_password'])
             user.save()
 
-            _audit_event('user.password_changed', request=request, actor=user, severity='security',
+            audit_log('user.password_changed', request=request, actor=user, severity='security',
                          entity={'type': 'user', 'label': user.get_full_name() or user.username})
 
             return Response(

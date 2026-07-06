@@ -1,62 +1,68 @@
 import logging
 
-from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from channels.db import database_sync_to_async
+
+from src.core.cms.adp.consumers.base import JwtMessageAuthConsumer, WsAuthRejectedError
+from src.core.messenger.access import has_messenger_access
+from src.core.realtime.consumer_mixin import RealtimeEnvelopeConsumerMixin
+from src.core.realtime.envelope import parse_envelope
+from src.core.realtime.hub import RealtimeHub
+from src.core.realtime.topics import messenger_group, messenger_topic
 
 logger = logging.getLogger('core.messenger')
 
 
-class MessengerConsumer(AsyncJsonWebsocketConsumer):
-    """WebSocket consumer для мессенджера.
+class MessengerConsumer(RealtimeEnvelopeConsumerMixin, JwtMessageAuthConsumer):
+    """WebSocket consumer для мессенджера с JWT и проверкой доступа к room."""
 
-    Группирует клиентов по content_type + object_id, обеспечивая
-    real-time доставку сообщений всем участникам одного чата.
-    """
+    room_group_name: str | None = None
+    _content_type_name: str | None = None
+    _object_id: int | None = None
 
-    async def connect(self):
-        self.content_type_name = self.scope['url_route']['kwargs']['content_type']
-        self.object_id = self.scope['url_route']['kwargs']['object_id']
-        self.room_group_name = f'messenger_{self.content_type_name}_{self.object_id}'
+    async def on_ws_authenticated(self):
+        self._content_type_name = self.scope['url_route']['kwargs']['content_type']
+        self._object_id = int(self.scope['url_route']['kwargs']['object_id'])
+        self.room_group_name = messenger_group(self._content_type_name, self._object_id)
+
+        allowed = await self._check_access(
+            self.ws_user,
+            self._content_type_name,
+            self._object_id,
+        )
+        if not allowed:
+            raise WsAuthRejectedError(4403)
 
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
-        await self.accept()
 
-    async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+    async def on_ws_disconnect(self, close_code):
+        if self.room_group_name:
+            await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
-    async def receive_json(self, content, **kwargs):
-        event_type = content.get('type')
+    async def receive_authenticated_json(self, content, **kwargs):
+        envelope = parse_envelope(content)
+        if envelope is None or envelope.get('type') != 'typing_indicator':
+            return
+        if self.room_group_name is None:
+            return
+        if self._content_type_name is None or self._object_id is None:
+            return
 
-        if event_type == 'typing':
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
-                    'type': 'typing_indicator',
-                    'user_id': content.get('user_id'),
-                    'username': content.get('username', ''),
-                },
-            )
+        payload = envelope.get('payload')
+        if not isinstance(payload, dict):
+            return
 
-    async def new_message(self, event):
-        await self.send_json({
-            'type': 'new_message',
-            'message': event['message'],
-        })
+        await RealtimeHub.publish_async(
+            self.channel_layer,
+            group=self.room_group_name,
+            topic=messenger_topic(self._content_type_name, self._object_id),
+            event_type='typing_indicator',
+            payload={
+                'user_id': payload.get('user_id'),
+                'username': payload.get('username', ''),
+            },
+        )
 
-    async def message_edited(self, event):
-        await self.send_json({
-            'type': 'message_edited',
-            'message': event['message'],
-        })
-
-    async def message_deleted(self, event):
-        await self.send_json({
-            'type': 'message_deleted',
-            'message_id': event['message_id'],
-        })
-
-    async def typing_indicator(self, event):
-        await self.send_json({
-            'type': 'typing',
-            'user_id': event['user_id'],
-            'username': event.get('username', ''),
-        })
+    @staticmethod
+    @database_sync_to_async
+    def _check_access(user, content_type_name: str, object_id: int) -> bool:
+        return has_messenger_access(user, content_type_name, object_id)

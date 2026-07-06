@@ -11,7 +11,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from src.core.cms.adp.services.permissions import PermissionService
-from src.core.cms.adp.views_roles import _audit
+from src.core.audit.shortcuts import audit_log
 from .access import user_can_see_menu_item
 from .models import MenuItem, MenuSeparator, MenuAccessLog
 from .serializers import (
@@ -173,7 +173,7 @@ class MenuItemListView(BaseMenuAPIView):
         serializer = MenuItemCreateSerializer(data=request.data)
         if serializer.is_valid():
             item = serializer.save()
-            _audit('menu.item_created', request=request,
+            audit_log('menu.item_created', request=request,
                    entity={'type': 'menu_item', 'label': getattr(item, 'title', '') or str(item)})
             return Response(
                 MenuItemSerializer(item).data,
@@ -246,7 +246,7 @@ class MenuItemDetailView(BaseMenuAPIView):
         serializer = MenuItemUpdateSerializer(item, data=request.data, partial=True)
         if serializer.is_valid():
             item = serializer.save()
-            _audit('menu.item_updated', request=request,
+            audit_log('menu.item_updated', request=request,
                    entity={'type': 'menu_item', 'label': getattr(item, 'title', '') or str(item)})
             return Response(MenuItemSerializer(item).data)
         
@@ -279,7 +279,7 @@ class MenuItemDetailView(BaseMenuAPIView):
         
         item_label = getattr(item, 'title', '') or str(item)
         item.delete()
-        _audit('menu.item_deleted', request=request,
+        audit_log('menu.item_deleted', request=request,
                entity={'type': 'menu_item', 'label': item_label})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -388,7 +388,7 @@ class MenuSeparatorListView(BaseMenuAPIView):
         serializer = MenuSeparatorSerializer(data=request.data)
         if serializer.is_valid():
             separator = serializer.save()
-            _audit('menu.item_created', request=request,
+            audit_log('menu.item_created', request=request,
                    entity={'type': 'menu_separator', 'label': str(separator)})
             return Response(
                 MenuSeparatorSerializer(separator).data,
@@ -492,7 +492,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
         
         separator_label = str(separator)
         separator.delete()
-        _audit('menu.item_deleted', request=request,
+        audit_log('menu.item_deleted', request=request,
                entity={'type': 'menu_separator', 'label': separator_label})
         return Response(status=status.HTTP_204_NO_CONTENT)
 

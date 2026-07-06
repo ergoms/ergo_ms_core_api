@@ -141,4 +141,6 @@ def touch_device_activity(request) -> UserDevice | None:
     ).first()
     if device is not None:
         device.save(update_fields=['last_activity'])
-    return device
+        return device
+
+    return ensure_legacy_device(request)

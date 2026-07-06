@@ -41,7 +41,7 @@ from src.core.utils.base.base_views import BaseAPIView
 from src.core.utils.database.main import OrderedDictQueryExecutor
 from src.core.utils.methods import parse_errors_to_dict, send_confirmation_email
 from src.config.settings.auth import get_token_lifetime
-from src.core.cms.adp.views import _audit_event
+from src.core.audit.shortcuts import audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +294,7 @@ class ResetPasswordView(BaseAPIView):
         # Удаляем использованный код
         confirmation_code.delete()
 
-        _audit_event('user.password_reset', request=request, actor=user, severity='security',
+        audit_log('user.password_reset', request=request, actor=user, severity='security',
                      entity={'type': 'user', 'label': user.get_full_name() or user.username})
 
         return Response(
@@ -435,7 +435,7 @@ class UserAuthorizationView(BaseAPIView):
                     str(refresh),
                     refresh_cookie_max_age(refresh_lifetime),
                 )
-                _audit_event(
+                audit_log(
                     'auth.login',
                     request=request,
                     actor=user,
@@ -443,7 +443,7 @@ class UserAuthorizationView(BaseAPIView):
                 )
                 return response
             else:
-                _audit_event(
+                audit_log(
                     'auth.login_failed',
                     request=request,
                     severity='security',

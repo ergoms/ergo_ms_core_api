@@ -11,7 +11,7 @@ from django.core.mail import get_connection
 
 logger = logging.getLogger(__name__)
 
-EMAIL_DISABLED_MESSAGE = 'Email отключён (EMAIL_ENABLED=false)'
+EMAIL_DISABLED_MESSAGE = 'Не удалось отправить письмо: исходящая почта не настроена'
 
 SourceType = Literal['auto', 'env', 'db']
 ConfigSource = Literal['db', 'env']

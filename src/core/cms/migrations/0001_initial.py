@@ -4,7 +4,38 @@ import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 
-from src.core.cms.scripts import create_default_data
+
+def _create_default_data(apps, schema_editor):
+    """Начальные PermissionMark и базовые auth-маршруты CMS (заморожено для миграции)."""
+    PermissionMark = apps.get_model('cms', 'PermissionMark')
+    CMSPage = apps.get_model('cms', 'CMSPage')
+
+    permission_marks = [
+        {'name': 'ComponentAccessionToRead', 'id': 1},
+        {'name': 'ComponentAccessionToReadAndWrite', 'id': 2},
+        {'name': 'PageAccession', 'id': 3},
+        {'name': 'AdminAccession', 'id': 4},
+    ]
+
+    for mark_data in permission_marks:
+        PermissionMark.objects.get_or_create(
+            id=mark_data['id'],
+            defaults={'name': mark_data['name']},
+        )
+
+    initial_paths = (
+        '/',
+        '/logout',
+        '/start-page',
+        '/login',
+        '/register',
+        '/forgot-password',
+        '/reset-password',
+        '/two-steps',
+    )
+    for path in initial_paths:
+        CMSPage.objects.get_or_create(path=path)
+
 
 class Migration(migrations.Migration):
 
@@ -110,5 +141,5 @@ class Migration(migrations.Migration):
             ],
         ),
         
-        migrations.RunPython(create_default_data),
+        migrations.RunPython(_create_default_data),
     ]

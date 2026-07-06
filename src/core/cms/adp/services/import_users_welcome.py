@@ -6,9 +6,7 @@ from typing import Optional, Tuple
 
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.core.mail import send_mail
-
-from src.core.utils.methods import _check_email_enabled, _normalize_email_for_recipient, format_smtp_error
+from src.core.utils.plain_mail import normalize_recipient_email, send_plain_email
 
 DEFAULT_WELCOME_SUBJECT = 'Добро пожаловать в ERGO MS'
 
@@ -113,31 +111,7 @@ def send_import_welcome_email(
     subject: str,
     body: str,
 ) -> Tuple[bool, Optional[str]]:
-    disabled = _check_email_enabled()
-    if disabled is not None:
-        return disabled
-
-    try:
-        default_from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
-        if not default_from_email:
-            error_msg = 'SMTP не настроен: отсутствует DEFAULT_FROM_EMAIL'
-            return False, error_msg
-
-        normalized_email = _normalize_email_for_recipient(recipient_email)
-        if not normalized_email:
-            return False, 'Недопустимый адрес получателя'
-
-        send_mail(
-            subject,
-            body,
-            default_from_email,
-            [normalized_email],
-            fail_silently=False,
-        )
-        return True, None
-    except Exception as exc:
-        error_msg = format_smtp_error(exc)
-        return False, error_msg
+    return send_plain_email(subject=subject, body=body, recipients=[recipient_email])
 
 
 def parse_send_welcome_emails_flag(raw_value) -> bool:

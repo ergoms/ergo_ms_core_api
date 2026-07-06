@@ -9,6 +9,10 @@ from rest_framework.response import Response
 
 from src.core.utils.mixins import SwaggerSafeMixin
 
+from src.core.realtime.envelope import build_envelope
+from src.core.realtime.polling import apply_after_id
+from src.core.realtime.topics import notifications_user_topic
+
 from .models import Notification
 from .preferences import PreferencePanelService
 from .serializers import NotificationSerializer
@@ -59,12 +63,7 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
                     parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
                 qs = qs.filter(created_at__gt=parsed)
 
-        after_id = self.request.query_params.get('after_id')
-        if after_id:
-            try:
-                qs = qs.filter(id__gt=int(after_id))
-            except (TypeError, ValueError):
-                pass
+        qs = apply_after_id(qs, self.request)
 
         return qs
 
@@ -103,7 +102,11 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
         notification = result.pop('notification', None)
         if notification is not None:
-            result['notification'] = NotificationSerializer(notification).data
+            result['envelope'] = build_envelope(
+                topic=notifications_user_topic(request.user.pk),
+                event_type='notification_updated',
+                payload=NotificationSerializer(notification).data,
+            )
         return Response(result, status=200 if result.get('success') else 400)
 
     @action(detail=False, methods=['get', 'patch'], url_path='preferences')

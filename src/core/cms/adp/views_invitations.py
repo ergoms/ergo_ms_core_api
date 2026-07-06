@@ -20,7 +20,8 @@ from src.core.cms.adp.serializers import (
     ValidateInvitationSerializer,
 )
 from src.core.cms.adp.services.registration import RegistrationService
-from src.core.cms.adp.views_roles import _require_global_admin, _audit
+from src.core.cms.adp.services.admin_access import require_global_admin_response
+from src.core.audit.shortcuts import audit_log
 
 def _serialize_invitation(invitation):
     return RegistrationInvitationSerializer(invitation).data
@@ -98,7 +99,7 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: RegistrationInvitationSerializer(many=True)},
     )
     def get(self, request):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 
@@ -140,7 +141,7 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={201: RegistrationInvitationSerializer()},
     )
     def post(self, request):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 
@@ -157,7 +158,7 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
         if error and not invitation:
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
-        _audit('invitation.created', request=request,
+        audit_log('invitation.created', request=request,
                entity={'type': 'invitation', 'label': invitation.email})
 
         response_data = _serialize_invitation(invitation)
@@ -181,7 +182,7 @@ class RegistrationInvitationDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={204: 'Приглашение отозвано'},
     )
     def delete(self, request, invitation_id):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 
@@ -194,7 +195,7 @@ class RegistrationInvitationDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         if not success:
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
-        _audit('invitation.revoked', request=request,
+        audit_log('invitation.revoked', request=request,
                entity={'type': 'invitation', 'label': invitation_email})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -207,7 +208,7 @@ class RegistrationInvitationResendView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: RegistrationInvitationSerializer()},
     )
     def post(self, request, invitation_id):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 
@@ -231,7 +232,7 @@ class RegistrationInvitationBulkCreateView(BaseAPIViewAuthMixin, BaseAPIView):
         request_body=BulkCreateRegistrationInvitationsSerializer,
     )
     def post(self, request):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 
@@ -245,7 +246,7 @@ class RegistrationInvitationBulkCreateView(BaseAPIViewAuthMixin, BaseAPIView):
             note=serializer.validated_data.get('note', ''),
             send_email=serializer.validated_data.get('send_email', False),
         )
-        _audit('invitation.bulk_created', request=request,
+        audit_log('invitation.bulk_created', request=request,
                meta={'requested': len(serializer.validated_data['emails']),
                      'created': result.get('created')})
         return Response(result, status=status.HTTP_201_CREATED)
@@ -262,7 +263,7 @@ class RegistrationInvitationClearView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: 'Количество удалённых записей'},
     )
     def post(self, request):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 
@@ -286,7 +287,7 @@ class RegistrationInvitationClearView(BaseAPIViewAuthMixin, BaseAPIView):
                 'message': 'Нет приглашений для удаления',
             })
 
-        _audit('invitation.cleared', request=request, severity='security',
+        audit_log('invitation.cleared', request=request, severity='security',
                meta={'scope': scope, 'deleted': result.get('deleted')})
         return Response(result)
 
@@ -299,7 +300,7 @@ class RegistrationInvitationBulkSendView(BaseAPIViewAuthMixin, BaseAPIView):
         request_body=BulkSendRegistrationInvitationsSerializer,
     )
     def post(self, request):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 

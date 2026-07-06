@@ -7,7 +7,7 @@ import sys
 from django.core.mail import send_mail
 from django.core.management.base import BaseCommand, CommandError
 
-from src.core.utils.methods import _normalize_email_for_recipient
+from src.core.utils.plain_mail import normalize_recipient_email
 from src.core.utils.smtp_errors import format_smtp_error
 from src.core.utils.smtp_resolver import (
     SourceType,
@@ -67,7 +67,7 @@ class Command(BaseCommand):
 
         assert config is not None
         source_label = 'EmailSettings' if config.source == 'db' else '.env'
-        recipient = _normalize_email_for_recipient(recipient_raw or config.from_email)
+        recipient = normalize_recipient_email(recipient_raw or config.from_email)
         if not recipient:
             raise CommandError('Недопустимый адрес получателя. Укажите --to=email.')
 

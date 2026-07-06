@@ -17,7 +17,8 @@ from src.core.cms.adp.profile_change_serializers import (
 )
 from src.core.cms.adp.services.profile_change_request import ProfileChangeRequestService
 from src.core.cms.adp.services.profile_settings import ProfileSettingsService
-from src.core.cms.adp.views_roles import _require_global_admin, _audit
+from src.core.cms.adp.services.admin_access import require_global_admin_response
+from src.core.audit.shortcuts import audit_log
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
 
 
@@ -120,7 +121,7 @@ class AdminProfileChangeRequestListView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: openapi.Response(description='Список заявок')},
     )
     def get(self, request):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 
@@ -179,7 +180,7 @@ class AdminProfileChangeRequestApproveView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: UserProfileChangeRequestSerializer(), 400: 'Ошибка', 404: 'Не найдено'},
     )
     def post(self, request, request_id):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 
@@ -195,7 +196,7 @@ class AdminProfileChangeRequestApproveView(BaseAPIViewAuthMixin, BaseAPIView):
         except ValueError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        _audit('profile_change.approved', request=request,
+        audit_log('profile_change.approved', request=request,
                entity={'type': 'user', 'label': change_request.user.get_full_name() or change_request.user.username})
 
         change_request.refresh_from_db()
@@ -215,7 +216,7 @@ class AdminProfileChangeRequestRejectView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: UserProfileChangeRequestSerializer(), 400: 'Ошибка', 404: 'Не найдено'},
     )
     def post(self, request, request_id):
-        forbidden = _require_global_admin(request)
+        forbidden = require_global_admin_response(request)
         if forbidden:
             return forbidden
 
@@ -239,7 +240,7 @@ class AdminProfileChangeRequestRejectView(BaseAPIViewAuthMixin, BaseAPIView):
         except ValueError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        _audit('profile_change.rejected', request=request,
+        audit_log('profile_change.rejected', request=request,
                entity={'type': 'user', 'label': change_request.user.get_full_name() or change_request.user.username})
 
         change_request.refresh_from_db()

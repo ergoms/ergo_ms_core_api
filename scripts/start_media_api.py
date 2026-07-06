@@ -38,7 +38,10 @@ def _build_env() -> dict:
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUTF8'] = '1'
     existing = env.get('PYTHONPATH', '')
-    env['PYTHONPATH'] = str(MEDIA_SRC) + (os.pathsep + existing if existing else '')
+    paths = [str(MEDIA_SRC), str(PROJECT_ROOT)]
+    if existing:
+        paths.append(existing)
+    env['PYTHONPATH'] = os.pathsep.join(paths)
     return env
 
 

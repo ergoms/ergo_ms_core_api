@@ -1,43 +1,11 @@
 """
 Утилита для генерации подписанных URL и upload-токенов для медиа-сервиса.
-Содержит HMAC-логику подписи, используемую core/api.
-media_server/signing.py реимпортирует те же функции для media_api.
+HMAC-логика — в core.shared.media_hmac; media_api реимпортирует оттуда же.
 """
-
-import hashlib
-import hmac
-import time
-import json
-import base64
 
 from django.conf import settings
 
-
-def sign_url(path: str, secret_key: str, expires_in: int = 3600) -> tuple:
-    expires = int(time.time()) + expires_in
-    message = f"{path}:{expires}"
-    signature = hmac.new(
-        secret_key.encode('utf-8'),
-        message.encode('utf-8'),
-        hashlib.sha256,
-    ).hexdigest()
-    return signature, expires
-
-
-def create_upload_token(payload: dict, secret_key: str, expires_in: int = 300) -> str:
-    data = dict(payload)
-    data['expires'] = int(time.time()) + expires_in
-    payload_json = json.dumps(data, sort_keys=True)
-    signature = hmac.new(
-        secret_key.encode('utf-8'),
-        payload_json.encode('utf-8'),
-        hashlib.sha256,
-    ).hexdigest()
-    token_data = {'payload': data, 'signature': signature}
-    return base64.urlsafe_b64encode(
-        json.dumps(token_data).encode('utf-8')
-    ).decode('utf-8')
-
+from core.shared.media_hmac import create_upload_token, sign_url
 
 def _get_secret_key() -> str:
     return settings.SECRET_KEY

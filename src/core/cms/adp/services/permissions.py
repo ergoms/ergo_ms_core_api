@@ -233,6 +233,11 @@ class PermissionService:
         return PermissionService._is_global_admin(user)
 
     @staticmethod
+    def can_access_admin_panel(user: User) -> bool:
+        """Доступ к панели администратора — эквивалент глобального админа."""
+        return PermissionService.can_manage_users_as_global_admin(user)
+
+    @staticmethod
     def resolve_display_role(
         user: User,
         user_role: Optional[UserRole] = None,

@@ -4,11 +4,16 @@ import logging
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from src.core.cms.adp.ws_auth import user_from_jwt_token
+from src.core.realtime.envelope import (
+    WS_AUTH_EVENT,
+    WS_AUTH_OK_EVENT,
+    WS_CONTROL_TOPIC,
+    build_envelope,
+    parse_envelope,
+)
 
 logger = logging.getLogger('core.cms.adp')
 
-WS_AUTH_MESSAGE = 'auth'
-WS_AUTH_OK_MESSAGE = 'auth_ok'
 WS_AUTH_TIMEOUT_SEC = 10
 WS_AUTH_CLOSE_UNAUTHORIZED = 4401
 
@@ -20,7 +25,7 @@ class WsAuthRejectedError(Exception):
 
 
 class JwtMessageAuthConsumer(AsyncJsonWebsocketConsumer):
-    """Базовый consumer: JWT в первом JSON `{ type: 'auth', token: '...' }`, не в query string."""
+    """Базовый consumer: JWT в первом envelope `{ type: 'ws_auth', payload: { token } }`."""
 
     ws_user = None
     _auth_pending = False
@@ -66,11 +71,13 @@ class JwtMessageAuthConsumer(AsyncJsonWebsocketConsumer):
             raise
 
     async def _handle_auth_message(self, content):
-        if content.get('type') != WS_AUTH_MESSAGE:
+        envelope = parse_envelope(content)
+        if envelope is None or envelope.get('type') != WS_AUTH_EVENT:
             await self.close(code=WS_AUTH_CLOSE_UNAUTHORIZED)
             return
 
-        token = content.get('token')
+        payload = envelope.get('payload')
+        token = payload.get('token') if isinstance(payload, dict) else None
         if not token:
             await self.close(code=WS_AUTH_CLOSE_UNAUTHORIZED)
             return
@@ -102,4 +109,8 @@ class JwtMessageAuthConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=WS_AUTH_CLOSE_UNAUTHORIZED)
             return
 
-        await self.send_json({'type': WS_AUTH_OK_MESSAGE})
+        await self.send_json(build_envelope(
+            topic=WS_CONTROL_TOPIC,
+            event_type=WS_AUTH_OK_EVENT,
+            payload={},
+        ))

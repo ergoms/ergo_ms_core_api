@@ -20,28 +20,8 @@ from src.core.cms.adp.serializers import (
     UserPermissionsSerializer,
 )
 from src.core.cms.adp.services.permissions import PermissionService, RoleAssignmentError
+from src.core.audit.shortcuts import audit_log
 from src.core.utils.methods import parse_errors_to_dict
-
-
-def _audit(action, *, request=None, severity='info', entity=None, changes=None, meta=None):
-    """Запись действия администрирования в единый журнал (безопасно к сбоям)."""
-    from src.core.audit.shortcuts import audit_log
-    audit_log(
-        action,
-        source_module='core.cms.adp',
-        request=request,
-        severity=severity,
-        entity=entity,
-        changes=changes,
-        meta=meta,
-    )
-
-
-def _require_global_admin(request):
-    """403 Response, если пользователь не глобальный администратор; иначе None."""
-    if PermissionService.can_manage_users_as_global_admin(request.user):
-        return None
-    return Response({'detail': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
 
 
 class RoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
@@ -70,7 +50,7 @@ class RoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = RoleSerializer(data=request.data)
         if serializer.is_valid():
             role = serializer.save()
-            _audit('role.created', request=request, severity='security',
+            audit_log('role.created', request=request, severity='security',
                    entity={'type': 'role', 'label': role.name})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -123,7 +103,7 @@ class RoleDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             serializer = RoleSerializer(role, data=payload, partial=True)
             if serializer.is_valid():
                 serializer.save()
-                _audit('role.updated', request=request, severity='security',
+                audit_log('role.updated', request=request, severity='security',
                        entity={'type': 'role', 'label': role.name})
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -151,7 +131,7 @@ class RoleDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             
             role_name = role.name
             role.delete()
-            _audit('role.deleted', request=request, severity='security',
+            audit_log('role.deleted', request=request, severity='security',
                    entity={'type': 'role', 'label': role_name})
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Role.DoesNotExist:
@@ -189,7 +169,7 @@ class RoleGroupListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = RoleGroupSerializer(data=request.data)
         if serializer.is_valid():
             group = serializer.save()
-            _audit('role_group.created', request=request, severity='security',
+            audit_log('role_group.created', request=request, severity='security',
                    entity={'type': 'role_group', 'label': getattr(group, 'name', '')})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -238,7 +218,7 @@ class RoleGroupDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = RoleGroupSerializer(group, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            _audit('role_group.updated', request=request, severity='security',
+            audit_log('role_group.updated', request=request, severity='security',
                    entity={'type': 'role_group', 'label': getattr(group, 'name', '')})
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -257,7 +237,7 @@ class RoleGroupDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         
         group_name = getattr(group, 'name', '')
         group.delete()
-        _audit('role_group.deleted', request=request, severity='security',
+        audit_log('role_group.deleted', request=request, severity='security',
                entity={'type': 'role_group', 'label': group_name})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -288,7 +268,7 @@ class PolicyListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = PolicySerializer(data=request.data)
         if serializer.is_valid():
             policy = serializer.save()
-            _audit('policy.created', request=request, severity='security',
+            audit_log('policy.created', request=request, severity='security',
                    entity={'type': 'policy', 'label': str(policy)})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -337,7 +317,7 @@ class PolicyDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = PolicySerializer(policy, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            _audit('policy.updated', request=request, severity='security',
+            audit_log('policy.updated', request=request, severity='security',
                    entity={'type': 'policy', 'label': str(policy)})
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -356,7 +336,7 @@ class PolicyDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         
         policy_label = str(policy)
         policy.delete()
-        _audit('policy.deleted', request=request, severity='security',
+        audit_log('policy.deleted', request=request, severity='security',
                entity={'type': 'policy', 'label': policy_label})
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -555,13 +535,13 @@ class ModulePermissionListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
                 serializer = ModulePermissionSerializer(existing, data=request.data, partial=True)
                 if serializer.is_valid():
                     serializer.save()
-                    _audit('module_permission.updated', request=request, severity='security',
+                    audit_log('module_permission.updated', request=request, severity='security',
                            entity={'type': 'module_permission', 'label': str(existing)})
                     return Response(serializer.data)
             else:
                 # Создаем новое
                 perm = serializer.save()
-                _audit('module_permission.created', request=request, severity='security',
+                audit_log('module_permission.created', request=request, severity='security',
                        entity={'type': 'module_permission', 'label': str(perm)})
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
         
@@ -611,7 +591,7 @@ class ModulePermissionDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = ModulePermissionSerializer(permission, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            _audit('module_permission.updated', request=request, severity='security',
+            audit_log('module_permission.updated', request=request, severity='security',
                    entity={'type': 'module_permission', 'label': str(permission)})
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -630,7 +610,7 @@ class ModulePermissionDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         
         permission_label = str(permission)
         permission.delete()
-        _audit('module_permission.deleted', request=request, severity='security',
+        audit_log('module_permission.deleted', request=request, severity='security',
                entity={'type': 'module_permission', 'label': permission_label})
         return Response(status=status.HTTP_204_NO_CONTENT)
 

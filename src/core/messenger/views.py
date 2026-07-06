@@ -1,11 +1,12 @@
 import logging
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from rest_framework import permissions, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
 
+from src.core.realtime.hub import RealtimeHub
+from src.core.realtime.polling import apply_after_id
+from src.core.realtime.topics import messenger_group, messenger_topic
 from src.core.utils.mixins import SwaggerSafeMixin, MediaApiFileMixin
 
 from .models import Message, MessageAttachment
@@ -41,26 +42,15 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
             if not self._has_messenger_access(ct, object_id):
                 return Message.objects.none()
             filtered = queryset.filter(content_type=ct, object_id=object_id).order_by('created_at')
-            return self._apply_after_id_filter(filtered)
+            return apply_after_id(filtered, self.request)
 
         return Message.objects.none()
 
     def _has_messenger_access(self, content_type, object_id):
-        """Доступ определяется родительским объектом сообщения (has_messenger_access).
+        from src.core.messenger.access import has_messenger_access
 
-        Если у объекта нет метода — доступ разрешён (объект без ограничений).
-        Если объект не найден — доступа нет.
-        """
-        model_class = content_type.model_class() if content_type else None
-        if model_class is None:
-            return False
-        try:
-            obj = model_class.objects.get(pk=object_id)
-        except model_class.DoesNotExist:
-            return False
-        if hasattr(obj, 'has_messenger_access'):
-            return obj.has_messenger_access(self.request.user)
-        return True
+        ct_name = self._get_ct_name_for_group(content_type)
+        return has_messenger_access(self.request.user, ct_name, int(object_id))
 
     def get_object(self):
         """Проверяем доступ к родительскому объекту и при retrieve по pk (защита от IDOR)."""
@@ -68,15 +58,6 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
         if not self._has_messenger_access(instance.content_type, instance.object_id):
             raise PermissionDenied('Нет доступа к сообщению.')
         return instance
-
-    def _apply_after_id_filter(self, queryset):
-        after_id = self.request.query_params.get('after_id')
-        if not after_id:
-            return queryset
-        try:
-            return queryset.filter(id__gt=int(after_id))
-        except (TypeError, ValueError):
-            return queryset
 
     def _check_author(self, instance):
         if instance.author != self.request.user:
@@ -107,24 +88,29 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
 
     def _broadcast(self, message, event_type):
         ct_name = self._get_ct_name_for_group(message.content_type)
-        group_name = f'messenger_{ct_name}_{message.object_id}'
         serialized = MessageSerializer(message, context={'request': self.request}).data
+        group = messenger_group(ct_name, message.object_id)
+        topic = messenger_topic(ct_name, message.object_id)
+        payload = serialized if event_type != 'message_deleted' else message.id
         try:
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {'type': event_type, 'message': serialized},
+            RealtimeHub.publish(
+                group=group,
+                topic=topic,
+                event_type=event_type,
+                payload=payload,
             )
         except Exception:
             logger.exception('Broadcast %s failed', event_type)
 
     def _broadcast_deleted(self, ct_name, object_id, message_id):
-        group_name = f'messenger_{ct_name}_{object_id}'
+        group = messenger_group(ct_name, object_id)
+        topic = messenger_topic(ct_name, object_id)
         try:
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {'type': 'message_deleted', 'message_id': message_id},
+            RealtimeHub.publish(
+                group=group,
+                topic=topic,
+                event_type='message_deleted',
+                payload=message_id,
             )
         except Exception:
             logger.exception('Broadcast message_deleted failed')

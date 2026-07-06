@@ -36,7 +36,7 @@ from src.core.utils.methods import (
     generate_secure_random_password,
     send_admin_password_reset_notification,
 )
-from src.core.cms.adp.views_roles import _audit
+from src.core.audit.shortcuts import audit_log
 
 
 def _get_user_avatar_url(user):
@@ -326,7 +326,7 @@ class AdminUserRoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             return Response({'error': exc.message}, status=status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.select_related('adp_profile').get(pk=user.pk)
-        _audit('user.created', request=request, severity='security',
+        audit_log('user.created', request=request, severity='security',
                entity={'type': 'user', 'label': user.get_full_name() or user.username},
                meta={'username': user.username})
         response_data = _build_admin_user_detail(user)
@@ -379,7 +379,7 @@ class AdminUserDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         if serializer.is_valid():
             serializer.save()
             user = User.objects.select_related('adp_profile').get(pk=user_id)
-            _audit('user.updated', request=request,
+            audit_log('user.updated', request=request,
                    entity={'type': 'user', 'label': user.get_full_name() or user.username},
                    meta={'username': user.username})
             return Response(_build_admin_user_detail(user), status=status.HTTP_200_OK)
@@ -413,7 +413,7 @@ class AdminUserDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         if deletion_error:
             return deletion_error
 
-        _audit('user.deleted', request=request, severity='security',
+        audit_log('user.deleted', request=request, severity='security',
                entity={'type': 'user', 'label': target_label},
                meta={'username': target_username})
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -528,7 +528,7 @@ class AdminUserResetPasswordView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             user.save(update_fields=['password'])
             revoke_user_auth(user)
 
-            _audit('user.password_reset_by_admin', request=request, severity='security',
+            audit_log('user.password_reset_by_admin', request=request, severity='security',
                    entity={'type': 'user', 'label': user.get_full_name() or user.username},
                    meta={'username': user.username, 'mode': 'manual'})
             return Response(
@@ -544,7 +544,7 @@ class AdminUserResetPasswordView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         _apply_system_password_reset(user)
         revoke_user_auth(user)
 
-        _audit('user.password_reset_by_admin', request=request, severity='security',
+        audit_log('user.password_reset_by_admin', request=request, severity='security',
                entity={'type': 'user', 'label': user.get_full_name() or user.username},
                meta={'username': user.username, 'mode': 'system'})
 

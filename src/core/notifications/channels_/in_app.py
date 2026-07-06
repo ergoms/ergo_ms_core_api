@@ -1,7 +1,7 @@
 import logging
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
+from src.core.realtime.hub import RealtimeHub
+from src.core.realtime.topics import notifications_user_group, notifications_user_topic
 
 logger = logging.getLogger('core.notifications')
 
@@ -10,9 +10,9 @@ class InAppChannel:
     """Доставка уведомления внутрь приложения.
 
     Сама запись в БД создаётся в NotificationService (до вызова канала).
-    Этот канал отвечает за push в персональную WebSocket-группу пользователя.
+    Этот канал отвечает за push в персональную группу пользователя (WS / SSE).
     Если канальный слой недоступен — тихо логируем, запись в БД остаётся
-    и будет показана при следующем HTTP-запросе или подключении WS.
+    и будет показана при следующем HTTP-запросе или подключении stream.
     """
 
     name = 'in_app'
@@ -30,17 +30,13 @@ class InAppChannel:
             return
 
         try:
-            channel_layer = get_channel_layer()
-            if channel_layer is None:
-                return
-            group_name = f'notifications_user_{notification.recipient_id}'
             payload = NotificationSerializer(notification).data
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    'type': 'notification_new',
-                    'notification': payload,
-                },
+            user_id = notification.recipient_id
+            RealtimeHub.publish(
+                group=notifications_user_group(user_id),
+                topic=notifications_user_topic(user_id),
+                event_type='notification_new',
+                payload=payload,
             )
         except Exception:
-            logger.exception('Не удалось отправить in-app уведомление через WebSocket')
+            logger.exception('Не удалось отправить in-app уведомление через realtime')

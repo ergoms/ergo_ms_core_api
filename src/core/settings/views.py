@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.http import HttpResponse
 
 from .permissions import IsGlobalAdmin
-from src.core.utils.mixins import MediaApiFileMixin, read_storage_file_bytes
+from src.core.utils.mixins import MediaApiFileMixin, read_storage_file_bytes, SwaggerSafeMixin
 from src.core.audit.mixin import AuditedModelMixin
 
 from .models import *
@@ -68,7 +68,7 @@ class EmailSettingsViewSet(_SettingsAuditMixin, viewsets.ModelViewSet):
     serializer_class = EmailSettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
-class UserAvatarViewSet(MediaApiFileMixin, viewsets.ModelViewSet):
+class UserAvatarViewSet(SwaggerSafeMixin, MediaApiFileMixin, viewsets.ModelViewSet):
     queryset = UserAvatar.objects.all()
     serializer_class = UserAvatarSerializer
     permission_classes = [IsAuthenticated]
@@ -81,7 +81,7 @@ class UserAvatarViewSet(MediaApiFileMixin, viewsets.ModelViewSet):
         return UserAvatarSerializer
     
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if self.is_swagger_fake_view():
             return UserAvatar.objects.none()
         if not self.request.user.is_authenticated:
             return UserAvatar.objects.none()
@@ -112,7 +112,7 @@ class UserAvatarViewSet(MediaApiFileMixin, viewsets.ModelViewSet):
             status=status.HTTP_404_NOT_FOUND
         )
 
-class ThemeViewSet(AuditedModelMixin, _ThemeImportMixin, viewsets.ModelViewSet):
+class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, viewsets.ModelViewSet):
     """ViewSet для управления темами оформления"""
     queryset = Theme.objects.all()
     serializer_class = ThemeSerializer
@@ -128,6 +128,8 @@ class ThemeViewSet(AuditedModelMixin, _ThemeImportMixin, viewsets.ModelViewSet):
         return [IsAuthenticated(), IsGlobalAdmin()]
     
     def get_queryset(self):
+        if self.is_swagger_fake_view():
+            return Theme.objects.none()
         queryset = Theme.objects.all()
         # Фильтр по базовой теме
         base_theme = self.request.query_params.get('base_theme')

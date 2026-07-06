@@ -30,13 +30,10 @@ def _extract_test_module(args: list[str]) -> Optional[str]:
 
 
 def _get_deploy_type() -> str:
-    """Возвращает тип развертывания без загрузки Django."""
-    deploy_type = os.environ.get('API_DEPLOY_TYPE', 'development')
-    if deploy_type == 'development':
-        return 'src.config.patterns.local'
-    elif deploy_type == 'production':
-        return 'src.config.patterns.production'
-    return 'src.config.patterns.local'
+    """Возвращает DJANGO_SETTINGS_MODULE (как manage.py и deploy.py)."""
+    from src.config.deploy import get_settings_module
+
+    return get_settings_module()
 
 
 class PoetryCommand:
@@ -138,7 +135,7 @@ class PoetryCommand:
                 self._init_test_settings()
             else:
                 deploy_type = _get_deploy_type()
-                os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
+                os.environ['DJANGO_SETTINGS_MODULE'] = deploy_type
 
             import django
             if not django.conf.settings.configured:
@@ -153,7 +150,7 @@ class PoetryCommand:
         if use_full:
             os.environ['TEST_FULL_APPS'] = '1'
             deploy_type = _get_deploy_type()
-            os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
+            os.environ['DJANGO_SETTINGS_MODULE'] = deploy_type
             return
         
         target_module = _extract_test_module(self._test_args)
@@ -163,4 +160,4 @@ class PoetryCommand:
             os.environ['DJANGO_SETTINGS_MODULE'] = 'src.config.patterns.test'
         else:
             deploy_type = _get_deploy_type()
-            os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
+            os.environ['DJANGO_SETTINGS_MODULE'] = deploy_type

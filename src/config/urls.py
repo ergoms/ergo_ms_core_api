@@ -8,7 +8,7 @@
 
 from src.core.utils.auto_api.auto_config import ModuleDiscoverer
 from src.config.settings.base import CORE_DIR, MODULES_DIR, BASE_DIR
-from src.core.utils.methods import convert_path_to_dot_notation
+from src.core.utils.path_utils import convert_path_to_dot_notation
 
 urlpatterns = []
 

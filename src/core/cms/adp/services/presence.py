@@ -65,7 +65,9 @@ def register_connection(user_id: int) -> PresenceEntry:
         last_seen=now,
     )
     presence.refresh_from_db(fields=['connection_count', 'last_seen'])
-    return _to_entry(presence)
+    entry = _to_entry(presence)
+    _broadcast_presence_delta(user_id, entry)
+    return entry
 
 
 def unregister_connection(user_id: int) -> PresenceEntry:
@@ -81,7 +83,15 @@ def unregister_connection(user_id: int) -> PresenceEntry:
         last_seen=now,
     )
     presence.refresh_from_db(fields=['connection_count', 'last_seen'])
-    return _to_entry(presence)
+    entry = _to_entry(presence)
+    _broadcast_presence_delta(user_id, entry)
+    return entry
+
+
+def _broadcast_presence_delta(user_id: int, entry: PresenceEntry) -> None:
+    from src.core.cms.adp.services.presence_realtime import publish_presence_delta
+
+    publish_presence_delta(user_id, serialize_presence_entry(entry))
 
 
 def touch(user_id: int) -> PresenceEntry:
@@ -118,8 +128,12 @@ def http_offline(user_id: int) -> PresenceEntry:
     try:
         presence = UserPresence.objects.get(user_id=user_id)
     except UserPresence.DoesNotExist:
-        return _offline_entry()
-    return _to_entry(presence)
+        entry = _offline_entry()
+        _broadcast_presence_delta(user_id, entry)
+        return entry
+    entry = _to_entry(presence)
+    _broadcast_presence_delta(user_id, entry)
+    return entry
 
 
 def get_presence_map(user_ids: list[int] | None = None) -> dict[int, PresenceEntry]:
