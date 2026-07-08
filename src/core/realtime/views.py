@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from src.core.realtime.renderers import EventStreamRenderer
 from src.core.realtime.stream import sse_event_stream
 from src.core.realtime.subscriptions import subscribe_topic, unsubscribe_topic
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
@@ -42,6 +43,7 @@ class RealtimeConfigView(BaseAPIViewAuthMixin, BaseAPIView):
 
 class RealtimeStreamView(BaseAPIViewAuthMixin, BaseAPIView):
     permission_classes = [IsAuthenticated]
+    renderer_classes = [EventStreamRenderer]
 
     @swagger_auto_schema(
         operation_description='SSE-поток realtime-событий (server → client).',
