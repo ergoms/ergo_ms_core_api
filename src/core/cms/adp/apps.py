@@ -35,9 +35,12 @@ class AdpConfig(AppConfig):
     label = 'cms_adp'
 
     def ready(self):
-        from src.core.cms.adp.user_extensions import apply_user_extensions
+        import sys
 
-        apply_user_extensions()
+        if 'makemigrations' not in sys.argv:
+            from src.core.cms.adp.user_extensions import apply_user_extensions
+
+            apply_user_extensions()
 
         # Регистрация сигналов приложения ADP
         from src.core.cms.adp import signals  # noqa: F401

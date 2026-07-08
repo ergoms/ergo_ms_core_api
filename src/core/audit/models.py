@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
 
@@ -127,6 +128,16 @@ class AuditEvent(models.Model):
             models.Index(fields=['actor', 'created_at']),
             models.Index(fields=['organization_id', 'created_at']),
             models.Index(fields=['entity_type', 'entity_ref']),
+            GinIndex(
+                fields=['actor_label'],
+                name='audit_actor_label_trgm',
+                opclasses=['gin_trgm_ops'],
+            ),
+            GinIndex(
+                fields=['entity_label'],
+                name='audit_entity_label_trgm',
+                opclasses=['gin_trgm_ops'],
+            ),
         ]
 
     def __str__(self):
