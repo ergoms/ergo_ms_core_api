@@ -36,6 +36,7 @@ class RejectUserProfileChangeRequestSerializer(Serializer):
 
 class UserProfileChangeRequestSerializer(ModelSerializer):
     user_id = SerializerMethodField(read_only=True)
+    public_id = SerializerMethodField(read_only=True)
     username = SerializerMethodField(read_only=True)
     user_email = SerializerMethodField(read_only=True)
     current_email = SerializerMethodField(read_only=True)
@@ -49,6 +50,7 @@ class UserProfileChangeRequestSerializer(ModelSerializer):
         fields = [
             'id',
             'user_id',
+            'public_id',
             'username',
             'user_email',
             'email',
@@ -71,6 +73,11 @@ class UserProfileChangeRequestSerializer(ModelSerializer):
 
     def get_user_id(self, obj):
         return obj.user_id
+
+    def get_public_id(self, obj):
+        user = getattr(obj, 'user', None)
+        public_id = getattr(user, 'public_id', None)
+        return str(public_id) if public_id else None
 
     def get_username(self, obj):
         return getattr(obj.user, 'username', '') or ''
