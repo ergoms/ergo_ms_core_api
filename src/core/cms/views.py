@@ -91,7 +91,7 @@ class UserPublicInfoView(BaseAPIViewAuthMixin):
         first_name = (user.first_name or '').strip()
         last_name = (user.last_name or '').strip()
         middle_name = (getattr(user, 'middle_name', '') or '').strip()
-        full_name = ' '.join(p for p in [last_name, first_name, middle_name] if p) or user.username
+        full_name = ' '.join(p for p in [first_name, middle_name, last_name] if p) or user.username
 
         return Response({
             'public_id': str(user.public_id) if getattr(user, 'public_id', None) else None,

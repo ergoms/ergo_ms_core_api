@@ -33,11 +33,14 @@ class ErgoUser(AbstractUser):
         verbose_name_plural = 'пользователи'
 
     def get_full_name(self) -> str:
-        """Формат: «Фамилия Имя Отчество»."""
-        name_parts = [self.last_name, self.first_name]
+        """Формат: «Имя Отчество Фамилия»."""
+        name_parts = [self.first_name]
         middle_name = (self.middle_name or '').strip()
         if middle_name:
             name_parts.append(middle_name)
+        last_name = (self.last_name or '').strip()
+        if last_name:
+            name_parts.append(last_name)
 
         full_name = ' '.join(part for part in name_parts if part and str(part).strip())
         return full_name.strip() or self.username or self.email

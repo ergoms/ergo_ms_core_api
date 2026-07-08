@@ -14,9 +14,9 @@ def _format_user_fio(user) -> str:
     if user is None:
         return ''
     parts = [
-        ProfileChangeRequestService.normalize_name_part(user.last_name),
         ProfileChangeRequestService.normalize_name_part(user.first_name),
         ProfileChangeRequestService.normalize_name_part(getattr(user, 'middle_name', '')),
+        ProfileChangeRequestService.normalize_name_part(user.last_name),
     ]
     return ' '.join(part for part in parts if part)
 
@@ -99,9 +99,9 @@ class UserProfileChangeRequestSerializer(ModelSerializer):
 
     def get_requested_full_name(self, obj):
         parts = [
-            ProfileChangeRequestService.normalize_name_part(obj.last_name),
             ProfileChangeRequestService.normalize_name_part(obj.first_name),
             ProfileChangeRequestService.normalize_name_part(obj.middle_name),
+            ProfileChangeRequestService.normalize_name_part(obj.last_name),
         ]
         return ' '.join(part for part in parts if part)
 

@@ -54,7 +54,7 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             Q(actor_label__icontains=search)
             | Q(entity_label__icontains=search)
             | Q(actor__username__icontains=search)
-        )
+        ).order_by('-created_at', '-id')
 
     def _apply_filters(self, qs):
         params = self.request.query_params

@@ -56,10 +56,12 @@ def build_login_url() -> str:
 
 
 def _build_full_name(user: User) -> str:
-    parts = [user.last_name, user.first_name]
+    parts = [user.first_name]
     middle_name = getattr(user, 'middle_name', '') or ''
     if middle_name:
         parts.append(middle_name)
+    if user.last_name:
+        parts.append(user.last_name)
     return ' '.join(part for part in parts if part).strip() or user.username
 
 
