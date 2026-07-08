@@ -79,10 +79,10 @@ class CMSUserProfileSerializer(ModelSerializer):
 
 class CMSUserMenuSerializer(ModelSerializer):
     """
-    Минимальный сериализатор пользователя для меню.
-    Возвращает только необходимые данные для отображения в боковом меню:
-    username, email, first_name, middle_name, full_name, initials_name.
-    Используется в эндпоинте /api/cms/adp/user-menu-data/
+    Минимальный сериализатор пользователя для меню и session-bootstrap.
+    Возвращает данные для бокового меню и карточки профиля:
+    username, email, first_name, middle_name, full_name, initials_name, date_joined.
+    Используется в эндпоинте /api/cms/adp/user-menu-data/ и session-bootstrap.
     """
     full_name = SerializerMethodField(read_only=True)
     initials_name = SerializerMethodField(read_only=True)
@@ -97,8 +97,9 @@ class CMSUserMenuSerializer(ModelSerializer):
             'middle_name',
             'full_name',
             'initials_name',
+            'date_joined',
         ]
-        read_only_fields = ['id', 'full_name', 'initials_name']
+        read_only_fields = ['id', 'full_name', 'initials_name', 'date_joined']
 
     def get_full_name(self, obj):
         full_name = obj.get_full_name()
