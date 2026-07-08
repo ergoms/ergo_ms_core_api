@@ -45,14 +45,14 @@ class ModuleDiscoverer:
                               - 'module:<name>' для внешних модулей
                               - 'core:<name>'   для внутренних core-модулей
         """
-        from src.core.utils.module_registry import get_disabled_modules
+        from src.core.utils.module_registry import get_disabled_modules, is_valid_module_dir_name
         disabled = get_disabled_modules()
         result: Dict[str, str] = {}
 
         # 1. Внешние модули (modules/<module_name>/client/js/routes.js)
         if MODULES_DIR.exists() and MODULES_DIR.is_dir():
             for module_dir in MODULES_DIR.iterdir():
-                if not module_dir.is_dir():
+                if not module_dir.is_dir() or not is_valid_module_dir_name(module_dir.name):
                     continue
                 if module_dir.name in disabled:
                     continue
@@ -130,11 +130,11 @@ class ModuleDiscoverer:
         if not os.path.isdir(modules_dir):
             return
         
-        from src.core.utils.module_registry import get_disabled_modules
+        from src.core.utils.module_registry import get_disabled_modules, is_valid_module_dir_name
         disabled = get_disabled_modules()
 
         for module_name in os.listdir(modules_dir):
-            if module_name in disabled:
+            if module_name in disabled or not is_valid_module_dir_name(module_name):
                 continue
             module_path = os.path.join(modules_dir, module_name)
             
@@ -240,11 +240,11 @@ class ModuleDiscoverer:
         if not os.path.isdir(modules_dir):
             return
         
-        from src.core.utils.module_registry import get_disabled_modules
+        from src.core.utils.module_registry import get_disabled_modules, is_valid_module_dir_name
         disabled = get_disabled_modules()
 
         for module_name in os.listdir(modules_dir):
-            if module_name in disabled:
+            if module_name in disabled or not is_valid_module_dir_name(module_name):
                 continue
             module_path = os.path.join(modules_dir, module_name)
             

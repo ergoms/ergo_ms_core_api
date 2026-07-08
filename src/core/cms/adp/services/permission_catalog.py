@@ -7,7 +7,7 @@
 """
 import importlib
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 
 logger = logging.getLogger('utils')
 
@@ -85,6 +85,92 @@ def get_module_permission_keys(module_name: str) -> Dict[str, str]:
     if not catalog:
         return {}
     return dict(catalog.get('permissions', {}))
+
+
+def _format_module_slug(module_name: str) -> str:
+    """Читаемая подпись из slug папки модуля."""
+    return module_name.replace('-', ' ').replace('_', ' ').strip().title()
+
+
+def _resolve_module_label(module_name: str, catalog: Optional[Dict] = None) -> str:
+    """Человекочитаемое имя модуля: из каталога, AppConfig или slug."""
+    if catalog:
+        label = catalog.get('module_label')
+        if isinstance(label, str) and label.strip():
+            return label.strip()
+
+    try:
+        from django.apps import apps
+
+        app_config = apps.get_app_config(module_name)
+        verbose_name = getattr(app_config, 'verbose_name', None)
+        if isinstance(verbose_name, str) and verbose_name.strip():
+            return verbose_name.strip()
+    except LookupError:
+        pass
+
+    return _format_module_slug(module_name)
+
+
+def _merge_stored_module_permissions(modules: List[Dict[str, Any]], *, disabled: FrozenSet[str]) -> None:
+    """Дополняет каталог ключами прав, уже сохранёнными в ModulePermission."""
+    from src.core.cms.adp.models import ModulePermission
+
+    by_name = {item['module_name']: item for item in modules}
+    rows = (
+        ModulePermission.objects
+        .values('module_name', 'permission_key', 'permission_name')
+        .order_by('module_name', 'permission_key')
+        .distinct()
+    )
+    for row in rows:
+        module_name = row['module_name']
+        if module_name not in by_name:
+            by_name[module_name] = {
+                'module_name': module_name,
+                'module_label': _format_module_slug(module_name),
+                'has_permission_catalog': False,
+                'permissions': {},
+                'disabled': module_name in disabled,
+            }
+            modules.append(by_name[module_name])
+
+        permissions = by_name[module_name]['permissions']
+        key = row['permission_key']
+        if key and key not in permissions:
+            label = (row.get('permission_name') or '').strip()
+            permissions[key] = label or key
+
+    modules.sort(key=lambda item: item['module_name'])
+
+
+def get_modules_catalog(*, include_disabled: bool = False) -> List[Dict[str, Any]]:
+    """
+    Централизованный каталог модулей для UI и ADP.
+
+    Список модулей — из папки modules/. Права подсказываются из
+    permission_catalog.py модуля (если есть) и из уже сохранённых
+    записей ModulePermission в БД.
+    """
+    from src.core.utils.module_registry import get_disabled_modules, get_installed_module_names
+
+    disabled = get_disabled_modules()
+    permission_catalogs = _get_cache()['catalogs']
+    modules: List[Dict[str, Any]] = []
+
+    for module_name in get_installed_module_names(include_disabled=include_disabled):
+        catalog = permission_catalogs.get(module_name)
+        permissions = dict(catalog.get('permissions', {})) if catalog else {}
+        modules.append({
+            'module_name': module_name,
+            'module_label': _resolve_module_label(module_name, catalog),
+            'has_permission_catalog': bool(catalog and catalog.get('permissions')),
+            'permissions': permissions,
+            'disabled': module_name in disabled,
+        })
+
+    _merge_stored_module_permissions(modules, disabled=disabled)
+    return modules
 
 
 def clear_cache() -> None:

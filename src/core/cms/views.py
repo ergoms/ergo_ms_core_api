@@ -140,19 +140,25 @@ class GetCMSPages(BaseAPIViewAuthMixin):
         if not _has_admin_panel_access(request.user):
             return Response(status=status.HTTP_403_FORBIDDEN)
 
-        from src.core.cms.client_routes_cache import get_client_routes_index
+        from src.core.cms.client_routes_cache import get_client_routes_catalog
+        from src.core.cms.models import PAGE_TYPE_WITHOUT_LIMITATIONS
 
-        path_to_module = get_client_routes_index()
+        routes_catalog = get_client_routes_catalog()
+        cms_pages_by_path = {
+            normalize_cms_path(page.path.replace('\\\\', '\\')): page
+            for page in CMSPage.objects.all()
+        }
+
         pages_list = []
-        for page in CMSPage.objects.all():
-            raw_path = page.path.replace('\\\\', '\\')
-            normalized_path = normalize_cms_path(raw_path)
-            module_name = path_to_module.get(normalized_path, 'core')
+        for path in sorted(routes_catalog.keys()):
+            route_meta = routes_catalog.get(path, {})
+            cms_page = cms_pages_by_path.get(path)
             pages_list.append({
-                'id': page.id,
-                'path': page.path,
-                'type': page.page_type,
-                'module_name': module_name,
+                'id': cms_page.id if cms_page else None,
+                'path': path,
+                'type': cms_page.page_type if cms_page else PAGE_TYPE_WITHOUT_LIMITATIONS,
+                'module_name': route_meta.get('module_name', 'core'),
+                'title': route_meta.get('title', ''),
             })
 
         return Response({'pages': pages_list}, status=status.HTTP_200_OK)

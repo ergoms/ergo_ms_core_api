@@ -36,9 +36,72 @@ def _extract_route_paths_from_js_content(content: str) -> set[str]:
     return paths
 
 
-def _extract_paths_from_client_config() -> dict[str, str]:
+def _extract_title_from_route_block(block: str) -> str:
+    title_match = re.search(r'["\']title["\']\s*:\s*["\']([^"\']*)["\']', block)
+    if not title_match:
+        return ''
+    title = title_match.group(1).strip()
+    return '' if title == '-' else title
+
+
+def _extract_routes_catalog_from_js_content(content: str, module_name: str) -> dict[str, dict[str, str]]:
+    catalog: dict[str, dict[str, str]] = {}
+
+    for match in re.finditer(r'["\'][\w]+["\']\s*:\s*\{', content):
+        start = match.end() - 1
+        depth = 0
+        end = start
+        for index, char in enumerate(content[start:], start):
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+
+        block = content[start:end]
+        path_match = re.search(r'["\']path["\']\s*:\s*["\']([^"\']+)["\']', block)
+        if not path_match:
+            continue
+
+        path = normalize_cms_path(path_match.group(1).replace('\\\\', '\\'))
+        if not _is_cms_route_path(path):
+            continue
+
+        title = _extract_title_from_route_block(block)
+        existing = catalog.get(path, {})
+        if title and not existing.get('title'):
+            existing['title'] = title
+        existing['module_name'] = module_name
+        catalog[path] = existing
+
+    return catalog
+
+
+def _merge_catalog_entry(
+    catalog: dict[str, dict[str, str]],
+    path: str,
+    module_name: str,
+    title: str = '',
+) -> None:
+    normalized = normalize_cms_path(path)
+    if not _is_cms_route_path(normalized):
+        return
+
+    if title == '-':
+        title = ''
+
+    existing = catalog.get(normalized, {})
+    if title and not existing.get('title'):
+        existing['title'] = title
+    existing['module_name'] = module_name
+    catalog[normalized] = existing
+
+
+def _extract_catalog_from_client_config() -> dict[str, dict[str, str]]:
     """Auth и shell-маршруты из core/client/src/config/routes.js."""
-    path_to_module: dict[str, str] = {}
+    catalog: dict[str, dict[str, str]] = {}
     routes_config_path = SYSTEM_DIR / 'core' / 'client' / 'src' / 'config' / 'routes.js'
 
     try:
@@ -53,26 +116,24 @@ def _extract_paths_from_client_config() -> dict[str, str]:
                 path = route.get('path')
                 if not path:
                     continue
-                normalized = normalize_cms_path(path)
-                if _is_cms_route_path(normalized):
-                    path_to_module.setdefault(normalized, 'core')
+                title = (route.get('meta') or {}).get('title', '') or ''
+                _merge_catalog_entry(catalog, path, 'core', title)
 
         for route_data in routes_config.get('routes', {}).values():
             path = route_data.get('path')
             if not path:
                 continue
-            normalized = normalize_cms_path(path)
-            if _is_cms_route_path(normalized):
-                path_to_module.setdefault(normalized, 'core')
+            title = (route_data.get('meta') or {}).get('title', '') or ''
+            _merge_catalog_entry(catalog, path, 'core', title)
     except (OSError, json.JSONDecodeError):
         pass
 
-    return path_to_module
+    return catalog
 
 
-def discover_client_routes_index() -> dict[str, str]:
-    """Пути client-маршрутов → имя модуля (core или module)."""
-    path_to_module: dict[str, str] = dict(_extract_paths_from_client_config())
+def discover_client_routes_catalog() -> dict[str, dict[str, str]]:
+    """Пути client-маршрутов → метаданные {module_name, title}."""
+    catalog: dict[str, dict[str, str]] = dict(_extract_catalog_from_client_config())
 
     discoverer = ModuleDiscoverer()
     route_modules = discoverer.discover_client_route_modules()
@@ -87,12 +148,28 @@ def discover_client_routes_index() -> dict[str, str]:
             with open(routes_path, 'r', encoding='utf-8') as routes_file:
                 routes_content = routes_file.read()
 
-            for normalized in _extract_route_paths_from_js_content(routes_content):
-                path_to_module.setdefault(normalized, module_name)
+            for path, entry in _extract_routes_catalog_from_js_content(
+                routes_content,
+                module_name,
+            ).items():
+                existing = catalog.get(path, {})
+                if entry.get('title') and not existing.get('title'):
+                    existing['title'] = entry['title']
+                existing['module_name'] = module_name
+                catalog[path] = existing
         except OSError:
             continue
 
-    return path_to_module
+    return catalog
+
+
+def discover_client_routes_index() -> dict[str, str]:
+    """Пути client-маршрутов → имя модуля (core или module)."""
+    catalog = discover_client_routes_catalog()
+    return {
+        path: entry.get('module_name', 'core')
+        for path, entry in catalog.items()
+    }
 
 
 def extract_paths_from_routes_config() -> set[str]:

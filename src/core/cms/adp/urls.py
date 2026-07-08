@@ -43,6 +43,7 @@ from src.core.cms.adp.views_roles import (
     CheckURLAccessView,
     ModulePermissionListView,
     ModulePermissionDetailView,
+    ModuleCatalogView,
 )
 from src.core.cms.adp.views_admin_users import (
     AdminUserRoleListView,
@@ -142,6 +143,7 @@ urlpatterns = [
     path('check-url-access/', CheckURLAccessView.as_view(), name='check_url_access'),
     path('module-permissions/', ModulePermissionListView.as_view(), name='module_permissions'),
     path('module-permissions/<int:permission_id>/', ModulePermissionDetailView.as_view(), name='module_permission_detail'),
+    path('module-catalog/', ModuleCatalogView.as_view(), name='module_catalog'),
     path('admin-users/', AdminUserRoleListView.as_view(), name='admin_users'),
     path('admin-users/<int:user_id>/', AdminUserDetailView.as_view(), name='admin_user_detail'),
     path('admin-users/<int:user_id>/avatar/', AdminUserAvatarView.as_view(), name='admin_user_avatar'),

@@ -5,6 +5,7 @@ from .permissions import PermissionService
 from .permission_catalog import (
     get_all_permission_keys,
     get_module_names,
+    get_modules_catalog,
     resolve_module_name,
     get_module_permission_keys,
 )
@@ -18,6 +19,7 @@ __all__ = [
     'PermissionService',
     'get_all_permission_keys',
     'get_module_names',
+    'get_modules_catalog',
     'resolve_module_name',
     'get_module_permission_keys',
     'apply_user_search',

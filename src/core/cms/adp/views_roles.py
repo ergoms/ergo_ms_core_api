@@ -615,3 +615,33 @@ class ModulePermissionDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class ModuleCatalogView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
+    """
+    Централизованный каталог установленных модулей и их прав ADP.
+    Только для глобальных администраторов.
+    """
+
+    @swagger_auto_schema(
+        operation_description=(
+            'Получить каталог модулей: имена, подписи и словарь permission_key → название '
+            '(если модуль опубликовал permission_catalog.py).'
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                'include_disabled',
+                openapi.IN_QUERY,
+                description='Включить отключённые модули (DISABLED_MODULES)',
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+            ),
+        ],
+        responses={200: openapi.Response(description='Каталог модулей')},
+    )
+    def get(self, request):
+        from src.core.cms.adp.services import get_modules_catalog
+
+        include_disabled = request.query_params.get('include_disabled', '').lower() in (
+            '1', 'true', 'yes',
+        )
+        return Response({'modules': get_modules_catalog(include_disabled=include_disabled)})
+

@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 
 from src.config.settings.base import CORE_DIR, MODULES_DIR, SYSTEM_DIR, VIRTUAL_ENV_DIR
-from src.core.cms.scripts import discover_client_routes_index
+from src.core.cms.scripts import discover_client_routes_catalog
 from src.core.utils.auto_api.auto_config import ModuleDiscoverer
 from src.core.utils.cache_io import read_bin_cache, write_bin_cache
 
@@ -69,7 +69,21 @@ def _is_cache_valid(cached: dict) -> bool:
     if cached.get('fingerprint') != _get_fingerprint():
         return False
     data = cached.get('data')
-    return isinstance(data, dict)
+    catalog = cached.get('catalog')
+    return isinstance(data, dict) and isinstance(catalog, dict)
+
+
+def _build_cache_payload() -> dict:
+    catalog = discover_client_routes_catalog()
+    data = {
+        path: entry.get('module_name', 'core')
+        for path, entry in catalog.items()
+    }
+    return {
+        'fingerprint': _get_fingerprint(),
+        'data': data,
+        'catalog': catalog,
+    }
 
 
 def get_client_routes_index(*, use_cache: bool = True) -> dict[str, str]:
@@ -78,15 +92,30 @@ def get_client_routes_index(*, use_cache: bool = True) -> dict[str, str]:
         if _is_cache_valid(cached):
             return dict(cached['data'])
 
-    data = discover_client_routes_index()
-    payload = {
-        'fingerprint': _get_fingerprint(),
-        'data': data,
-    }
+    payload = _build_cache_payload()
     if use_cache:
         write_bin_cache(CACHE_FILE, payload)
-        logger.debug('Кэш client routes index обновлён (%s путей)', len(data))
-    return data
+        logger.debug('Кэш client routes index обновлён (%s путей)', len(payload['data']))
+    return dict(payload['data'])
+
+
+def get_client_routes_catalog(*, use_cache: bool = True) -> dict[str, dict[str, str]]:
+    if use_cache:
+        cached = read_bin_cache(CACHE_FILE)
+        if _is_cache_valid(cached):
+            return {
+                path: dict(entry)
+                for path, entry in cached['catalog'].items()
+            }
+
+    payload = _build_cache_payload()
+    if use_cache:
+        write_bin_cache(CACHE_FILE, payload)
+        logger.debug('Кэш client routes catalog обновлён (%s путей)', len(payload['catalog']))
+    return {
+        path: dict(entry)
+        for path, entry in payload['catalog'].items()
+    }
 
 
 def invalidate_client_routes_index_cache() -> None:
