@@ -13,7 +13,9 @@ from typing import Any, Optional
 
 import pandas as pd
 from django.conf import settings
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 from django.utils import timezone
 
 from src.core.cms.adp.services.permissions import PermissionService

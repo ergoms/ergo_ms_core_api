@@ -3,7 +3,9 @@
 import logging
 
 from django.apps import apps
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 from django.db import connection, models, transaction
 from django.db.models.deletion import ProtectedError
 from django.db.utils import IntegrityError, ProgrammingError

@@ -1,7 +1,11 @@
-from django.db import models
-from django.contrib.auth.models import User, Group
+from django.conf import settings
+from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
+from django.db import models
 import json
+
+if getattr(settings, 'AUTH_USER_MODEL', None) == 'cms_adp.ErgoUser':
+    from src.core.cms.adp.ergo_user import ErgoUser  # noqa: F401
 
 
 class EmailConfirmationCode(models.Model):
@@ -14,7 +18,7 @@ class EmailConfirmationCode(models.Model):
 
 
 class UserProfile(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='adp_profile')
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='adp_profile')
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
     bio = models.TextField(max_length=500, blank=True, null=True)
@@ -64,7 +68,7 @@ class UserDevice(models.Model):
         ('tablet', 'Tablet'),
     ]
     
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='devices')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='devices')
     device_type = models.CharField(max_length=20, choices=DEVICE_TYPES)
     device_name = models.CharField(max_length=100)
     ip_address = models.GenericIPAddressField()
@@ -91,7 +95,7 @@ class UserDevice(models.Model):
 
 class UserPresence(models.Model):
     user = models.OneToOneField(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='presence',
         verbose_name='Пользователь',
@@ -269,7 +273,7 @@ class UserRole(models.Model):
     """
     Связь пользователей с ролями и группами.
     """
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_roles', verbose_name='Пользователь')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='user_roles', verbose_name='Пользователь')
     role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='user_assignments', verbose_name='Роль')
     role_groups = models.ManyToManyField(
         RoleGroup, 
@@ -281,7 +285,7 @@ class UserRole(models.Model):
     is_active = models.BooleanField(default=True, verbose_name='Активна')
     assigned_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата назначения')
     assigned_by = models.ForeignKey(
-        User, 
+        settings.AUTH_USER_MODEL, 
         on_delete=models.SET_NULL, 
         null=True, 
         blank=True,
@@ -345,7 +349,7 @@ class RegistrationInvitation(models.Model):
     email = models.EmailField(verbose_name='Email')
     token = models.CharField(max_length=64, unique=True, db_index=True, verbose_name='Токен')
     invited_by = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -356,7 +360,7 @@ class RegistrationInvitation(models.Model):
     expires_at = models.DateTimeField(verbose_name='Действует до')
     used_at = models.DateTimeField(null=True, blank=True, verbose_name='Использовано')
     used_by = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -389,7 +393,7 @@ class UserProfileChangeRequest(models.Model):
     ]
 
     user = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='profile_change_requests',
         verbose_name='Пользователь',
@@ -409,7 +413,7 @@ class UserProfileChangeRequest(models.Model):
     )
     admin_comment = models.CharField(max_length=500, blank=True, default='', verbose_name='Комментарий администратора')
     reviewed_by = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

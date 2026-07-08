@@ -7,7 +7,9 @@ from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin, BaseAPIViewGlobalAdminMixin
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
 from src.core.cms.adp.serializers import (
@@ -371,7 +373,6 @@ class UserRoleAssignView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         role_group_ids = request.data.get('role_group_ids', [])
         
         try:
-            from django.contrib.auth.models import User
             user = User.objects.get(id=user_id)
             role = Role.objects.get(id=role_id)
             

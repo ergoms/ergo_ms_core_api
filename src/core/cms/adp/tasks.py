@@ -5,7 +5,9 @@ import logging
 import pandas as pd
 from celery import shared_task
 from django.db import transaction
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 from src.core.integrations import bridge
 from src.core.cms.adp.services.import_users_passwords import store_import_passwords

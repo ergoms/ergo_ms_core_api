@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 
 from django.conf import settings
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 from django.core.cache import cache
 
 from src.core.cms.adp.serializers import UserPermissionsSerializer

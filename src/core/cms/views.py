@@ -7,7 +7,9 @@ from rest_framework.request import Request
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 from src.core.utils.base.base_views import BaseAPIViewAuthMixin
 from src.core.cms.models import CMSPage

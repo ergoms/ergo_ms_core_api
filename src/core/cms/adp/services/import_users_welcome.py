@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from django.conf import settings
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 from src.core.utils.plain_mail import normalize_recipient_email, send_plain_email
 
 DEFAULT_WELCOME_SUBJECT = 'Добро пожаловать в ERGO MS'

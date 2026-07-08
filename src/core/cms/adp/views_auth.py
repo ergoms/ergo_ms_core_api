@@ -3,7 +3,10 @@ import logging
 import re
 
 from django.contrib.auth import authenticate
-from django.contrib.auth.models import User, update_last_login
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import update_last_login
+
+User = get_user_model()
 from django.utils.crypto import get_random_string
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema

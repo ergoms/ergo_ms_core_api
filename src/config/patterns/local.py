@@ -37,3 +37,9 @@ for file_path in settings_dir.glob('*.py'):
         })
     except ImportError as e:
         print(f"Ошибка импорта модуля {module_path}: {e}")
+
+from src.config.settings.user_swappable import resolve_auth_user_model
+
+_resolved_auth_user_model = resolve_auth_user_model(DATABASES)
+if _resolved_auth_user_model:
+    AUTH_USER_MODEL = _resolved_auth_user_model

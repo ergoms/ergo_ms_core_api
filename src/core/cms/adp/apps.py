@@ -1,7 +1,6 @@
 """
 Файл конфигурации Django приложения/модуля ADP.
 
-
 Этот файл содержит класс конфигурации приложения, который определяет основные настройки,
 такие как имя приложения и настройки базы данных по умолчанию.
 
@@ -16,16 +15,15 @@ from django.apps import AppConfig
 
 def create_system_roles_signal_handler(sender, **kwargs):
     """Создает системные роли после применения миграций."""
-    from src.core.cms.adp.services.permissions import PermissionService
     from django.db import OperationalError, ProgrammingError
-    
+
+    from src.core.cms.adp.services.permissions import PermissionService
+
     try:
         PermissionService.ensure_system_roles()
     except (OperationalError, ProgrammingError):
-        # Таблицы еще не созданы - это нормально
         pass
     except Exception:
-        # Игнорируем любые другие ошибки
         pass
 
 
@@ -35,21 +33,14 @@ class AdpConfig(AppConfig):
     label = 'cms_adp'
 
     def ready(self):
-        import sys
-
-        if 'makemigrations' not in sys.argv:
-            from src.core.cms.adp.user_extensions import apply_user_extensions
-
-            apply_user_extensions()
-
-        # Регистрация сигналов приложения ADP
         from src.core.cms.adp import signals  # noqa: F401
-        
-        # Регистрируем обработчик для создания системных ролей после миграций
+
+        signals.connect_user_signals()
+
         from django.db.models.signals import post_migrate
-        
+
         post_migrate.connect(
             create_system_roles_signal_handler,
             sender=self,
-            dispatch_uid='cms_adp.create_system_roles'
+            dispatch_uid='cms_adp.create_system_roles',
         )

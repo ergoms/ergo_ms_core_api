@@ -2,8 +2,8 @@
 Модели для управления боковым меню.
 """
 
+from django.conf import settings
 from django.db import models
-from django.contrib.auth.models import User
 from django.db.models import Max
 
 from src.core.cms.adp.models import Role, RoleGroup
@@ -187,8 +187,7 @@ class MenuAccessLog(models.Model):
     Лог доступа к элементам меню.
     Для аналитики и аудита.
     """
-    user = models.ForeignKey(
-        User, 
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, 
         on_delete=models.CASCADE, 
         related_name='menu_access_logs',
         verbose_name='Пользователь'

@@ -18,6 +18,8 @@ from django.conf import settings
 from src.config.env import env
 from src.config.settings.drf import DRF_BROWSABLE_ENABLED
 
+# AUTH_USER_MODEL — в user_swappable.py (после database.py, по записи в django_migrations).
+
 # Настройка ограничения запросов для анонимных и аутентифицированных пользователей.
 THROTTLE_RATES_ANON = env.str('API_THROTTLE_RATES_ANON', default='10/minute')
 THROTTLE_RATES_USER = env.str('API_THROTTLE_RATES_USER', default='5000/hour')

@@ -1,6 +1,5 @@
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from django.db.models.signals import post_save
-from django.dispatch import receiver
 from django.db import OperationalError, ProgrammingError
 import logging
 
@@ -10,7 +9,7 @@ from src.core.cms.adp.services.permissions import PermissionService
 logger = logging.getLogger(__name__)
 
 
-def _ensure_global_admin_role(user: User) -> None:
+def _ensure_global_admin_role(user) -> None:
     """Django superuser и ADP-роль «Администратор» — единая сущность."""
     admin_role = PermissionService._get_or_create_admin_role()
     has_active_admin = UserRole.objects.filter(
@@ -22,7 +21,6 @@ def _ensure_global_admin_role(user: User) -> None:
         PermissionService.assign_role_to_user(user, admin_role)
 
 
-@receiver(post_save, sender=User)
 def sync_user_role_on_save(sender, instance, created, **kwargs):
     """
     Синхронизирует ADP-роль с флагами Django admin:
@@ -51,3 +49,13 @@ def sync_user_role_on_save(sender, instance, created, **kwargs):
             f"Ошибка при назначении роли пользователю {instance.username}: {e}",
             exc_info=True
         )
+
+
+def connect_user_signals() -> None:
+    """Подключает сигналы к текущей модели пользователя (ErgoUser)."""
+    user_model = get_user_model()
+    post_save.connect(
+        sync_user_role_on_save,
+        sender=user_model,
+        dispatch_uid='cms_adp.sync_user_role_on_save',
+    )
