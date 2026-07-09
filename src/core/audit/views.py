@@ -112,6 +112,8 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         search = (params.get('q') or '').strip()
         if search:
             qs = self._apply_search_filter(qs, search)
+        else:
+            qs = qs.order_by('-created_at', '-id')
 
         return qs
 

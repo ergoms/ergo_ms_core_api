@@ -1,4 +1,6 @@
-"""Пагинация журнала аудита без COUNT(*) по всей таблице."""
+"""Пагинация журнала аудита с count по отфильтрованному queryset."""
+
+from math import ceil
 
 from rest_framework.pagination import BasePagination
 from rest_framework.response import Response
@@ -23,21 +25,29 @@ class AuditPagination(BasePagination):
             page_number = 1
         page_number = max(1, page_number)
 
+        self.total_count = queryset.count()
+        total_pages = max(1, ceil(self.total_count / page_size)) if self.total_count else 1
+        if page_number > total_pages:
+            page_number = total_pages
+
         offset = (page_number - 1) * page_size
-        slice_end = offset + page_size + 1
-        page_items = list(queryset[offset:slice_end])
-        self.has_next = len(page_items) > page_size
+        page_items = list(queryset[offset:offset + page_size])
+
+        self.has_next = page_number < total_pages
         self.has_previous = page_number > 1
         self.page_number = page_number
         self.page_size = page_size
+        self.total_pages = total_pages
         self.request = request
-        return page_items[:page_size]
+        return page_items
 
     def get_paginated_response(self, data):
         return Response({
             'results': data,
+            'count': self.total_count,
             'page': self.page_number,
             'page_size': self.page_size,
+            'total_pages': self.total_pages,
             'has_next': self.has_next,
             'has_previous': self.has_previous,
         })
@@ -47,8 +57,10 @@ class AuditPagination(BasePagination):
             'type': 'object',
             'properties': {
                 'results': schema,
+                'count': {'type': 'integer'},
                 'page': {'type': 'integer'},
                 'page_size': {'type': 'integer'},
+                'total_pages': {'type': 'integer'},
                 'has_next': {'type': 'boolean'},
                 'has_previous': {'type': 'boolean'},
             },
