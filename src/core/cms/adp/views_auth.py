@@ -472,32 +472,22 @@ class UserAuthorizationView(BaseAPIView):
         device_type = detect_device_type(user_agent)
         device_name = build_device_display_name(user_agent, device_type)
 
-        device = UserDevice.objects.filter(
-            user=user,
-            ip_address=ip_address,
-            user_agent=user_agent,
-        ).first()
-
-        if device is not None:
-            device.is_active = True
-            device.device_name = device_name
-            device.device_type = device_type
-            device.save(update_fields=['is_active', 'device_name', 'device_type', 'last_activity'])
-            return device
-
         from src.core.utils.geoip import resolve_ip_location
 
         city, country = resolve_ip_location(ip_address)
 
-        return UserDevice.objects.create(
+        device, _created = UserDevice.objects.update_or_create(
             user=user,
-            ip_address=ip_address,
-            device_type=device_type,
             device_name=device_name,
-            user_agent=user_agent,
-            city=city,
-            country=country,
-            is_active=True,
+            ip_address=ip_address,
+            defaults={
+                'device_type': device_type,
+                'user_agent': user_agent,
+                'city': city,
+                'country': country,
+                'is_active': True,
+            },
         )
+        return device
 
 

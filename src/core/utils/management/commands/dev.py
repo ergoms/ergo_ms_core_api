@@ -10,6 +10,7 @@
 
 import logging
 import os
+import subprocess
 import sys
 
 try:
@@ -20,6 +21,8 @@ from django.core.management.base import CommandParser
 
 from django.conf import settings
 
+from src.config.deploy import build_daphne_command, get_api_bind_host, get_api_bind_port, is_production
+from src.config.paths import API_DIR
 from src.core.utils.startup_timing import get_elapsed, get_elapsed_str
 
 logger = logging.getLogger('core.utils.commands')
@@ -86,6 +89,18 @@ class Command(RunserverCommand):
             *args: Позиционные аргументы
             **options: Именованные аргументы
         """
+        if is_production():
+            host = get_api_bind_host()
+            port = get_api_bind_port()
+            msg = f'API [production]: daphne on {host}:{port} (без autoreload)'
+            logger.info(msg)
+            try:
+                self.stdout.write(self.style.SUCCESS(msg))
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+            cmd = build_daphne_command(sys.executable)
+            raise SystemExit(subprocess.call(cmd, cwd=str(API_DIR)))
+
         is_reloader_child = os.environ.get('RUN_MAIN') == 'true'
         role = 'autoreload child (рабочий процесс)' if is_reloader_child else 'autoreload parent (launcher)'
         logger.info('Запуск команды runserver (%s)', role)

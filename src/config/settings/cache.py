@@ -2,8 +2,8 @@
 Настройки Django CACHES из переменных окружения (.env).
 
 Режимы API_CACHE_BACKEND:
-- file   — файловый кэш в virtual_env/cache/django (по умолчанию)
-- locmem — in-process (один воркер, разработка)
+- locmem — in-process (по умолчанию; разработка, один воркер)
+- file   — файловый кэш в virtual_env/cache/django
 - redis  — Redis (общий кэш для нескольких воркеров)
 - dummy  — отключён (тесты, отладка)
 """
@@ -11,7 +11,7 @@
 from src.config.env import env
 from src.config.settings.base import VIRTUAL_ENV_DIR
 
-CACHE_BACKEND = env.str('API_CACHE_BACKEND', default='file').strip().lower()
+CACHE_BACKEND = env.str('API_CACHE_BACKEND', default='locmem').strip().lower()
 CACHE_DEFAULT_TIMEOUT = env.int('API_CACHE_DEFAULT_TIMEOUT', default=300)
 
 _django_cache_dir = VIRTUAL_ENV_DIR / 'cache' / 'django'

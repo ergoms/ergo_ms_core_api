@@ -138,28 +138,25 @@ def ensure_legacy_device(request) -> UserDevice | None:
 
     ip_address = get_client_ip(request)
     user_agent = request.META.get('HTTP_USER_AGENT', '')
-    if UserDevice.objects.filter(
-        user=user,
-        ip_address=ip_address,
-        user_agent=user_agent,
-        is_active=True,
-    ).exists():
-        return None
-
     device_type = detect_device_type(user_agent)
+    device_name = build_device_display_name(user_agent, device_type)
+
     from src.core.utils.geoip import resolve_ip_location
 
     city, country = resolve_ip_location(ip_address)
-    return UserDevice.objects.create(
+    device, _created = UserDevice.objects.update_or_create(
         user=user,
+        device_name=device_name,
         ip_address=ip_address,
-        device_type=device_type,
-        device_name=build_device_display_name(user_agent, device_type),
-        user_agent=user_agent,
-        city=city,
-        country=country,
-        is_active=True,
+        defaults={
+            'device_type': device_type,
+            'user_agent': user_agent,
+            'city': city,
+            'country': country,
+            'is_active': True,
+        },
     )
+    return device
 
 
 def touch_device_activity(request) -> UserDevice | None:
