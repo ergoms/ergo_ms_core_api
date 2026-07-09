@@ -81,10 +81,6 @@ STORAGES = {
     },
 }
 
-# Ограничения задач
-TASKS_MAX_ATTACHMENT_SIZE_MB = int(os.getenv('TASKS_MAX_ATTACHMENT_SIZE_MB', '600'))
-TASKS_MAX_ATTACHMENT_SIZE_BYTES = TASKS_MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
-
 # Media API (CDN / file server)
 MEDIA_API_PUBLIC_BASE_URL = media_api_public_base_url()
 MEDIA_API_INTERNAL_BASE_URL = media_api_internal_base_url()
