@@ -4,6 +4,7 @@ import logging
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from src.core.cms.adp.ws_auth import user_from_jwt_token
+from src.core.utils.maintenance import is_maintenance_enabled
 from src.core.realtime.envelope import (
     WS_AUTH_EVENT,
     WS_AUTH_OK_EVENT,
@@ -32,6 +33,8 @@ class JwtMessageAuthConsumer(AsyncJsonWebsocketConsumer):
     _auth_timeout_task: asyncio.Task | None = None
 
     async def connect(self):
+        if is_maintenance_enabled():
+            return
         self.ws_user = None
         self._auth_pending = True
         await self.accept()

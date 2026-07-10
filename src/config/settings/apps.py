@@ -50,6 +50,11 @@ MIDDLEWARE = [
     'whitenoise.middleware.WhiteNoiseMiddleware'
 ]
 
+_security_index = MIDDLEWARE.index('django.middleware.security.SecurityMiddleware')
+MIDDLEWARE.insert(
+    _security_index + 1,
+    'src.core.utils.middleware.maintenance_middleware.MaintenanceMiddleware',
+)
+
 if env.bool('API_GZIP_ENABLED', default=True):
-    _security_index = MIDDLEWARE.index('django.middleware.security.SecurityMiddleware')
-    MIDDLEWARE.insert(_security_index + 1, 'django.middleware.gzip.GZipMiddleware')
+    MIDDLEWARE.insert(_security_index + 2, 'django.middleware.gzip.GZipMiddleware')
