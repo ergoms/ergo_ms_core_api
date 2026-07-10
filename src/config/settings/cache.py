@@ -9,6 +9,7 @@
 """
 
 from src.config.env import env
+from src.config.redis_runtime import redis_connection_options
 from src.config.settings.base import VIRTUAL_ENV_DIR
 
 CACHE_BACKEND = env.str('API_CACHE_BACKEND', default='locmem').strip().lower()
@@ -23,6 +24,7 @@ if CACHE_BACKEND == 'redis':
             'BACKEND': 'django.core.cache.backends.redis.RedisCache',
             'LOCATION': _redis_url,
             'TIMEOUT': CACHE_DEFAULT_TIMEOUT,
+            'OPTIONS': redis_connection_options(),
         },
     }
 elif CACHE_BACKEND == 'locmem':
