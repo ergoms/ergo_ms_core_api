@@ -183,8 +183,8 @@ def _merge_env_variables(env_files: List[Tuple[str, str]]) -> Dict[str, Tuple[st
         logger.warning("=" * 60)
         for i, conflict in enumerate(conflicts, 1):
             logger.warning(f"Конфликт #{i}: {conflict['variable']}")
-            logger.warning(f"  📁 {conflict['old_source']}: '{conflict['old_value']}'")
-            logger.warning(f"  📁 {conflict['new_source']}: '{conflict['new_value']}'")
+            logger.warning(f"  📁 {conflict['old_source']}: (значение скрыто)")
+            logger.warning(f"  📁 {conflict['new_source']}: (значение скрыто)")
             logger.warning(f"  ✅ Используется значение из: {conflict['new_source']}")
             logger.warning("-" * 40)
         logger.warning("=" * 60)

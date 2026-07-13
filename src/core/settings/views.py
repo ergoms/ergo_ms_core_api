@@ -48,25 +48,37 @@ class _SettingsAuditMixin(AuditedModelMixin):
     audit_action_map = {'create': 'settings.changed', 'update': 'settings.changed'}
 
 
-class SecuritySettingsViewSet(_SettingsAuditMixin, viewsets.ModelViewSet):
+class SecuritySettingsViewSet(SwaggerSafeMixin, _SettingsAuditMixin, viewsets.ModelViewSet):
     queryset = SecuritySettings.objects.all()
     serializer_class = SecuritySettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
-class MediaSettingsViewSet(_SettingsAuditMixin, viewsets.ModelViewSet):
+    def get_queryset(self):
+        return self.get_safe_queryset(SecuritySettings.objects.all())
+
+class MediaSettingsViewSet(SwaggerSafeMixin, _SettingsAuditMixin, viewsets.ModelViewSet):
     queryset = MediaSettings.objects.all()
     serializer_class = MediaSettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
-class PermalinkSettingsViewSet(_SettingsAuditMixin, viewsets.ModelViewSet):
+    def get_queryset(self):
+        return self.get_safe_queryset(MediaSettings.objects.all())
+
+class PermalinkSettingsViewSet(SwaggerSafeMixin, _SettingsAuditMixin, viewsets.ModelViewSet):
     queryset = PermalinkSettings.objects.all()
     serializer_class = PermalinkSettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
 
-class EmailSettingsViewSet(_SettingsAuditMixin, viewsets.ModelViewSet):
+    def get_queryset(self):
+        return self.get_safe_queryset(PermalinkSettings.objects.all())
+
+class EmailSettingsViewSet(SwaggerSafeMixin, _SettingsAuditMixin, viewsets.ModelViewSet):
     queryset = EmailSettings.objects.all()
     serializer_class = EmailSettingsSerializer
     permission_classes = [IsAuthenticated, IsGlobalAdmin]
+
+    def get_queryset(self):
+        return self.get_safe_queryset(EmailSettings.objects.all())
 
 class UserAvatarViewSet(SwaggerSafeMixin, MediaApiFileMixin, viewsets.ModelViewSet):
     queryset = UserAvatar.objects.all()

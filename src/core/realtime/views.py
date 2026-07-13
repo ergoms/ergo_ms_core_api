@@ -5,13 +5,12 @@ from django.http import StreamingHttpResponse
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from src.core.realtime.renderers import EventStreamRenderer
 from src.core.realtime.stream import sse_event_stream
 from src.core.realtime.subscriptions import subscribe_topic, unsubscribe_topic
-from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
+from src.core.utils.base.base_views import BaseAPIViewAuthMixin
 
 SSE_HEADERS = {
     'Cache-Control': 'no-cache',
@@ -20,9 +19,7 @@ SSE_HEADERS = {
 }
 
 
-class RealtimeConfigView(BaseAPIViewAuthMixin, BaseAPIView):
-    permission_classes = [IsAuthenticated]
-
+class RealtimeConfigView(BaseAPIViewAuthMixin):
     @swagger_auto_schema(
         operation_description='Конфигурация realtime-транспорта и capabilities.',
         responses={200: openapi.Response('Realtime config')},
@@ -41,8 +38,7 @@ class RealtimeConfigView(BaseAPIViewAuthMixin, BaseAPIView):
         })
 
 
-class RealtimeStreamView(BaseAPIViewAuthMixin, BaseAPIView):
-    permission_classes = [IsAuthenticated]
+class RealtimeStreamView(BaseAPIViewAuthMixin):
     renderer_classes = [EventStreamRenderer]
 
     @swagger_auto_schema(
@@ -69,9 +65,7 @@ class RealtimeStreamView(BaseAPIViewAuthMixin, BaseAPIView):
         return response
 
 
-class RealtimeSubscriptionView(BaseAPIViewAuthMixin, BaseAPIView):
-    permission_classes = [IsAuthenticated]
-
+class RealtimeSubscriptionView(BaseAPIViewAuthMixin):
     @swagger_auto_schema(
         operation_description='Подписка или отписка SSE-потока от topic.',
         request_body=openapi.Schema(

@@ -9,6 +9,7 @@ from src.core.integrations import bridge
 
 from .channels_ import get_channels
 from .models import Notification
+from .navigation_validation import sanitize_notification_navigation, validate_notification_navigation
 from .preferences import PreferenceResolver
 from .unread_cache import (
     get_cached_unread_count,
@@ -68,6 +69,14 @@ class NotificationService:
         if not title or not isinstance(title, str):
             logger.warning('NotificationService.dispatch: пустой/некорректный title')
             return None
+
+        nav_errors = validate_notification_navigation(link_url=link_url, route=route)
+        if nav_errors:
+            logger.warning(
+                'NotificationService.dispatch: навигация санитизирована (%s)',
+                '; '.join(nav_errors),
+            )
+        link_url, route = sanitize_notification_navigation(link_url=link_url, route=route)
 
         enabled_channels = PreferenceResolver.get_enabled_channels(
             recipient_id,

@@ -42,12 +42,7 @@ def delete_admin_user(user: User) -> None:
     )
     revoke_user_auth(user)
 
-    if bridge.has('workers.delete_worker_for_user'):
-        bridge.call('workers.delete_worker_for_user', user)
-    if bridge.has('students.delete_student_for_user'):
-        bridge.call('students.delete_student_for_user', user)
-
-    bridge.emit('core.user_delete', user_id=user.id)
+    bridge.emit('core.user_delete', user=user)
 
     _cleanup_core_user_relations(user)
     _delete_user_record(user)

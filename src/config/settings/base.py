@@ -54,7 +54,8 @@ STATIC_URL = '/static/'
 # Корневая директория для статических файлов.
 STATIC_ROOT = VIRTUAL_ENV_DIR / 'static_api'
 
-# URL для доступа к медиа файлам.
+# URL для FileField Django (ORM). Публичная раздача файлов — только через media_api (/serve/),
+# не через этот префикс в HTTP.
 MEDIA_URL = '/media/'
 
 # Корневая директория для медиа файлов.

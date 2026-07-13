@@ -36,8 +36,9 @@ def _create_notification(
             Если пусто — клиент применит fallback по source_module, затем по level.
         source_module (str): идентификатор модуля-источника, например 'lms'.
         event_key (str): тип события внутри модуля, например 'course.review_required'.
-        link_url (str|None): прямой URL для перехода.
-        route (dict|None): {'name': '<RouteName>', 'params': {...}} для Vue Router.
+        link_url (str|None): относительный путь без числовых pk (public_id/UUID).
+        route (dict|None): {'name': '<RouteName>', 'params': {...}} — params только UUID
+            или нечисловые строки; числовые pk отбрасываются при создании.
         meta (dict|None): произвольные данные.
         actions (list|None): кнопки [{id, label, style, handler}] для in_app.
         idempotency_key (str|None): защита от дублей при повторной доставке.

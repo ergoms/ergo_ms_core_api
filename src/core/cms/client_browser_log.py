@@ -80,6 +80,7 @@ class ClientBrowserLogView(BaseAPIViewAuthMixin):
         message = _truncate(message.strip(), _MAX_MESSAGE)
         context = _sanitize_context(request.data.get('context'))
         user_ref = getattr(request.user, 'public_id', None)
+        user_label = str(user_ref) if user_ref else 'anonymous'
         path = request.data.get('path')
         if isinstance(path, str):
             path = _truncate(path.strip(), 300)
@@ -92,7 +93,7 @@ class ClientBrowserLogView(BaseAPIViewAuthMixin):
 
         log_method(
             'user=%s path=%s context=%s message=%s',
-            user_ref or request.user.pk,
+            user_label,
             path or '-',
             context or {},
             message,

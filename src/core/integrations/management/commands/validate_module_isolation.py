@@ -1,17 +1,16 @@
 """
-AST-линтер, запрещающий прямые импорты между модулями.
+AST-линтер изоляции модулей и ядра.
 
-Правила:
-- Файл внутри modules/<X>/... не может импортировать `from modules.<Y> ...`
-  или `import modules.<Y>` для Y != X.
-- Разрешены:
-  * импорты внутри своего модуля (modules/<X>/**);
-  * импорты ядра (src.core.*, django.*, rest_framework.*);
-  * миграции (modules/<X>/**/migrations/**) — ForeignKey через строковое имя.
-- Тесты (modules/<X>/**/tests/**) проверяются по тем же правилам, но допускаются
-  импорты `modules.<Y>.api.models` как soft-dep через FK (чтобы не плодить фикстуры).
+Правила для modules/<X>/...:
+- Файл не может импортировать `from modules.<Y> ...` или `import modules.<Y>` для Y != X.
+- Разрешены импорты внутри своего модуля, ядра (src.core.*), Django/DRF и т.п.
 
-Для каждого нарушения выводится файл, строка и рекомендуемая замена — bridge.call.
+Правила для core/api/src/:
+- Запрещены любые импорты `modules.*` (доменная логика — только через ModuleBridge).
+- Запрещены литеральные bridge.call/has('module.operation') где module не в whitelist
+  (audit, notifications, core); f-string / переменные не проверяются.
+
+Для каждого нарушения выводится файл, строка и рекомендация.
 """
 
 from __future__ import annotations
@@ -29,27 +28,26 @@ from src.core.integrations.isolation import (
     find_modules_dir,
 )
 
+CORE_BRIDGE_PREFIX_WHITELIST = ('audit.', 'notifications.', 'core.')
+
 
 class _Violation:
-    __slots__ = ('file', 'line', 'statement', 'foreign_module')
+    __slots__ = ('file', 'line', 'statement', 'hint')
 
-    def __init__(self, file: str, line: int, statement: str, foreign_module: str):
+    def __init__(self, file: str, line: int, statement: str, hint: str):
         self.file = file
         self.line = line
         self.statement = statement
-        self.foreign_module = foreign_module
+        self.hint = hint
 
     def format(self) -> str:
-        return (
-            f'{self.file}:{self.line}: {self.statement}'
-            f'  (use bridge.call("{self.foreign_module}.<operation>", ...) instead)'
-        )
+        return f'{self.file}:{self.line}: {self.statement}  ({self.hint})'
 
 
 class Command(BaseCommand):
     help = (
-        'Проверяет изоляцию модулей: запрещает прямые импорты из чужих '
-        '`modules.<X>` вне собственного модуля.'
+        'Проверяет изоляцию: модули не импортируют чужие modules.*; '
+        'ядро не импортирует modules.* и не вызывает bridge.call/has модулей по имени.'
     )
 
     def add_arguments(self, parser):
@@ -61,21 +59,38 @@ class Command(BaseCommand):
         parser.add_argument(
             '--path',
             default=None,
-            help='Проверить только указанную папку/файл (по умолчанию: все модули).',
+            help='Проверить только указанную папку/файл.',
+        )
+        parser.add_argument(
+            '--scope',
+            choices=('modules', 'core', 'all'),
+            default='modules',
+            help='modules — только modules/; core — только ядро; all — оба.',
         )
 
     def handle(self, *args, **options):
         root = Path(settings.BASE_DIR).resolve()
+        scope = options.get('scope') or 'modules'
         scan_path = options.get('path')
-        targets, modules_dir = self._resolve_targets(root, scan_path)
+        modules_dir = find_modules_dir(root)
+        if modules_dir is None:
+            raise CommandError('Не найдена корневая папка modules/.')
         project_root = modules_dir.parent
 
         violations: list[_Violation] = []
-        for py_file, owner in targets:
-            violations.extend(self._check_file(py_file, owner, project_root))
+
+        if scope in ('modules', 'all'):
+            targets, _ = self._resolve_module_targets(root, scan_path, modules_dir)
+            for py_file, owner in targets:
+                violations.extend(self._check_module_file(py_file, owner, project_root))
+
+        if scope in ('core', 'all'):
+            core_targets = self._resolve_core_targets(root, scan_path, project_root)
+            for py_file in core_targets:
+                violations.extend(self._check_core_file(py_file, project_root))
 
         if not violations:
-            self.stdout.write(self.style.SUCCESS('Нарушений изоляции модулей не найдено.'))
+            self.stdout.write(self.style.SUCCESS('Нарушений изоляции не найдено.'))
             return
 
         self.stdout.write(self.style.WARNING(f'Обнаружено нарушений: {len(violations)}'))
@@ -83,17 +98,14 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR(v.format()))
 
         if options.get('fail_on_warning'):
-            raise CommandError('Обнаружены нарушения изоляции модулей.')
+            raise CommandError('Обнаружены нарушения изоляции.')
 
-    def _resolve_targets(
+    def _resolve_module_targets(
         self,
         root: Path,
         scan_path: str | None,
+        modules_dir: Path,
     ) -> tuple[list[tuple[Path, str]], Path]:
-        modules_dir = find_modules_dir(root)
-        if modules_dir is None:
-            raise CommandError('Не найдена корневая папка modules/.')
-
         pairs: list[tuple[Path, str]] = []
         if scan_path:
             scan_abs = self._resolve_scan_path(scan_path, root, modules_dir)
@@ -110,6 +122,22 @@ class Command(BaseCommand):
             for py in self._iter_python_files(module_dir):
                 pairs.append((py, owner))
         return pairs, modules_dir
+
+    def _resolve_core_targets(
+        self,
+        root: Path,
+        scan_path: str | None,
+        project_root: Path,
+    ) -> list[Path]:
+        default_core = project_root / 'core' / 'api' / 'src'
+        if scan_path:
+            scan_abs = self._resolve_scan_path(scan_path, root, project_root / 'modules')
+            if scan_abs.is_file():
+                return [scan_abs] if scan_abs.suffix == '.py' else []
+            return list(self._iter_python_files(scan_abs))
+        if not default_core.is_dir():
+            raise CommandError(f'Не найден каталог ядра: {default_core}')
+        return list(self._iter_python_files(default_core))
 
     @staticmethod
     def _resolve_scan_path(scan_path: str, root: Path, modules_dir: Path) -> Path:
@@ -144,24 +172,25 @@ class Command(BaseCommand):
         parts = relative.parts
         return parts[0] if parts else None
 
-    def _check_file(
+    @staticmethod
+    def _relative_path(py: Path, root: Path) -> str:
+        try:
+            return str(py.resolve().relative_to(root.resolve()))
+        except ValueError:
+            return str(py)
+
+    def _check_module_file(
         self,
         py: Path,
         owner: str,
         root: Path,
     ) -> Iterable[_Violation]:
-        try:
-            source = py.read_text(encoding='utf-8')
-        except (OSError, UnicodeDecodeError):
+        tree = self._parse_file(py)
+        if tree is None:
             return []
 
-        try:
-            tree = ast.parse(source, filename=str(py))
-        except SyntaxError:
-            return []
-
+        rel = self._relative_path(py, root)
         violations: list[_Violation] = []
-        rel = str(py.resolve().relative_to(root.resolve())) if py.is_absolute() else str(py)
 
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
@@ -172,7 +201,7 @@ class Command(BaseCommand):
                         file=rel,
                         line=node.lineno,
                         statement=f'from {module} import ...',
-                        foreign_module=foreign,
+                        hint=f'use bridge.call("{foreign}.<operation>", ...) instead',
                     ))
             elif isinstance(node, ast.Import):
                 for alias in node.names:
@@ -182,9 +211,62 @@ class Command(BaseCommand):
                             file=rel,
                             line=node.lineno,
                             statement=f'import {alias.name}',
-                            foreign_module=foreign,
+                            hint=f'use bridge.call("{foreign}.<operation>", ...) instead',
                         ))
         return violations
+
+    def _check_core_file(self, py: Path, root: Path) -> Iterable[_Violation]:
+        tree = self._parse_file(py)
+        if tree is None:
+            return []
+
+        rel = self._relative_path(py, root)
+        violations: list[_Violation] = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ''
+                if self._is_modules_import(module):
+                    violations.append(_Violation(
+                        file=rel,
+                        line=node.lineno,
+                        statement=f'from {module} import ...',
+                        hint='core must not import modules.*; use ModuleBridge',
+                    ))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if self._is_modules_import(alias.name):
+                        violations.append(_Violation(
+                            file=rel,
+                            line=node.lineno,
+                            statement=f'import {alias.name}',
+                            hint='core must not import modules.*; use ModuleBridge',
+                        ))
+            elif isinstance(node, ast.Call):
+                bridge_violation = self._check_core_bridge_call(node)
+                if bridge_violation:
+                    op_name, module_name = bridge_violation
+                    violations.append(_Violation(
+                        file=rel,
+                        line=node.lineno,
+                        statement=f"bridge call/has '{op_name}'",
+                        hint=(
+                            f'core must not reference module "{module_name}"; '
+                            'use bridge.emit("core.<event>", ...) or generic hooks'
+                        ),
+                    ))
+        return violations
+
+    @staticmethod
+    def _parse_file(py: Path) -> ast.AST | None:
+        try:
+            source = py.read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError):
+            return None
+        try:
+            return ast.parse(source, filename=str(py))
+        except SyntaxError:
+            return None
 
     @staticmethod
     def _extract_foreign_module(import_path: str, owner: str) -> str | None:
@@ -202,3 +284,30 @@ class Command(BaseCommand):
         if target == owner:
             return None
         return target
+
+    @staticmethod
+    def _is_modules_import(import_path: str) -> bool:
+        if not import_path:
+            return False
+        return import_path == 'modules' or import_path.startswith('modules.')
+
+    @staticmethod
+    def _check_core_bridge_call(node: ast.Call) -> tuple[str, str] | None:
+        if not isinstance(node.func, ast.Attribute):
+            return None
+        if node.func.attr not in ('call', 'has'):
+            return None
+        if not isinstance(node.func.value, ast.Name) or node.func.value.id != 'bridge':
+            return None
+        if not node.args:
+            return None
+        first = node.args[0]
+        if not isinstance(first, ast.Constant) or not isinstance(first.value, str):
+            return None
+        op_name = first.value
+        if '.' not in op_name:
+            return None
+        module_name, _ = op_name.split('.', 1)
+        if any(op_name.startswith(prefix) for prefix in CORE_BRIDGE_PREFIX_WHITELIST):
+            return None
+        return op_name, module_name

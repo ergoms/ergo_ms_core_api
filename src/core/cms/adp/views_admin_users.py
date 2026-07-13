@@ -1,4 +1,6 @@
 """Управление пользователями в админ-панели."""
+import logging
+
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -39,6 +41,33 @@ from src.core.utils.methods import (
     send_admin_password_reset_notification,
 )
 from src.core.audit.shortcuts import audit_log
+
+logger = logging.getLogger(__name__)
+
+
+class _AdminUserTargetMixin:
+    """Resolve admin target user by public_id (preferred) or deprecated numeric pk."""
+
+    def _resolve_target_user(self, request, *, user_id=None, ref=None, select_related=True):
+        if ref is not None:
+            qs = User.objects.filter(public_id=ref)
+            if select_related:
+                qs = qs.select_related('adp_profile')
+            return qs.first()
+
+        if user_id is not None:
+            logger.warning(
+                'Deprecated admin-users/<int:user_id>/ route; use admin-users/by-ref/<uuid:ref>/ '
+                '(user_id=%s path=%s)',
+                user_id,
+                getattr(request, 'path', ''),
+            )
+            qs = User.objects.filter(pk=user_id)
+            if select_related:
+                qs = qs.select_related('adp_profile')
+            return qs.first()
+
+        return None
 
 
 def _get_user_avatar_url(user):
@@ -340,23 +369,17 @@ class AdminUserRoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         return Response(response_data, status=status.HTTP_201_CREATED)
 
 
-class AdminUserDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
+class AdminUserDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
     """
     Получение и обновление профиля пользователя администратором.
     """
-
-    def _get_target_user(self, user_id):
-        try:
-            return User.objects.select_related('adp_profile').get(pk=user_id)
-        except User.DoesNotExist:
-            return None
 
     @swagger_auto_schema(
         operation_description="Получить полный профиль пользователя (для админ-панели)",
         responses={200: CMSUserSerializer()},
     )
-    def get(self, request, user_id):
-        user = self._get_target_user(user_id)
+    def get(self, request, user_id=None, ref=None):
+        user = self._resolve_target_user(request, user_id=user_id, ref=ref)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -371,8 +394,8 @@ class AdminUserDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         request_body=UpdateUserProfileSerializer,
         responses={200: CMSUserSerializer(), 400: 'Ошибка валидации данных.'},
     )
-    def put(self, request, user_id):
-        user = self._get_target_user(user_id)
+    def put(self, request, user_id=None, ref=None):
+        user = self._resolve_target_user(request, user_id=user_id, ref=ref)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -384,7 +407,7 @@ class AdminUserDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
 
         if serializer.is_valid():
             serializer.save()
-            user = User.objects.select_related('adp_profile').get(pk=user_id)
+            user = User.objects.select_related('adp_profile').get(pk=user.pk)
             audit_log('user.updated', request=request,
                    entity={'type': 'user', 'label': user.get_full_name() or user.username},
                    meta={'username': user.username})
@@ -401,8 +424,8 @@ class AdminUserDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             404: 'Пользователь не найден',
         },
     )
-    def delete(self, request, user_id):
-        user = self._get_target_user(user_id)
+    def delete(self, request, user_id=None, ref=None):
+        user = self._resolve_target_user(request, user_id=user_id, ref=ref)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -425,24 +448,18 @@ class AdminUserDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class AdminUserAvatarView(MediaApiFileMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
+class AdminUserAvatarView(_AdminUserTargetMixin, MediaApiFileMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
     """
     Загрузка и удаление аватара пользователя администратором.
     """
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
-    def _get_target_user(self, user_id):
-        try:
-            return User.objects.get(pk=user_id)
-        except User.DoesNotExist:
-            return None
-
     @swagger_auto_schema(
         operation_description="Загрузить или заменить аватар пользователя (для админ-панели)",
         responses={200: 'Аватар обновлён', 404: 'Пользователь не найден'},
     )
-    def post(self, request, user_id):
-        user = self._get_target_user(user_id)
+    def post(self, request, user_id=None, ref=None):
+        user = self._resolve_target_user(request, user_id=user_id, ref=ref, select_related=False)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -473,8 +490,8 @@ class AdminUserAvatarView(MediaApiFileMixin, BaseAPIViewGlobalAdminMixin, BaseAP
         operation_description="Удалить аватар пользователя (для админ-панели)",
         responses={204: 'Аватар удалён', 404: 'Пользователь или аватар не найден'},
     )
-    def delete(self, request, user_id):
-        user = self._get_target_user(user_id)
+    def delete(self, request, user_id=None, ref=None):
+        user = self._resolve_target_user(request, user_id=user_id, ref=ref, select_related=False)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -492,36 +509,30 @@ class AdminUserAvatarView(MediaApiFileMixin, BaseAPIViewGlobalAdminMixin, BaseAP
         )
 
 
-class AdminUserResetPasswordView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
+class AdminUserResetPasswordView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
     """
     Сброс пароля пользователя администратором.
     Production: случайный пароль + уведомление на email.
     Development: ручная установка пароля при передаче new_password и confirm_password.
     """
 
-    def _get_target_user(self, user_id):
-        try:
-            return User.objects.get(pk=user_id)
-        except User.DoesNotExist:
-            return None
-
     @swagger_auto_schema(
         operation_description="Сбросить пароль пользователя (админ-панель)",
         request_body=AdminResetUserPasswordSerializer,
         responses={200: 'Пароль сброшен или установлен'},
     )
-    def post(self, request, user_id):
-        if request.user.id == user_id:
-            return Response(
-                {'error': 'Нельзя сбросить пароль собственной учётной записи через эту форму.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        user = self._get_target_user(user_id)
+    def post(self, request, user_id=None, ref=None):
+        user = self._resolve_target_user(request, user_id=user_id, ref=ref, select_related=False)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if request.user.pk == user.pk:
+            return Response(
+                {'error': 'Нельзя сбросить пароль собственной учётной записи через эту форму.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if _is_manual_password_reset_request(request):

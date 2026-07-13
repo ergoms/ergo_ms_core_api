@@ -145,6 +145,13 @@ urlpatterns = [
     path('module-permissions/<int:permission_id>/', ModulePermissionDetailView.as_view(), name='module_permission_detail'),
     path('module-catalog/', ModuleCatalogView.as_view(), name='module_catalog'),
     path('admin-users/', AdminUserRoleListView.as_view(), name='admin_users'),
+    path('admin-users/by-ref/<uuid:ref>/', AdminUserDetailView.as_view(), name='admin_user_detail_by_ref'),
+    path('admin-users/by-ref/<uuid:ref>/avatar/', AdminUserAvatarView.as_view(), name='admin_user_avatar_by_ref'),
+    path(
+        'admin-users/by-ref/<uuid:ref>/reset-password/',
+        AdminUserResetPasswordView.as_view(),
+        name='admin_user_reset_password_by_ref',
+    ),
     path('admin-users/<int:user_id>/', AdminUserDetailView.as_view(), name='admin_user_detail'),
     path('admin-users/<int:user_id>/avatar/', AdminUserAvatarView.as_view(), name='admin_user_avatar'),
     path('admin-users/<int:user_id>/reset-password/',
