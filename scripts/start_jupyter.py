@@ -55,7 +55,7 @@ def _install_django_kernel():
         from jupyter_client.kernelspec import KernelSpecManager
         ksm = KernelSpecManager()
         dest = ksm.install_kernel_spec(spec_dir, KERNEL_NAME, user=True)
-        print(f'Django kernel installed: {dest}')
+        print(f'Ядро Django установлено: {dest}')
     finally:
         shutil.rmtree(spec_dir, ignore_errors=True)
 
@@ -93,9 +93,9 @@ def _start_jupyterlab():
         '--ServerApp.websocket_ping_timeout', '30000',
     ]
 
-    print(f'Starting JupyterLab on {host}:{port}')
-    print(f'Notebooks directory: {NOTEBOOKS_DIR}')
-    print(f'URL: http://{host}:{port}/lab')
+    print(f'Запуск JupyterLab на {host}:{port}')
+    print(f'Каталог блокнотов: {NOTEBOOKS_DIR}')
+    print(f'Адрес: http://{host}:{port}/lab')
 
     env = os.environ.copy()
     existing_pythonpath = env.get('PYTHONPATH', '')

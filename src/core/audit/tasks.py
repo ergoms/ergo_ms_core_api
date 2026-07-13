@@ -6,9 +6,8 @@ import logging
 
 from celery import shared_task
 
-from .actors import upsert_audit_actor
-from .models import AuditEvent
 from .retention import purge_old_audit_events
+from .service import persist_audit_event_sync
 
 logger = logging.getLogger('celery.core.audit')
 
@@ -17,12 +16,7 @@ logger = logging.getLogger('celery.core.audit')
 def persist_audit_event(self, payload: dict) -> int | None:
     """Асинхронно сохранить запись аудита."""
     try:
-        event = AuditEvent.objects.create(**payload)
-        upsert_audit_actor(
-            actor_id=payload.get('actor_id'),
-            actor_label=payload.get('actor_label') or '',
-        )
-        return event.pk
+        return persist_audit_event_sync(payload)
     except Exception as exc:
         logger.exception(
             'core.audit.persist: ошибка сохранения action=%s',

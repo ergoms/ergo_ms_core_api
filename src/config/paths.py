@@ -16,3 +16,7 @@ SYSTEM_DIR = CORE_DIR.parent
 ENV_FILE_PATH = SYSTEM_DIR / '.env'
 MODULES_DIR = SYSTEM_DIR / 'modules'
 VIRTUAL_ENV_DIR = SYSTEM_DIR / 'virtual_env'
+
+from src.config.log_paths import resolve_logs_root  # noqa: E402
+
+LOGS_ROOT = resolve_logs_root(SYSTEM_DIR)

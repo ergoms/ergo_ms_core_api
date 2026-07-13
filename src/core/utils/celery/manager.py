@@ -201,11 +201,15 @@ class CeleryModuleManager:
         """
         from src.core.utils.celery.concurrency import queue_concurrency_manager
         
+        from src.core.utils.celery.startup_format import format_limits_summary
+
         limits = self.get_all_queue_limits()
         for queue_name, max_concurrent in limits.items():
             queue_concurrency_manager.set_queue_limit(queue_name, max_concurrent)
-        
-        self.logger.info(
-            f"Настроено ограничение параллелизма для {len(limits)} очередей: "
-            f"{', '.join(f'{q}={l}' for q, l in limits.items())}"
-        ) 
+
+        if limits:
+            self.logger.info(
+                "Celery: лимиты параллелизма (%d): %s",
+                len(limits),
+                format_limits_summary(limits),
+            ) 

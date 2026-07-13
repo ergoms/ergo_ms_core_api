@@ -532,12 +532,52 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
         self.active_section: Optional[str] = None
         self.active_config: Optional[Dict] = None
     
+    def _celery_broker_backend(self) -> str:
+        return os.environ.get('CELERY_BROKER_BACKEND', 'auto').strip().lower() or 'auto'
+
     def _check_use_local_mode(self) -> bool:
         """Проверяет, нужно ли использовать локальный режим"""
+        if self._celery_broker_backend() == 'local':
+            logger.info(f"{self.component_name}: локальный SQLite по CELERY_BROKER_BACKEND=local")
+            return True
         use_local = os.environ.get('CELERY_USE_LOCAL', 'false').lower() == 'true'
         if use_local:
             logger.info(f"{self.component_name}: Используется локальный режим по CELERY_USE_LOCAL")
         return use_local
+
+    def _check_use_redis_mode(self) -> bool:
+        """Redis-брокер: CELERY_BROKER_BACKEND=redis или REDIS_ENABLED при auto без секций celery в YAML."""
+        backend = self._celery_broker_backend()
+        if backend == 'redis':
+            return True
+        if backend in ('database', 'local'):
+            return False
+        if backend != 'auto':
+            logger.warning(
+                "%s: неизвестный CELERY_BROKER_BACKEND=%r, используется auto",
+                self.component_name,
+                backend,
+            )
+        use_redis = os.environ.get('REDIS_ENABLED', 'false').lower() == 'true'
+        if use_redis:
+            logger.info(
+                "%s: Redis-брокер по REDIS_ENABLED=true (CELERY_BROKER_BACKEND=auto)",
+                self.component_name,
+            )
+        return use_redis
+
+    def _get_redis_urls(self) -> Tuple[str, str]:
+        from src.config.redis_runtime import celery_broker_redis_url, celery_result_redis_url
+
+        broker_url = celery_broker_redis_url()
+        result_backend = celery_result_redis_url()
+        logger.info(
+            "%s: брокер Redis (%s), results (%s)",
+            self.component_name,
+            broker_url.split('?')[0],
+            result_backend.split('?')[0],
+        )
+        return broker_url, result_backend
     
     def _find_active_section(self) -> Optional[str]:
         """
@@ -639,6 +679,55 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
                 'mode': 'local',
                 'section': None,
             }
+
+        backend = self._celery_broker_backend()
+        force_database = backend == 'database'
+        force_redis = backend == 'redis'
+
+        # Секции databases.yaml (приоритет над REDIS_ENABLED в режиме auto)
+        if raw_config is not None and not force_redis:
+            self.active_section = self._find_active_section()
+            if self.active_section is not None or force_database:
+                if self.active_section is None:
+                    priorities = self.section_priorities
+                    broker_url, result_backend = self._get_local_sqlite_urls(
+                        log_reason=f"CELERY_BROKER_BACKEND=database, но секции {priorities} не найдены"
+                    )
+                    return {
+                        'broker_url': broker_url,
+                        'result_backend': result_backend,
+                        'mode': 'local',
+                        'section': None,
+                    }
+
+                self.active_config = raw_config[self.active_section]
+                if self.active_config is None:
+                    broker_url, result_backend = self._get_local_sqlite_urls()
+                    return {
+                        'broker_url': broker_url,
+                        'result_backend': result_backend,
+                        'mode': 'local',
+                        'section': None,
+                    }
+
+                broker_url, result_backend = self._build_celery_urls(self.active_config)
+                return {
+                    'broker_url': broker_url,
+                    'result_backend': result_backend,
+                    'mode': 'database',
+                    'section': self.active_section,
+                    'engine': self.active_config.get('engine', 'postgresql'),
+                }
+
+        # Redis-брокер
+        if force_redis or self._check_use_redis_mode():
+            broker_url, result_backend = self._get_redis_urls()
+            return {
+                'broker_url': broker_url,
+                'result_backend': result_backend,
+                'mode': 'redis',
+                'section': None,
+            }
         
         # Проверяем доступность конфигурации
         if raw_config is None:
@@ -649,41 +738,16 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
                 'mode': 'local',
                 'section': None,
             }
-        
-        # Находим активную секцию
-        self.active_section = self._find_active_section()
 
-        if self.active_section is None:
-            priorities = self.section_priorities
-            broker_url, result_backend = self._get_local_sqlite_urls(
-                log_reason=f"Ни одна из секций {priorities} не найдена"
-            )
-            return {
-                'broker_url': broker_url,
-                'result_backend': result_backend,
-                'mode': 'local',
-                'section': None,
-            }
-        
-        # Получаем конфигурацию секции
-        self.active_config = raw_config[self.active_section]
-        if self.active_config is None:
-            broker_url, result_backend = self._get_local_sqlite_urls()
-            return {
-                'broker_url': broker_url,
-                'result_backend': result_backend,
-                'mode': 'local',
-                'section': None,
-            }
-        
-        broker_url, result_backend = self._build_celery_urls(self.active_config)
-        
+        priorities = self.section_priorities
+        broker_url, result_backend = self._get_local_sqlite_urls(
+            log_reason=f"Ни одна из секций {priorities} не найдена"
+        )
         return {
             'broker_url': broker_url,
             'result_backend': result_backend,
-            'mode': 'database',
-            'section': self.active_section,
-            'engine': self.active_config.get('engine', 'postgresql'),
+            'mode': 'local',
+            'section': None,
         }
     
     def get_active_section(self) -> Optional[str]:
@@ -709,7 +773,7 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
         """
         config = self.load_config()
         
-        if config['mode'] == 'local':
+        if config['mode'] in ('local', 'redis'):
             return None
         
         # Возвращаем секцию из конфига (celery_beat, celery и т.д.)

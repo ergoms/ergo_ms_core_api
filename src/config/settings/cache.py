@@ -9,16 +9,20 @@
 """
 
 from src.config.env import env
-from src.config.redis_runtime import redis_connection_options
+from src.config.redis_runtime import (
+    cache_redis_url,
+    effective_cache_backend,
+    redis_connection_options,
+)
 from src.config.settings.base import VIRTUAL_ENV_DIR
 
-CACHE_BACKEND = env.str('API_CACHE_BACKEND', default='locmem').strip().lower()
+CACHE_BACKEND = effective_cache_backend()
 CACHE_DEFAULT_TIMEOUT = env.int('API_CACHE_DEFAULT_TIMEOUT', default=300)
 
 _django_cache_dir = VIRTUAL_ENV_DIR / 'cache' / 'django'
 
 if CACHE_BACKEND == 'redis':
-    _redis_url = env.str('API_CACHE_REDIS_URL', default='redis://127.0.0.1:6379/1')
+    _redis_url = cache_redis_url()
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.redis.RedisCache',

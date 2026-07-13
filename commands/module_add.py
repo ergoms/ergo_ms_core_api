@@ -8,7 +8,8 @@ api module-remove <модуль> <пакет>               — удалить �
 api module-list                                  — список модулей с pyproject.toml
 
 Зависимость записывается только в modules/<module>/pyproject.toml.
-Для применения изменений запустите: ergoms poetry install
+Корневой pyproject.toml и poetry.lock — только ядро; не используйте poetry add в корне для модулей.
+Для применения изменений запустите: ergoms python-install
 """
 
 import os
@@ -88,7 +89,7 @@ class ModuleAddCommand(PoetryCommand):
             from commands.install import InstallCommand
             return InstallCommand().run()
 
-        print("\nДля установки запустите: ergoms poetry install")
+        print("\nДля установки запустите: ergoms python-install")
         return 0
 
     def _resolve_version(self, package: str) -> Optional[str]:
@@ -169,7 +170,7 @@ class ModuleAddCommand(PoetryCommand):
         print("  api module-add <модуль> <пакет> --install       — добавить и установить")
         print("  api module-list                                  — список модулей")
         print("")
-        print("  Для установки после добавления: ergoms poetry install")
+        print("  Для установки после добавления: ergoms python-install")
 
 
 class ModuleRemoveCommand(PoetryCommand):
@@ -232,7 +233,7 @@ class ModuleRemoveCommand(PoetryCommand):
             return 1
 
         print(f"✓ Удалено из {toml_path.relative_to(project_root)}: {package}")
-        print("\nДля применения изменений запустите: ergoms poetry install")
+        print("\nДля применения изменений запустите: ergoms python-install")
         return 0
 
 

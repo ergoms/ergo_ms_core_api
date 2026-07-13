@@ -68,13 +68,13 @@ def main() -> int:
             '-p', port,
             'media_server.asgi:application',
         ]
-        print(f'Media API [production]: daphne on {host}:{port}')
+        print(f'Media API (запуск как на сервере): daphne на {host}:{port}')
     else:
         cmd = [
             sys.executable, '-m', 'media_server.manage',
             'runserver', f'{host}:{port}',
         ]
-        print(f'Media API [development]: runserver on {host}:{port}')
+        print(f'Media API (разработка): runserver на {host}:{port}')
 
     return subprocess.call(cmd, cwd=str(PROJECT_ROOT), env=env)
 

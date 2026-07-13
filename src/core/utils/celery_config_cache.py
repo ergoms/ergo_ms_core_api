@@ -9,7 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from django.conf import settings
+from src.config.paths import MODULES_DIR, SYSTEM_DIR, VIRTUAL_ENV_DIR
 
 logger = logging.getLogger('celery.cache')
 
@@ -93,7 +93,7 @@ def _deserialize_schedule(data: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str
         result[name] = restored
     return result
 
-CACHE_DIR = Path(settings.VIRTUAL_ENV_DIR) / 'cache'
+CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
 CACHE_FILE = CACHE_DIR / 'celery_routes_queues.bin'
 BEAT_SCHEDULE_CACHE_FILE = CACHE_DIR / 'celery_beat_schedule.bin'
 
@@ -102,7 +102,7 @@ def _get_fingerprint() -> Dict[str, float]:
     """Fingerprint на основе mtime конфигурационных файлов модулей."""
     from src.core.utils.cache_fingerprint import get_celery_config_fingerprint
     return get_celery_config_fingerprint(
-        Path(settings.SYSTEM_DIR), Path(settings.MODULES_DIR)
+        Path(SYSTEM_DIR), Path(MODULES_DIR)
     )
 
 

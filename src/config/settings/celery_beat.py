@@ -66,7 +66,12 @@ else:
     CELERY_BEAT_SCHEDULE_FILENAME = str(VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db")
     logger.info(f"Celery Beat: Расписание хранится в файле {CELERY_BEAT_SCHEDULE_FILENAME}")
 
-if beat_broker_config['mode'] == 'database':
+if beat_broker_config['mode'] == 'redis':
+    logger.info(
+        'Celery Beat: брокер Redis (%s)',
+        beat_broker_config['broker_url'].split('?')[0],
+    )
+elif beat_broker_config['mode'] == 'database':
     logger.info(f"Celery Beat: Брокер использует БД '{beat_broker_config['section']}' ({beat_broker_config['engine']})")
 else:
     logger.info("Celery Beat: Брокер использует локальный SQLite режим")

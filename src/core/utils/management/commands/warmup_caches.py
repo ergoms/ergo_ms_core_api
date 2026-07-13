@@ -41,7 +41,7 @@ class Command(BaseCommand):
 
         from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
         apps = get_discovered_apps(use_cache=False)
-        self.stdout.write(f'Discovered apps: {len(apps)}')
+        self.stdout.write(f'Обнаружено приложений: {len(apps)}')
 
         from src.core.utils.celery.manager import CeleryModuleManager
         from src.core.utils.celery_queues_cache import write_queues_cache
@@ -52,17 +52,17 @@ class Command(BaseCommand):
 
         write_queues_cache(queues)
         queue_names = sorted(queues.keys())
-        self.stdout.write(f'Celery: {len(routes)} routes, {len(queue_names)} queues')
+        self.stdout.write(f'Celery: {len(routes)} маршрутов, {len(queue_names)} очередей')
 
         from src.core.utils.celery_beat.manager import CeleryBeatModuleManager
         beat_manager = CeleryBeatModuleManager(use_config_cache=False)
         schedule = beat_manager.get_all_beat_schedules()
-        self.stdout.write(f'Beat schedule: {len(schedule)} задач')
+        self.stdout.write(f'Расписание Beat: {len(schedule)} задач')
 
         from src.core.utils.environment.methods import collect_env_files_from_all_sources
         env_vars = collect_env_files_from_all_sources(use_cache=False)
         if env_vars:
-            self.stdout.write(f'Modules env: {len(env_vars)} переменных')
+            self.stdout.write(f'Переменные модулей: {len(env_vars)}')
 
         elapsed = time.perf_counter() - start
         self.stdout.write(self.style.SUCCESS(f'Все кэши прогреты ({elapsed:.2f}s)'))

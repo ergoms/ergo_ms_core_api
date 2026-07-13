@@ -15,14 +15,27 @@
     CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: Флаг повторного подключения к брокеру при запуске
 
 Режимы работы:
-    - Приоритет 1: celery_worker или celery_beat (для worker/beat соответственно)
-    - Приоритет 2: celery (общая секция)
-    - Fallback: локальный SQLite
-    - Можно принудительно включить локальный режим через CELERY_USE_LOCAL=true
+    - CELERY_BROKER_BACKEND=redis — брокер и results в Redis (.env / REDIS_DB_CELERY_*)
+    - CELERY_BROKER_BACKEND=auto (по умолчанию): секции databases.yaml → REDIS_ENABLED → SQLite
+    - CELERY_BROKER_BACKEND=database — только секции databases.yaml
+    - CELERY_BROKER_BACKEND=local или CELERY_USE_LOCAL=true — локальный SQLite
+    - Секции databases.yaml: celery_worker / celery / celery_beat (SQL-брокер)
 """
 
 import logging
-from src.config.settings.base import VIRTUAL_ENV_DIR, SYSTEM_DIR
+import os
+
+from src.config.redis_runtime import (
+    sanitize_celery_redis_url,
+    ensure_kombu_redis_resp2,
+    uses_redis_celery_backend,
+)
+from src.config.settings.base import SYSTEM_DIR, VIRTUAL_ENV_DIR
+
+for _env_key in ('CELERY_BROKER_URL', 'CELERY_RESULT_BACKEND'):
+    _raw_url = os.environ.get(_env_key, '').strip()
+    if _raw_url:
+        os.environ[_env_key] = sanitize_celery_redis_url(_raw_url)
 
 # Импортируем централизованный менеджер БД для Celery
 from src.core.utils.database.config_manager import CeleryDatabaseConfigLoader
@@ -46,8 +59,13 @@ worker_config = worker_loader.load_config()
 CELERY_BROKER_URL = worker_config['broker_url']
 CELERY_RESULT_BACKEND = worker_config['result_backend']
 
+if uses_redis_celery_backend(CELERY_BROKER_URL, CELERY_RESULT_BACKEND):
+    ensure_kombu_redis_resp2()
+
 # Логируем активную конфигурацию
-if worker_config['mode'] == 'database':
+if worker_config['mode'] == 'redis':
+    logger.info('Celery Worker: брокер Redis (%s)', worker_config['broker_url'].split('?')[0])
+elif worker_config['mode'] == 'database':
     logger.info(f"Celery Worker: Используется БД '{worker_config['section']}' ({worker_config['engine']})")
 else:
     logger.info("Celery Worker: Используется локальный SQLite режим")

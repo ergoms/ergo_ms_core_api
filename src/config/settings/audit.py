@@ -11,3 +11,6 @@ AUDIT_ASYNC_PERSIST_FALLBACK_SYNC = env.bool('AUDIT_ASYNC_PERSIST_FALLBACK_SYNC'
 
 # Удаление записей старше N дней (0 — отключено). Периодическая задача beat + ergoms api audit_purge.
 AUDIT_RETENTION_DAYS = env.int('AUDIT_RETENTION_DAYS', default=0)
+
+# Дублирование записей журнала в logs/audit.log (параллельно с БД).
+AUDIT_LOG_FILE_ENABLED = env.bool('AUDIT_LOG_FILE_ENABLED', default=True)

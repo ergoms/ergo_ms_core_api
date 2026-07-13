@@ -51,7 +51,7 @@ def _build_import_blocks():
         '    del _apps\n'
         'except Exception as _e:\n'
         '    _model_count = 0\n'
-        '    print(f"Warning: model import failed: {_e}")\n'
+        '    print(f"Предупреждение: не удалось импортировать модели: {_e}")\n'
     )
 
     django_utils_block = (
@@ -78,8 +78,8 @@ def _build_import_blocks():
     )
 
     summary_block = (
-        'print(f"Django ORM ready. {_model_count} models imported.")\n'
-        'print("Utilities: Q, F, Value, Count, Sum, Avg, Min, Max, pd, np, timezone")\n'
+        'print(f"Django ORM готов. Импортировано моделей: {_model_count}.")\n'
+        'print("Утилиты: Q, F, Value, Count, Sum, Avg, Min, Max, pd, np, timezone")\n'
         'del _model_count'
     )
 
@@ -92,8 +92,8 @@ def main():
     try:
         _setup_django()
     except Exception as e:
-        print(f'Warning: Django initialization failed: {e}')
-        print('Kernel will start without Django ORM.')
+        print(f'Предупреждение: не удалось инициализировать Django: {e}')
+        print('Ядро запустится без Django ORM.')
 
     from traitlets.config import Config
     c = Config()

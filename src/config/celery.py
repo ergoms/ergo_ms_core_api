@@ -19,7 +19,6 @@ from celery import Celery
 from django.conf import settings
 
 from src.core.utils.auto_api.auto_config import get_env_deploy_type
-from src.config.settings.base import LOGS_ROOT, VIRTUAL_ENV_DIR
 
 # ---------------------------------------------------------------------------
 # БАЗОВАЯ НАСТРОЙКА DJANGO SETTINGS ДЛЯ CELERY
@@ -42,103 +41,6 @@ IS_CELERY_PROCESS = bool(_argv_lower & {"worker", "beat"})
 celery_app = Celery("src")
 
 
-def _setup_celery_logging() -> None:
-    """Настраивает логирование Celery (файлы + консоль)."""
-    from logging.handlers import RotatingFileHandler
-
-    os.makedirs(LOGS_ROOT, exist_ok=True)
-
-    celery_log_file = os.path.join(LOGS_ROOT, "celery.log")
-    celery_worker_log_file = os.path.join(LOGS_ROOT, "celery_worker.log")
-    celery_beat_log_file = os.path.join(LOGS_ROOT, "celery_beat.log")
-    celery_tasks_log_file = os.path.join(LOGS_ROOT, "celery_tasks.log")
-
-    formatter = logging.Formatter(
-        "[%(asctime)s] %(levelname)s [%(name)s.%(funcName)s:%(lineno)d] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    celery_logger = logging.getLogger("celery")
-    celery_logger.setLevel(logging.DEBUG)
-
-    # Основной лог Celery (delay=True — файл создаётся при первом логе)
-    fh_main = RotatingFileHandler(
-        celery_log_file,
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
-        encoding="utf-8",
-        delay=True,
-    )
-    fh_main.setLevel(logging.DEBUG)
-    fh_main.setFormatter(formatter)
-    celery_logger.addHandler(fh_main)
-
-    # Лог воркеров
-    worker_logger = logging.getLogger("celery.worker")
-    worker_logger.setLevel(logging.DEBUG)
-    fh_worker = RotatingFileHandler(
-        celery_worker_log_file,
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
-        encoding="utf-8",
-        delay=True,
-    )
-    fh_worker.setLevel(logging.DEBUG)
-    fh_worker.setFormatter(formatter)
-    worker_logger.addHandler(fh_worker)
-
-    # Лог beat
-    beat_logger = logging.getLogger("celery.beat")
-    beat_logger.setLevel(logging.DEBUG)
-    fh_beat = RotatingFileHandler(
-        celery_beat_log_file,
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
-        encoding="utf-8",
-        delay=True,
-    )
-    fh_beat.setLevel(logging.DEBUG)
-    fh_beat.setFormatter(formatter)
-    beat_logger.addHandler(fh_beat)
-
-    # Лог задач
-    tasks_logger = logging.getLogger("celery.task")
-    tasks_logger.setLevel(logging.DEBUG)
-    fh_tasks = RotatingFileHandler(
-        celery_tasks_log_file,
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
-        encoding="utf-8",
-        delay=True,
-    )
-    fh_tasks.setLevel(logging.DEBUG)
-    fh_tasks.setFormatter(formatter)
-    tasks_logger.addHandler(fh_tasks)
-
-    # Лог брокера
-    broker_logger = logging.getLogger("kombu")
-    broker_logger.setLevel(logging.INFO)
-    fh_broker = RotatingFileHandler(
-        os.path.join(LOGS_ROOT, "celery_broker.log"),
-        maxBytes=5 * 1024 * 1024,
-        backupCount=3,
-        encoding="utf-8",
-        delay=True,
-    )
-    fh_broker.setLevel(logging.INFO)
-    fh_broker.setFormatter(formatter)
-    broker_logger.addHandler(fh_broker)
-
-    # Консольный вывод в режиме разработки
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    celery_logger.addHandler(console_handler)
-    worker_logger.addHandler(console_handler)
-    beat_logger.addHandler(console_handler)
-    tasks_logger.addHandler(console_handler)
-
-
 # ---------------------------------------------------------------------------
 # ПОЛНАЯ КОНФИГУРАЦИЯ CELERY — ТОЛЬКО ДЛЯ CELERY ПРОЦЕССОВ
 # ---------------------------------------------------------------------------
@@ -148,9 +50,13 @@ MODULE_TASK_ROUTES: Dict = {}
 MODULE_TASK_QUEUES: Dict = {}
 
 if IS_CELERY_PROCESS:
+    from src.config.redis_runtime import sanitize_celery_redis_url
     from src.core.utils.celery.manager import CeleryModuleManager
 
-    _setup_celery_logging()
+    for _env_key in ('CELERY_BROKER_URL', 'CELERY_RESULT_BACKEND'):
+        _raw_url = os.environ.get(_env_key, '').strip()
+        if _raw_url:
+            os.environ[_env_key] = sanitize_celery_redis_url(_raw_url)
 
     # Конфигурация Celery из Django settings
     if IS_BEAT:
@@ -167,14 +73,25 @@ if IS_CELERY_PROCESS:
         logger.info("Celery: запуск WORKER, используются настройки CELERY_*")
         celery_app.config_from_object("django.conf:settings", namespace="CELERY")
 
+    from django.conf import settings as django_settings
+
+    if hasattr(django_settings, 'CELERY_BROKER_URL'):
+        celery_app.conf.broker_url = django_settings.CELERY_BROKER_URL
+    if hasattr(django_settings, 'CELERY_RESULT_BACKEND'):
+        celery_app.conf.result_backend = django_settings.CELERY_RESULT_BACKEND
+
     # Автообнаружение задач во всех приложениях
     celery_app.autodiscover_tasks(lambda: settings.INSTALLED_APPS)
 
     # Модульная конфигурация Celery (без файлового кэша — нужны annotations, queue_limits)
     MODULE_MANAGER = CeleryModuleManager(use_config_cache=False)
+    from src.core.utils.celery.startup_format import celery_startup_verbose, format_name_list
+
+    _celery_modules = MODULE_MANAGER.get_modules_list()
     logger.info(
-        "Celery: загружены конфигурации модулей: %s",
-        ", ".join(MODULE_MANAGER.get_modules_list()) or "нет модулей",
+        "Celery: загружено %d модулей: %s",
+        len(_celery_modules),
+        format_name_list(_celery_modules, verbose=celery_startup_verbose()),
     )
 
     MODULE_TASK_ROUTES = MODULE_MANAGER.get_all_task_routes()
@@ -197,10 +114,6 @@ if IS_CELERY_PROCESS:
                     "Celery: распределённый лимит параллелизма (Redis cache)"
                 )
 
-            logger.info(
-                "Celery: настроены лимиты параллелизма: %s",
-                ", ".join(f"{q}={l}" for q, l in queue_limits.items()),
-            )
             setup_concurrency_limited_tasks(celery_app)
 
     # Очередь по умолчанию
@@ -249,7 +162,7 @@ if IS_CELERY_PROCESS:
     CELERY_BEAT_SCHEDULER = None
     CELERY_BEAT_SCHEDULER_DB_ALIAS = None
     CELERY_BEAT_SCHEDULE_FILENAME = str(
-        VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db"
+        settings.VIRTUAL_ENV_DIR / "celery" / "celerybeat-schedule.db"
     )
     CELERY_BEAT_SCHEDULE = {}
 
@@ -268,9 +181,15 @@ if IS_CELERY_PROCESS:
             )
             CELERY_BEAT_SCHEDULE = getattr(beat_settings, "CELERY_BEAT_SCHEDULE", {})
 
-            logger.info("Beat: импортировано расписаний: %d", len(CELERY_BEAT_SCHEDULE))
             if CELERY_BEAT_SCHEDULE:
-                logger.info("Beat: задачи: %s", ", ".join(CELERY_BEAT_SCHEDULE.keys()))
+                _beat_tasks = list(CELERY_BEAT_SCHEDULE.keys())
+                logger.info(
+                    "Beat: %d расписаний: %s",
+                    len(_beat_tasks),
+                    format_name_list(_beat_tasks, max_show=5, verbose=celery_startup_verbose()),
+                )
+            else:
+                logger.info("Beat: расписаний нет")
         except Exception as exc:
             logger.error("Beat: ошибка загрузки расписаний: %s", exc)
 
@@ -285,10 +204,6 @@ if IS_CELERY_PROCESS:
 
         if CELERY_BEAT_SCHEDULE:
             beat_scheduler_config["beat_schedule"] = CELERY_BEAT_SCHEDULE
-            logger.info(
-                "Beat: применено %d расписаний в конфигурацию Celery",
-                len(CELERY_BEAT_SCHEDULE),
-            )
 
         if MODULE_MANAGER is not None:
             celery_app.conf.update(

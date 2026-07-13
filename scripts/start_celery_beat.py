@@ -4,6 +4,8 @@
 Запускает celery -A src beat. Django грузится только в процессе Celery.
 """
 
+import argparse
+import os
 import sys
 import time
 from typing import List
@@ -30,14 +32,26 @@ def find_celery_beat() -> bool:
 
 def main() -> int:
     start_time = time.perf_counter()
+    parser = argparse.ArgumentParser(description='Запуск Celery beat')
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Полные списки очередей и модулей при старте (или ERGO_CELERY_STARTUP_VERBOSE=true)',
+    )
+    parser.add_argument('--loglevel', default='info')
+    opts, _unknown = parser.parse_known_args()
+
+    if opts.verbose:
+        os.environ['ERGO_CELERY_STARTUP_VERBOSE'] = 'true'
+
     if find_celery_beat():
-        print('Celery beat is already running')
+        print('Celery beat уже запущен')
         return 0
 
-    print('Celery Beat bootstrap: подготавливаем кэш очередей/расписаний (warmup_celery при необходимости)...')
-    ensure_caches()
+    print('Подготовка Celery beat: подготавливаем кэш очередей и расписаний (warmup_celery при необходимости)...')
+    ensure_caches(verbose=opts.verbose)
 
-    loglevel = 'info'
+    loglevel = opts.loglevel
     for arg in sys.argv[1:]:
         if arg.startswith('--loglevel='):
             loglevel = arg.split('=', 1)[1]
@@ -47,11 +61,11 @@ def main() -> int:
         sys.executable, '-m', 'celery', '-A', 'src', 'beat',
         f'--loglevel={loglevel}',
     ]
-    print(f'Starting Celery beat (loglevel={loglevel})...')
+    print(f'Запуск Celery beat (уровень логов={loglevel})...')
     return run_celery_with_timing(
         cmd, str(API_DIR),
         ready_pattern='beat: Starting',
-        service_name='Celery Beat',
+        service_name='Celery beat',
         start=start_time,
     )
 

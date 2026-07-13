@@ -8,9 +8,11 @@ from src.core.cms.views import (
     GetCMSPages,
 )
 from src.core.cms.disabled_modules_view import DisabledModulesView
+from src.core.cms.client_browser_log import ClientBrowserLogView
 
 urlpatterns = [
     path('disabled-modules/', DisabledModulesView.as_view(), name='disabled-modules'),
+    path('client-log/', ClientBrowserLogView.as_view(), name='client-browser-log'),
 
     path('check_access_to_admin_panel/', CheckAccessToAdminPanel.as_view(), name='check access to admin panel'),
 

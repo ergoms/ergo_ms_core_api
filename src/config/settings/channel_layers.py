@@ -5,13 +5,17 @@ BACKEND: memory (dev, один процесс) | postgres | redis
 """
 
 from src.config.env import env
-from src.config.redis_runtime import redis_channel_connection_options
+from src.config.redis_runtime import (
+    channel_layer_redis_url,
+    effective_channel_layer_backend,
+    redis_channel_connection_options,
+)
 from src.config.settings.database import DATABASES
 
-CHANNEL_LAYER_BACKEND = env.str('CHANNEL_LAYER_BACKEND', default='memory').strip().lower()
+CHANNEL_LAYER_BACKEND = effective_channel_layer_backend()
 
 if CHANNEL_LAYER_BACKEND == 'redis':
-    _redis_url = env.str('CHANNEL_LAYER_REDIS_URL', default='redis://127.0.0.1:6379/0')
+    _redis_url = channel_layer_redis_url()
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',

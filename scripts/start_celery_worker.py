@@ -24,6 +24,7 @@ from _common import (
     read_queues_cache,
     run_celery_with_timing,
 )
+from src.core.utils.celery.startup_format import format_queues_display
 
 
 def load_workers_config() -> Dict[str, Any]:
@@ -106,42 +107,48 @@ def build_cmd(
 
 def main() -> int:
     start_time = time.perf_counter()
-    parser = argparse.ArgumentParser(description='Start Celery worker')
+    parser = argparse.ArgumentParser(description='Запуск Celery worker')
     parser.add_argument('--worker', type=str, default=None)
     parser.add_argument('--list-workers', action='store_true')
     parser.add_argument('--queues', type=str, default=None)
     parser.add_argument('--hostname', type=str, default=None)
     parser.add_argument('--concurrency', type=int, default=None)
-    parser.add_argument('--pool', type=str, default=None, help='threads | prefork | solo')
+    parser.add_argument('--pool', type=str, default=None, help='пул: threads | prefork | solo')
     parser.add_argument('--loglevel', default='info')
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Полные списки очередей и модулей при старте (или ERGO_CELERY_STARTUP_VERBOSE=true)',
+    )
     opts = parser.parse_args()
+
+    if opts.verbose:
+        os.environ['ERGO_CELERY_STARTUP_VERBOSE'] = 'true'
 
     config = load_workers_config()
     workers_config = config.get('workers', {})
     defaults = config.get('defaults', {})
     default_pool = defaults.get('pool', 'threads')
-    print('Celery Worker bootstrap: читаем кэш очередей (warmup_celery при необходимости)...')
-    all_queues = ensure_caches()
-    if all_queues:
-        print(f"Celery Worker bootstrap: в кэше {len(all_queues)} очередей ({', '.join(all_queues)})")
+    print('Подготовка Celery worker: читаем кэш очередей (warmup_celery при необходимости)...')
+    all_queues = ensure_caches(verbose=opts.verbose)
 
     if opts.list_workers:
         if not workers_config:
-            print(f'No workers in {WORKERS_CONFIG}')
+            print(f'В {WORKERS_CONFIG} нет worker\'ов')
             return 0
-        print('\nWorkers:')
+        print('\nWorker\'ы:')
         for name, w in workers_config.items():
             q = w.get('queues', [])
             if q == 'all':
-                qs = 'all'
+                qs = 'все'
             elif isinstance(q, str):
                 qs = q
             elif isinstance(q, list):
-                qs = ', '.join(q) if q else 'none'
+                qs = ', '.join(q) if q else 'нет'
             else:
-                qs = 'none'
+                qs = 'нет'
             pool = w.get('pool') or default_pool
-            print(f"  {name}: {w.get('description', '')} queues={qs} pool={pool}")
+            print(f"  {name}: {w.get('description', '')} очереди={qs} пул={pool}")
         return 0
 
     worker_name = opts.worker
@@ -154,7 +161,7 @@ def main() -> int:
 
     if worker_name:
         if worker_name not in workers_config:
-            print(f"Worker '{worker_name}' not found. Available: {', '.join(workers_config.keys())}")
+            print(f"Worker '{worker_name}' не найден. Доступные: {', '.join(workers_config.keys())}")
             return 1
         w = workers_config[worker_name]
         queues = resolve_queues(w.get('queues'), all_queues)
@@ -162,11 +169,12 @@ def main() -> int:
         concurrency = w.get('concurrency') or concurrency_opt
         loglevel = w.get('loglevel') or loglevel_opt
         pool = w.get('pool') or pool_opt
-        print(f"\nStarting worker '{worker_name}': {w.get('description', '')}")
+        print(f"\nЗапуск worker'а '{worker_name}': {w.get('description', '')}")
+        queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
         print(
-            f"  Mode: config worker (--worker), hostname={hostname}, "
-            f"queues={','.join(queues) if queues else 'all'}, "
-            f"concurrency={concurrency or 'default'}, pool={pool}"
+            f"  Режим: worker из конфигурации (--worker), hostname={hostname}, "
+            f"очереди={queues_display}, "
+            f"параллелизм={concurrency or 'по умолчанию'}, пул={pool}"
         )
     elif queues_opt or hostname_opt:
         if queues_opt:
@@ -174,7 +182,10 @@ def main() -> int:
             if all_queues:
                 invalid = set(queue_list) - set(all_queues) - {'default'}
                 if invalid:
-                    print(f'Unknown queues: {invalid}. Available: {", ".join(all_queues)}')
+                    from src.core.utils.celery.startup_format import format_name_list
+
+                    available = format_name_list(all_queues, verbose=opts.verbose)
+                    print(f'Неизвестные очереди: {invalid}. Доступные: {available}')
                     return 1
             queues = queue_list
         else:
@@ -183,22 +194,23 @@ def main() -> int:
         concurrency = concurrency_opt
         loglevel = loglevel_opt
         pool = pool_opt
-        print('\nStarting Celery worker')
+        print('\nЗапуск Celery worker')
+        queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
         print(
-            f"  Mode: ad-hoc worker (CLI), hostname={hostname}, "
-            f"queues={','.join(queues) if queues else 'all'}, "
-            f"concurrency={concurrency or 'default'}, pool={pool}"
+            f"  Режим: worker из аргументов командной строки, hostname={hostname}, "
+            f"очереди={queues_display}, "
+            f"параллелизм={concurrency or 'по умолчанию'}, пул={pool}"
         )
     elif workers_config:
         procs = []
-        print('\nStarting Celery workers from celery_workers.yaml (multi-worker mode)...')
+        print('\nЗапуск Celery worker\'ов из celery_workers.yaml (несколько процессов)...')
         for name, w in workers_config.items():
             queues = resolve_queues(w.get('queues'), all_queues)
             hostname = w.get('hostname', f'worker@{name}')
             if find_celery_worker(hostname=hostname):
-                print(f"  {hostname} already running, skip")
+                print(f"  {hostname} уже запущен, пропуск")
                 continue
-            queues_display = ','.join(queues) if queues else 'all'
+            queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
             worker_pool = w.get('pool') or default_pool
             cmd = build_cmd(
                 queues,
@@ -208,8 +220,8 @@ def main() -> int:
                 pool=worker_pool,
             )
             print(
-                f"  Starting '{name}' ({hostname}) -> queues={queues_display}, "
-                f"concurrency={w.get('concurrency') or 'default'}, pool={worker_pool}"
+                f"  Запуск '{name}' ({hostname}) -> очереди={queues_display}, "
+                f"параллелизм={w.get('concurrency') or 'по умолчанию'}, пул={worker_pool}"
             )
             env = os.environ.copy()
             env.setdefault('PYTHONPATH', '')
@@ -221,9 +233,9 @@ def main() -> int:
             procs.append(proc)
             time.sleep(0.3)
         if not procs:
-            print('No workers to start')
+            print('Нет worker\'ов для запуска')
             return 0
-        print('\nPress Ctrl+C to stop...')
+        print('\nДля остановки нажмите Ctrl+C...')
         try:
             while any(p.poll() is None for p in procs):
                 time.sleep(1)
@@ -242,19 +254,19 @@ def main() -> int:
         concurrency = concurrency_opt
         loglevel = loglevel_opt
         pool = pool_opt
-        print('No celery_workers.yaml. Starting single worker with all queues (no -Q if кэш пуст).')
+        print('Файл celery_workers.yaml не найден. Запуск одного worker\'а со всеми очередями (без -Q, если кэш пуст).')
 
-    queues_display = ','.join(queues) if queues else 'all'
+    queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
     if find_celery_worker(hostname=hostname):
-        print(f'Worker {hostname} already running')
+        print(f'Worker {hostname} уже запущен')
         return 0
 
-    print(f'  Starting {hostname} for queues: {queues_display}, pool={pool}')
+    print(f'  Запуск {hostname}, очереди: {queues_display}, пул={pool}')
     cmd = build_cmd(queues, hostname, loglevel, concurrency, pool=pool)
     return run_celery_with_timing(
         cmd, str(API_DIR),
         ready_pattern='Connected to',
-        service_name='Celery Worker',
+        service_name='Celery worker',
         start=start_time,
     )
 

@@ -15,6 +15,7 @@ from src.core.cms.adp.serializers import (
 from src.core.cms.adp.services.permissions import PermissionService
 from src.core.cms.adp.services.permissions_snapshot_cache import get_user_permissions_payload
 from src.core.settings.models import UserAvatar
+from src.config.version import get_system_version
 
 
 def _get_user_avatar_url(user) -> str | None:
@@ -72,4 +73,5 @@ def build_session_bootstrap_payload(user) -> dict:
         'access_to_panel': PermissionService.can_access_admin_panel(user),
         'permissions': build_permissions_snapshot_payload(user) if user is not None else None,
         'realtime': build_realtime_config_payload(),
+        'system_version': get_system_version(),
     }

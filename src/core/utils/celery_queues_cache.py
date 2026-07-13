@@ -8,18 +8,18 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
-from django.conf import settings
+from src.config.paths import MODULES_DIR, VIRTUAL_ENV_DIR
 
 logger = logging.getLogger('celery.cache')
 
-CACHE_DIR = Path(settings.VIRTUAL_ENV_DIR) / 'cache'
+CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
 CACHE_FILE = CACHE_DIR / 'celery_queues.bin'
 
 
 def _get_modules_config_mtime() -> float:
     """Max mtime по celery_config.py / celery_beat_config.py модулей."""
     from src.core.utils.cache_fingerprint import get_modules_config_max_mtime
-    return get_modules_config_max_mtime(Path(settings.MODULES_DIR))
+    return get_modules_config_max_mtime(Path(MODULES_DIR))
 
 
 def write_queues_cache(queues: Dict[str, Any]) -> None:

@@ -24,7 +24,7 @@ if SWAGGER_ENABLED:
     schema_view = get_schema_view(
         openapi.Info(
             title=f'{system_title} API',
-            default_version='v1.0.1',
+            default_version='v2.1',
             description='API эргономичной системы',
             terms_of_service='https://www.google.com/policies/terms/',
         ),

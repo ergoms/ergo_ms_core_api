@@ -52,7 +52,12 @@ def nginx_public_host() -> str:
 
 
 def nginx_listen_host() -> str:
-    return env.str('NGINX_LISTEN_HOST', default='0.0.0.0').strip() or '0.0.0.0'
+    explicit = env.str('NGINX_LISTEN_HOST', default='').strip()
+    if explicit:
+        return explicit
+    if nginx_use_https():
+        return '127.0.0.1'
+    return '0.0.0.0'
 
 
 def nginx_listen_port() -> str:

@@ -45,7 +45,7 @@ class _StreamTimingWrapper:
         val = elapsed * 1000 if elapsed < 1 else elapsed
         fmt = f'{val:.0f}{suffix}' if elapsed < 1 else f'{val:.2f}{suffix}'
         try:
-            self._stream.write(f'\n>>> API ready (total startup time): {fmt}\n')
+            self._stream.write(f'\n>>> API готов (полное время запуска): {fmt}\n')
         except (UnicodeEncodeError, UnicodeDecodeError):
             pass
         self._ready_printed = True
@@ -92,7 +92,7 @@ class Command(RunserverCommand):
         if is_production():
             host = get_api_bind_host()
             port = get_api_bind_port()
-            msg = f'API [production]: daphne on {host}:{port} (без autoreload)'
+            msg = f'API (запуск как на сервере): daphne на {host}:{port} (без autoreload)'
             logger.info(msg)
             try:
                 self.stdout.write(self.style.SUCCESS(msg))
@@ -107,9 +107,9 @@ class Command(RunserverCommand):
         if is_reloader_child:
             elapsed_msg = get_elapsed_str()
             try:
-                self.stdout.write(self.style.SUCCESS(f'  API (runserver): Django fully loaded {elapsed_msg}'))
+                self.stdout.write(self.style.SUCCESS(f'  API (runserver): Django загружен полностью {elapsed_msg}'))
             except (UnicodeEncodeError, UnicodeDecodeError):
-                logger.info('API (runserver): Django fully loaded %s', elapsed_msg)
+                logger.info('API (runserver): Django загружен полностью %s', elapsed_msg)
 
         if not options['addrport']:
             server_host = getattr(settings, 'SERVER_HOST', None)

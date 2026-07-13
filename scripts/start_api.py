@@ -53,10 +53,10 @@ def main() -> int:
 
     if is_production():
         cmd = build_daphne_command(sys.executable)
-        print(f'API [production]: daphne on {host}:{port}')
+        print(f'API (запуск как на сервере): daphne на {host}:{port}')
     else:
         cmd = build_dev_command(sys.executable)
-        print(f'API [development]: runserver (dev) on {host}:{port}')
+        print(f'API (разработка): runserver на {host}:{port}')
 
     return subprocess.call(cmd, cwd=str(API_DIR), env=run_env)
 

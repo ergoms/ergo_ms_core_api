@@ -2,11 +2,17 @@
 Точка входа для выполнения Django команд через Poetry.
 """
 
+import logging
 import os
 import sys
-import time
+from difflib import get_close_matches
 
-_t0 = time.perf_counter()
+_BOOTSTRAP_COMMANDS = frozenset({
+    'install',
+    'module-add',
+    'module-remove',
+    'module-list',
+})
 
 
 def _setup_test_env_early():
@@ -16,11 +22,11 @@ def _setup_test_env_early():
     """
     if len(sys.argv) >= 2 and sys.argv[1] == 'test':
         args = sys.argv[2:]
-        
+
         if '--full' in args:
             os.environ['TEST_FULL_APPS'] = '1'
             return
-        
+
         for arg in args:
             if arg.startswith('-'):
                 continue
@@ -34,79 +40,155 @@ def _setup_test_env_early():
 
 _setup_test_env_early()
 
-import logging
-from src.core.utils.startup_timing import set_start_time_if_earlier
 
-set_start_time_if_earlier(_t0)
-
-from typing import Dict, Type
-
-from commands.base import PoetryCommand
-from commands.discovery import discovery
-from commands.install import InstallCommand
-from commands.module_add import ModuleAddCommand, ModuleListCommand, ModuleRemoveCommand
-
-from src.config.settings.logger import LOGGING
-
-logger = logging.getLogger('commands')
-formatter = logging.Formatter(
-    fmt=LOGGING['formatters']['simple']['format'],
-    style=LOGGING['formatters']['simple']['style']
-)
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
-logger.setLevel(logging.INFO)
+def _configure_stdio_utf8() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            try:
+                stream.reconfigure(encoding='utf-8', errors='replace')
+            except (AttributeError, OSError, ValueError):
+                pass
 
 
-_SCRIPT_COMMANDS: list[Type[PoetryCommand]] = [
-    InstallCommand,
-    ModuleAddCommand,
-    ModuleRemoveCommand,
-    ModuleListCommand,
-]
+def _run_bootstrap_command() -> None:
+    """Установка зависимостей без Django/Celery — для свежего venv и setup-full."""
+    from commands.install import InstallCommand
+    from commands.module_add import ModuleAddCommand, ModuleListCommand, ModuleRemoveCommand
 
+    _configure_stdio_utf8()
 
-def get_commands() -> Dict[str, Type[PoetryCommand]]:
-    """Получение всех доступных команд."""
+    command_map = {
+        'install': InstallCommand,
+        'module-add': ModuleAddCommand,
+        'module-remove': ModuleRemoveCommand,
+        'module-list': ModuleListCommand,
+    }
+
+    if len(sys.argv) < 2:
+        print('Использование: ergoms api <install|module-add|module-remove|module-list> [аргументы...]')
+        sys.exit(1)
+
+    command_name = sys.argv[1]
+    command_class = command_map.get(command_name)
+    if command_class is None:
+        print(f'Неизвестная bootstrap-команда: {command_name}')
+        sys.exit(1)
+
     try:
-        commands = discovery.get_all()
-    except Exception as e:
-        logger.warning(f"Ошибка при загрузке команд: {e}")
-        commands = {}
-
-    for cmd_class in _SCRIPT_COMMANDS:
-        commands[cmd_class.poetry_command_name] = cmd_class
-
-    return commands
+        exit_code = command_class().run(*sys.argv[2:])
+        sys.exit(exit_code if exit_code is not None else 0)
+    except Exception as exc:
+        print(f'Ошибка при выполнении команды {command_name}: {exc}', file=sys.stderr)
+        sys.exit(1)
 
 
-def main():
-    """Главная функция."""
+def _run_full_main() -> None:
+    import time
+    from typing import Dict, Type
+
+    from commands.base import PoetryCommand
+    from commands.discovery import discovery
+    from commands.install import InstallCommand
+    from commands.module_add import ModuleAddCommand, ModuleListCommand, ModuleRemoveCommand
+    from src.config.settings.logger import LOGGING
+    from src.core.utils.startup_timing import set_start_time_if_earlier
+
+    set_start_time_if_earlier(time.perf_counter())
+
+    logger = logging.getLogger('commands')
+    logger.propagate = False
+    formatter = logging.Formatter(
+        fmt=LOGGING['formatters']['simple']['format'],
+        style=LOGGING['formatters']['simple']['style'],
+    )
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    if not logger.handlers:
+        logger.addHandler(console_handler)
+    logger.setLevel(logging.INFO)
+
+    script_commands: list[Type[PoetryCommand]] = [
+        InstallCommand,
+        ModuleAddCommand,
+        ModuleRemoveCommand,
+        ModuleListCommand,
+    ]
+
+    def get_commands() -> Dict[str, Type[PoetryCommand]]:
+        try:
+            commands = discovery.get_all()
+        except Exception as exc:
+            logger.warning('Ошибка при загрузке команд: %s', exc)
+            commands = {}
+
+        for cmd_class in script_commands:
+            commands[cmd_class.poetry_command_name] = cmd_class
+
+        return commands
+
+    def suggest_commands(command_name: str, commands: dict) -> list[str]:
+        names = sorted(commands.keys())
+        suggestions = get_close_matches(command_name, names, n=5, cutoff=0.5)
+        if suggestions:
+            return suggestions
+
+        normalized = command_name.replace('-', '_')
+        if normalized != command_name:
+            suggestions = get_close_matches(normalized, names, n=5, cutoff=0.5)
+            if suggestions:
+                return suggestions
+
+        alt = command_name.replace('_', '-')
+        if alt != command_name:
+            return get_close_matches(alt, names, n=5, cutoff=0.5)
+
+        return []
+
+    def print_unknown_command_help(command_name: str, commands: dict) -> None:
+        logger.error('Неизвестная команда Django: %s', command_name)
+        suggestions = suggest_commands(command_name, commands)
+        if suggestions:
+            formatted = ', '.join(f'ergoms api {name}' for name in suggestions)
+            logger.error('Возможно, вы имели в виду: %s', formatted)
+        else:
+            logger.error('Команд Django: %d', len(commands))
+        logger.error('Справка ergoms (не Django): ergoms help')
+
+    _configure_stdio_utf8()
     commands = get_commands()
 
     if len(sys.argv) < 2:
-        logger.info("Использование: api <команда> [аргументы...]")
-        logger.info("Доступные команды: %s", ", ".join(sorted(commands.keys())))
-        return
+        logger.error('Использование: ergoms api <команда> [аргументы...]')
+        logger.error(
+            'Команд Django: %d. Список не выводится — при опечатке будут подсказки.',
+            len(commands),
+        )
+        logger.error('Справка ergoms: ergoms help')
+        sys.exit(1)
 
     command_name = sys.argv[1]
     args = sys.argv[2:]
 
     command_class = commands.get(command_name)
     if not command_class:
-        logger.error("Неизвестная команда: %s", command_name)
-        logger.info("Доступные команды: %s", ", ".join(sorted(commands.keys())))
-        return
+        print_unknown_command_help(command_name, commands)
+        sys.exit(1)
 
     try:
         command_instance = command_class()
         exit_code = command_instance.run(*args)
         sys.exit(exit_code if exit_code is not None else 0)
-    except Exception as e:
-        logger.error("Ошибка при выполнении команды %s: %s", command_name, e)
+    except Exception as exc:
+        logger.error('Ошибка при выполнении команды %s: %s', command_name, exc)
         sys.exit(1)
 
 
-if __name__ == "__main__":
+def main() -> None:
+    if len(sys.argv) >= 2 and sys.argv[1] in _BOOTSTRAP_COMMANDS:
+        _run_bootstrap_command()
+        return
+    _run_full_main()
+
+
+if __name__ == '__main__':
     main()

@@ -44,6 +44,38 @@ def _normalize_entity(entity: Any) -> dict:
     }
 
 
+def log_audit_event(payload: dict) -> None:
+    """Строка в logs/audit.log после успешной записи в БД."""
+    if not getattr(settings, 'AUDIT_LOG_FILE_ENABLED', True):
+        return
+    changes = payload.get('changes')
+    changes_count = len(changes) if isinstance(changes, list) else 0
+    logger.info(
+        'action=%s module=%s severity=%s actor=%s entity=%s/%s org=%s ip=%s request_id=%s changes=%s',
+        payload.get('action') or '-',
+        payload.get('source_module') or '-',
+        payload.get('severity') or '-',
+        payload.get('actor_label') or '-',
+        payload.get('entity_type') or '-',
+        payload.get('entity_ref') or '-',
+        payload.get('organization_id') or '-',
+        payload.get('ip_address') or '-',
+        payload.get('request_id') or '-',
+        changes_count,
+    )
+
+
+def persist_audit_event_sync(payload: dict) -> int:
+    """Сохранить запись аудита в БД и продублировать в audit.log."""
+    event = AuditEvent.objects.create(**payload)
+    upsert_audit_actor(
+        actor_id=payload.get('actor_id'),
+        actor_label=payload.get('actor_label') or '',
+    )
+    log_audit_event(payload)
+    return event.pk
+
+
 class AuditService:
     """Создание записей журнала действий."""
 
@@ -133,10 +165,6 @@ class AuditService:
     @staticmethod
     def _persist_sync(payload: dict) -> None:
         try:
-            AuditEvent.objects.create(**payload)
-            upsert_audit_actor(
-                actor_id=payload.get('actor_id'),
-                actor_label=payload.get('actor_label') or '',
-            )
+            persist_audit_event_sync(payload)
         except Exception:
             logger.exception('AuditService: не удалось сохранить запись аудита')

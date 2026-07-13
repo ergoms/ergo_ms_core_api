@@ -25,6 +25,15 @@ from commands.base import PoetryCommand
 
 _CORE_LOCK_GROUPS = frozenset({"main"})
 _PIP_BATCH_SIZE = 40
+# moviepy 2.2.1 объявляет pillow<12.0, хотя с Pillow 12.x обычно работает (см. Zulko/moviepy#2553).
+_NO_DEPS_PACKAGES = frozenset({"moviepy"})
+_NO_DEPS_RUNTIME_DEPS: Dict[str, List[str]] = {
+    "moviepy": [
+        "imageio>=2.5,<3.0",
+        "imageio_ffmpeg>=0.2.0",
+        "proglog<=1.0.0",
+    ],
+}
 
 
 class InstallCommand(PoetryCommand):
@@ -127,43 +136,100 @@ class InstallCommand(PoetryCommand):
         if not main_versions:
             print("Предупреждение: poetry.lock ядра не найден или пуст — constraints не применены.")
 
+        regular_deps = {
+            pkg: constraint
+            for pkg, constraint in module_deps.items()
+            if pkg not in _NO_DEPS_PACKAGES
+        }
+        no_deps_packages = {
+            pkg: constraint
+            for pkg, constraint in module_deps.items()
+            if pkg in _NO_DEPS_PACKAGES
+        }
+
         all_sources = self._collect_all_sources(project_root, root_data)
         extra_index_urls = self._collect_extra_index_urls(module_deps, all_sources)
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="ergo_install_"))
         try:
-            constraints_path = tmp_dir / "core_constraints.txt"
-            requirements_path = tmp_dir / "requirements-modules.txt"
+            if regular_deps:
+                constraints_path = tmp_dir / "core_constraints.txt"
+                requirements_path = tmp_dir / "requirements-modules.txt"
 
-            if main_versions:
-                self._write_core_constraints(constraints_path, main_versions)
+                if main_versions:
+                    self._write_core_constraints(constraints_path, main_versions)
 
-            self._write_module_requirements(
-                requirements_path,
-                module_deps,
+                self._write_module_requirements(
+                    requirements_path,
+                    regular_deps,
+                    project_root,
+                    extra_index_urls,
+                )
+
+                cmd: List[str] = [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "-r",
+                    str(requirements_path),
+                ]
+                if main_versions:
+                    cmd.extend(["-c", str(constraints_path)])
+
+                print(
+                    "Установка модульных пакетов: pip install -r requirements-modules.txt "
+                    "(constraints: poetry.lock ядра)..."
+                )
+                result = subprocess.run(cmd, cwd=str(project_root))
+                if result.returncode != 0:
+                    return result.returncode
+
+            return self._install_no_deps_packages(
                 project_root,
+                no_deps_packages,
                 extra_index_urls,
             )
-
-            cmd: List[str] = [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "-r",
-                str(requirements_path),
-            ]
-            if main_versions:
-                cmd.extend(["-c", str(constraints_path)])
-
-            print(
-                "Установка модульных пакетов: pip install -r requirements-modules.txt "
-                "(constraints: poetry.lock ядра)..."
-            )
-            result = subprocess.run(cmd, cwd=str(project_root))
-            return result.returncode
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _install_no_deps_packages(
+        self,
+        project_root: Path,
+        no_deps_packages: Dict[str, Any],
+        extra_index_urls: List[str],
+    ) -> int:
+        if not no_deps_packages:
+            return 0
+
+        for pkg, constraint in sorted(no_deps_packages.items()):
+            req_line = self._to_pip_requirement(pkg, constraint, project_root)
+            runtime_deps = _NO_DEPS_RUNTIME_DEPS.get(pkg, [])
+            if runtime_deps:
+                print(
+                    f"Установка зависимостей {pkg} (без pillow-конфликта metadata): "
+                    f"{', '.join(runtime_deps)}"
+                )
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", *runtime_deps],
+                    cwd=str(project_root),
+                )
+                if result.returncode != 0:
+                    return result.returncode
+
+            cmd: List[str] = [sys.executable, "-m", "pip", "install", "--no-deps", req_line]
+            for url in extra_index_urls:
+                cmd.extend(["--extra-index-url", url])
+
+            print(
+                f"Установка {pkg} без проверки metadata зависимостей "
+                f"(конфликт с версией pillow ядра)..."
+            )
+            result = subprocess.run(cmd, cwd=str(project_root))
+            if result.returncode != 0:
+                return result.returncode
+
+        return 0
 
     def _write_core_constraints(self, path: Path, main_versions: Dict[str, str]) -> None:
         path.write_text(

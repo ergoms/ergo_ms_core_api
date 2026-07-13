@@ -99,7 +99,7 @@ class QueueConcurrencyManager:
         with self._semaphore_lock:
             self._semaphores[queue_name] = threading.Semaphore(max_concurrent)
         
-        logger.info(f"Очередь {queue_name}: max_concurrent_tasks={max_concurrent}")
+        logger.debug(f"Очередь {queue_name}: max_concurrent_tasks={max_concurrent}")
     
     def get_queue_limit(self, queue_name: str) -> int:
         """Возвращает лимит для очереди (0 = без ограничений)"""

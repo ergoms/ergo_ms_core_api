@@ -66,8 +66,10 @@ GENERATED_DOCUMENTS_DIR = Path(MEDIA_ROOT) / 'generated_docs'
 # URL для доступа к логам.
 LOGS_URL = '/logs/'
 
-# Корневая директория для логов.
-LOGS_ROOT = os.path.join(SYSTEM_DIR, 'logs')
+# Корневая директория для логов (ERGO_LOGS_DIR в .env или <корень>/logs).
+from src.config.log_paths import resolve_logs_root
+
+LOGS_ROOT = str(resolve_logs_root(SYSTEM_DIR))
 
 # Хранилище для статических файлов, использующее Whitenoise для сжатия и кэширования.
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'

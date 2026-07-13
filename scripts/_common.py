@@ -15,8 +15,13 @@ from typing import Any, Dict, List, Optional
 SCRIPT_DIR = Path(__file__).resolve().parent
 API_DIR = SCRIPT_DIR.parent
 PROJECT_ROOT = API_DIR.parent.parent
+DEPLOYMENT_DIR = PROJECT_ROOT / 'core' / 'deployment'
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
+if str(DEPLOYMENT_DIR) not in sys.path:
+    sys.path.insert(0, str(DEPLOYMENT_DIR))
+
+from console_tags import format_console  # noqa: E402
 
 
 def _bootstrap_project_env() -> None:
@@ -183,24 +188,31 @@ def _wait_for_warmup() -> bool:
         time.sleep(0.5)
 
 
-def ensure_caches() -> List[str]:
+def ensure_caches(*, verbose: Optional[bool] = None) -> List[str]:
     """
     Если кэш пуст — вызывает warmup_caches через Django, затем перечитывает.
     Использует file lock чтобы при параллельном старте N воркеров только один
     процесс загружал Django, остальные ждали результата.
     """
+    from src.core.utils.celery.startup_format import celery_startup_verbose, format_name_list
+
+    show_full = verbose if verbose is not None else celery_startup_verbose()
     queues = read_queues_cache()
     # Если кэш уже валиден (даже с 0 очередями) — не пытаемся заново греть Celery.
     if queues or cache_valid():
         if queues:
-            print(f'Celery queues cache already valid: {len(queues)} queues, warmup_celery не требуется')
+            detail = format_name_list(queues, verbose=show_full)
+            print(
+                f'Кэш очередей Celery валиден: {len(queues)} очередей ({detail}), '
+                f'warmup_celery не требуется'
+            )
         else:
-            print('Celery queues cache валиден, но очередей 0 (нет Celery-модулей), warmup_celery не требуется')
+            print('Кэш очередей Celery валиден, очередей 0 (нет Celery-модулей), warmup_celery не требуется')
         return queues
 
     if _acquire_warmup_lock():
         try:
-            print('Celery queues cache is empty/invalid. Populating via warmup_celery (Django warmup_celery команда)...')
+            print('Кэш очередей Celery пуст или невалиден. Заполняем через warmup_celery (команда Django)...')
             result = subprocess.run(
                 [sys.executable, '-m', 'commands', 'warmup_celery'],
                 cwd=str(API_DIR),
@@ -209,21 +221,21 @@ def ensure_caches() -> List[str]:
             if result.returncode == 0:
                 queues = read_queues_cache()
                 if cache_valid():
-                    print(f'Cache populated after warmup_celery: {len(queues)} queues')
+                    print(f'Кэш заполнен после warmup_celery: {len(queues)} очередей')
                     return queues
-            print('[WARNING] Could not populate cache, starting without -Q (all queues)')
+            print(format_console('warning', 'Не удалось заполнить кэш, запуск без -Q (все очереди)'))
         except Exception as e:
-            print(f'[WARNING] Could not populate cache ({e}), starting without -Q (all queues)')
+            print(format_console('warning', f'Не удалось заполнить кэш ({e}), запуск без -Q (все очереди)'))
         finally:
             _release_warmup_lock()
         return []
 
-    print('Another process is populating cache, waiting...')
+    print('Другой процесс заполняет кэш, ожидание...')
     if _wait_for_warmup():
         queues = read_queues_cache()
-        print(f'Cache ready: {len(queues)} queues')
+        print(f'Кэш готов: {len(queues)} очередей')
         return queues
-    print('[WARNING] Cache wait timed out, starting without -Q (all queues)')
+    print(format_console('warning', 'Истекло время ожидания кэша, запуск без -Q (все очереди)'))
     return []
 
 
@@ -263,7 +275,7 @@ def run_celery_with_timing(
                     suffix = 'ms' if elapsed < 1 else 's'
                     val = elapsed * 1000 if elapsed < 1 else elapsed
                     fmt = f'{val:.0f}{suffix}' if elapsed < 1 else f'{val:.2f}{suffix}'
-                    print(f'\n>>> {service_name} ready in {fmt}\n')
+                    print(f'\n>>> {service_name} готов за {fmt}\n')
                     ready_printed = True
         proc.wait()
     except KeyboardInterrupt:
