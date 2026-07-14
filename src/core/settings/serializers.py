@@ -14,6 +14,7 @@ class ThemeSerializer(serializers.ModelSerializer):
         model = Theme
         fields = [
             'id', 'name', 'description', 'author', 'base_theme',
+            'module_key', 'module_pair', 'module_tokens',
             'is_active', 'is_default', 'is_system',
             'colors', 'bootstrap_colors',
             'created_at', 'updated_at'
@@ -23,9 +24,7 @@ class ThemeSerializer(serializers.ModelSerializer):
         ref_name = 'CoreThemeSerializer'
     
     def validate(self, data):
-        # Нельзя редактировать системные темы
         if self.instance and self.instance.is_system:
-            # Можно только активировать/деактивировать
             allowed_fields = {'is_active', 'is_default'}
             changed_fields = set(data.keys()) - allowed_fields
             if changed_fields:
@@ -33,6 +32,14 @@ class ThemeSerializer(serializers.ModelSerializer):
                     "Нельзя редактировать системные темы. "
                     "Создайте копию для редактирования."
                 )
+
+        instance = self.instance
+        module_key = data.get('module_key', getattr(instance, 'module_key', None))
+        base_theme = data.get('base_theme', getattr(instance, 'base_theme', None))
+        if module_key and base_theme not in ('light', 'dark'):
+            raise serializers.ValidationError({
+                'base_theme': 'У модульной темы вариант может быть только light или dark.',
+            })
         return data
 
 

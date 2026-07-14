@@ -50,6 +50,29 @@ class Theme(models.Model):
         blank=True,
         help_text=_("Переопределение Bootstrap переменных --bs-*")
     )
+
+    module_key = models.CharField(
+        _("Модуль"),
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text=_("Ключ модуля (kebab-case). Пусто — глобальная тема сайта."),
+    )
+
+    module_tokens = models.JSONField(
+        _("Токены модуля"),
+        default=dict,
+        blank=True,
+        help_text=_("Дополнительные CSS-переменные модуля (--module-*)"),
+    )
+
+    module_pair = models.CharField(
+        _("Пара модульной темы"),
+        max_length=64,
+        blank=True,
+        default='',
+        help_text=_("Связка light+dark вариантов модуля. Пусто — тема сайта."),
+    )
     
     created_at = models.DateTimeField(_("Создана"), auto_now_add=True)
     updated_at = models.DateTimeField(_("Обновлена"), auto_now=True)
@@ -58,17 +81,50 @@ class Theme(models.Model):
         verbose_name = _("Тема")
         verbose_name_plural = _("Темы")
         ordering = ['-is_default', '-is_system', 'name']
-    
+        indexes = [
+            models.Index(fields=['module_key', 'is_active']),
+            models.Index(fields=['module_key', 'is_default']),
+        ]
+
     def __str__(self):
         return self.name
     
+    def _scope_filter(self, queryset):
+        if self.module_key:
+            return queryset.filter(module_key=self.module_key)
+        return queryset.filter(module_key__isnull=True)
+
+    def normalized_module_pair(self) -> str:
+        if not self.module_key:
+            return ''
+        return (self.module_pair or 'default').strip() or 'default'
+
     def save(self, *args, **kwargs):
-        # Если устанавливаем тему по умолчанию, снимаем флаг с других
+        if self.module_key:
+            self.module_pair = self.normalized_module_pair()
+
         if self.is_default:
-            Theme.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)
-        # Если устанавливаем активную тему, снимаем флаг с других
+            if self.module_key:
+                Theme.objects.filter(module_key=self.module_key).exclude(
+                    module_pair=self.normalized_module_pair(),
+                ).update(is_default=False)
+            else:
+                Theme.objects.filter(is_default=True, module_key__isnull=True).exclude(
+                    pk=self.pk,
+                ).update(is_default=False)
+
         if self.is_active:
-            Theme.objects.filter(is_active=True).exclude(pk=self.pk).update(is_active=False)
+            if self.module_key:
+                pair = self.normalized_module_pair()
+                Theme.objects.filter(module_key=self.module_key).update(is_active=False)
+                super().save(*args, **kwargs)
+                Theme.objects.filter(module_key=self.module_key, module_pair=pair).update(
+                    is_active=True,
+                )
+                return
+            qs = Theme.objects.filter(is_active=True, module_key__isnull=True)
+            qs.exclude(pk=self.pk).update(is_active=False)
+
         super().save(*args, **kwargs)
     
     @classmethod

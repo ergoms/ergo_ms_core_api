@@ -143,11 +143,17 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
         if self.is_swagger_fake_view():
             return Theme.objects.none()
         queryset = Theme.objects.all()
-        # Фильтр по базовой теме
+        module_key = self.request.query_params.get('module')
+        if module_key == 'site' or module_key == '':
+            queryset = queryset.filter(module_key__isnull=True)
+        elif module_key:
+            queryset = queryset.filter(module_key=module_key)
+        as_pairs = self.request.query_params.get('as_pairs')
+        if module_key and module_key not in ('site', '') and as_pairs == 'true':
+            return queryset
         base_theme = self.request.query_params.get('base_theme')
         if base_theme:
             queryset = queryset.filter(base_theme=base_theme)
-        # Фильтр только активных
         is_active = self.request.query_params.get('is_active')
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active == 'true')
@@ -162,25 +168,55 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
                 status=status.HTTP_403_FORBIDDEN
             )
         return super().destroy(request, *args, **kwargs)
+
+    def list(self, request, *args, **kwargs):
+        module_key = request.query_params.get('module')
+        if module_key and module_key not in ('site', '') and request.query_params.get('as_pairs') == 'true':
+            from src.core.settings.services.module_theme_sets import list_module_pairs
+
+            pairs = list_module_pairs(self.get_queryset(), module_key)
+            return Response(pairs)
+        return super().list(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'], url_path='active')
     def get_active_theme(self, request):
-        """Получить активную тему"""
-        active_theme = Theme.objects.filter(is_active=True).first()
+        """Получить активную тему сайта или пару light+dark модуля (?module=)"""
+        module_key = request.query_params.get('module')
+        if module_key and module_key not in ('site', ''):
+            from src.core.settings.services.module_theme_sets import build_module_theme_set
+
+            built = build_module_theme_set(Theme.objects.all(), module_key)
+            if built:
+                return Response(built)
+            return Response(
+                {'detail': 'Активная тема модуля не найдена'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        scope = Theme.objects.filter(module_key__isnull=True)
+        active_theme = scope.filter(is_active=True).first()
         if active_theme:
             return Response(ThemeSerializer(active_theme).data)
-        # Если нет активной, вернуть тему по умолчанию
-        default_theme = Theme.objects.filter(is_default=True).first()
+        default_theme = scope.filter(is_default=True).first()
         if default_theme:
             return Response(ThemeSerializer(default_theme).data)
         return Response({'detail': 'Активная тема не найдена'}, status=status.HTTP_404_NOT_FOUND)
     
     @action(detail=True, methods=['post'], url_path='activate')
     def activate_theme(self, request, pk=None):
-        """Активировать тему"""
+        """Активировать тему сайта или пару light+dark модуля целиком"""
         theme = self.get_object()
-        # Снимаем активацию со всех остальных тем
-        Theme.objects.filter(is_active=True).update(is_active=False)
+        if theme.module_key:
+            from src.core.settings.services.module_theme_sets import activate_module_pair
+
+            built = activate_module_pair(Theme, theme.module_key, theme.module_pair or 'default')
+            if not built:
+                return Response(
+                    {'error': 'Не удалось активировать пару модульных тем'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response(built)
+        Theme.objects.filter(is_active=True, module_key__isnull=True).update(is_active=False)
         theme.is_active = True
         theme.save()
         return Response(ThemeSerializer(theme).data)
@@ -196,8 +232,11 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
             description=source_theme.description,
             author=request.data.get('author', source_theme.author),
             base_theme=source_theme.base_theme,
+            module_key=source_theme.module_key,
+            module_pair=source_theme.module_pair or 'default',
             colors=source_theme.colors.copy(),
             bootstrap_colors=source_theme.bootstrap_colors.copy() if source_theme.bootstrap_colors else {},
+            module_tokens=source_theme.module_tokens.copy() if source_theme.module_tokens else {},
             is_active=False,
             is_default=False,
             is_system=False
@@ -214,9 +253,12 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
             'description': theme.description,
             'author': theme.author,
             'base_theme': theme.base_theme,
+            'module_key': theme.module_key,
+            'module_pair': theme.module_pair,
             'colors': theme.colors,
             'bootstrap_colors': theme.bootstrap_colors,
-            'version': '1.0',
+            'module_tokens': theme.module_tokens,
+            'version': '1.1',
             'exported_at': str(timezone.now())
         }
         
@@ -255,8 +297,11 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
                 description=theme_data.get('description', ''),
                 author=theme_data.get('author', ''),
                 base_theme=theme_data['base_theme'],
+                module_key=theme_data.get('module_key'),
+                module_pair=theme_data.get('module_pair') or 'default',
                 colors=theme_data['colors'],
                 bootstrap_colors=theme_data.get('bootstrap_colors', {}),
+                module_tokens=theme_data.get('module_tokens', {}),
                 is_active=False,
                 is_default=False,
                 is_system=False
@@ -281,7 +326,11 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
     @action(detail=True, methods=['post'], url_path='reset-defaults')
     def reset_defaults(self, request, pk=None):
         """Сбросить системную тему к начальным значениям"""
-        from src.core.settings.services.theme_seed import reset_system_theme_to_defaults
+        from src.core.settings.services.theme_seed import (
+            reset_system_theme_to_defaults,
+            BUILTIN_MODULE_MANIFESTS,
+            ensure_module_themes_from_manifests,
+        )
 
         theme = self.get_object()
         if not theme.is_system:
@@ -289,6 +338,21 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
                 {'error': 'Сброс доступен только для системных тем'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        if theme.module_key:
+            manifest = next(
+                (m for m in BUILTIN_MODULE_MANIFESTS if m.get('moduleKey') == theme.module_key),
+                None,
+            )
+            if manifest is None:
+                return Response(
+                    {'error': 'Не удалось определить начальные значения модульной темы'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            ensure_module_themes_from_manifests(Theme, [manifest], update_existing=True)
+            theme.refresh_from_db()
+            return Response(ThemeSerializer(theme).data)
+
         if not reset_system_theme_to_defaults(theme):
             return Response(
                 {'error': 'Не удалось определить начальные значения темы'},
@@ -312,6 +376,32 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
 
         return Response({
             'message': ', '.join(message) if message else 'Темы актуальны',
+            'created': [ThemeSerializer(theme).data for theme in created],
+            'updated': [ThemeSerializer(theme).data for theme in updated],
+        })
+
+    @action(detail=False, methods=['post'], url_path='sync-module-defaults')
+    def sync_module_defaults(self, request):
+        """Создать или обновить системные темы модулей из manifest (тело запроса)."""
+        from src.core.settings.services.theme_seed import ensure_module_themes_from_manifests
+
+        manifests = request.data.get('manifests')
+        if not manifests or not isinstance(manifests, list):
+            return Response(
+                {'error': 'Передайте массив manifests в теле запроса'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        created, updated = ensure_module_themes_from_manifests(Theme, manifests, update_existing=True)
+
+        message = []
+        if created:
+            message.append(f'Создано {len(created)} модульных тем')
+        if updated:
+            message.append(f'Обновлено {len(updated)} модульных тем')
+
+        return Response({
+            'message': ', '.join(message) if message else 'Модульные темы актуальны',
             'created': [ThemeSerializer(theme).data for theme in created],
             'updated': [ThemeSerializer(theme).data for theme in updated],
         })
