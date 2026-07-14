@@ -25,12 +25,24 @@ class ThemeSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         if self.instance and self.instance.is_system:
-            allowed_fields = {'is_active', 'is_default'}
+            if self.instance.module_key:
+                allowed_fields = {
+                    'is_active',
+                    'is_default',
+                    'name',
+                    'description',
+                    'author',
+                    'colors',
+                    'bootstrap_colors',
+                    'module_tokens',
+                }
+            else:
+                allowed_fields = {'is_active', 'is_default'}
             changed_fields = set(data.keys()) - allowed_fields
             if changed_fields:
                 raise serializers.ValidationError(
-                    "Нельзя редактировать системные темы. "
-                    "Создайте копию для редактирования."
+                    'Нельзя изменять структуру системной темы. '
+                    'Для темы сайта создайте копию; для модуля можно менять палитру и описание.'
                 )
 
         instance = self.instance
