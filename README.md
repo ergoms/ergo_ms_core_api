@@ -20,6 +20,7 @@
 |------|---------|
 | API, ViewSet, Swagger | [`.cursor/rules/api_code.mdc`](../../.cursor/rules/api_code.mdc) |
 | Django, регистрация, ASGI | [`.cursor/rules/django.mdc`](../../.cursor/rules/django.mdc) |
+| Redis, nginx, channel layer | [`.cursor/rules/deployment-infra.mdc`](../../.cursor/rules/deployment-infra.mdc) |
 | WebSocket, realtime | [`.cursor/rules/realtime.mdc`](../../.cursor/rules/realtime.mdc) |
 | Безопасность | [`.cursor/rules/security.mdc`](../../.cursor/rules/security.mdc) |
 | GeoIP | [`../deployment/logic.md`](../deployment/logic.md#geoip-db-ip-city-lite) |
