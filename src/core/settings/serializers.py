@@ -35,6 +35,9 @@ class ThemeSerializer(serializers.ModelSerializer):
                     'colors',
                     'bootstrap_colors',
                     'module_tokens',
+                    'base_theme',
+                    'module_key',
+                    'module_pair',
                 }
             else:
                 allowed_fields = {'is_active', 'is_default'}

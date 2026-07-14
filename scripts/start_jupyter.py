@@ -2,7 +2,7 @@
 Скрипт регистрации Django IPython kernel и запуска JupyterLab.
 
 Устанавливает кастомный kernel 'ergo_django' с автоинициализацией Django ORM,
-затем запускает JupyterLab с настройками из .env (API_JUPYTER_HOST, API_JUPYTER_PORT).
+затем запускает JupyterLab с effective-настройками из jupyter_runtime.py.
 
 Запуск: ergoms start-jupyter
 """
@@ -15,21 +15,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-from _common import API_DIR, PROJECT_ROOT
+from _common import API_DIR, PROJECT_ROOT, format_console
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KERNEL_NAME = 'ergo_django'
 KERNEL_DISPLAY_NAME = 'Django Kernel (ERGO MS)'
 KERNEL_LAUNCHER = SCRIPT_DIR / 'jupyter_django_kernel.py'
 NOTEBOOKS_DIR = PROJECT_ROOT / 'notebooks'
-
-
-def _get_jupyter_settings():
-    """Читает хост/порт Jupyter из .env без полной загрузки Django."""
-    from src.config.env import env
-    host = env.str('API_JUPYTER_HOST', default='localhost')
-    port = env.str('API_JUPYTER_PORT', default='8002')
-    return host, port
 
 
 def _install_django_kernel():
@@ -55,7 +47,7 @@ def _install_django_kernel():
         from jupyter_client.kernelspec import KernelSpecManager
         ksm = KernelSpecManager()
         dest = ksm.install_kernel_spec(spec_dir, KERNEL_NAME, user=True)
-        print(f'Ядро Django установлено: {dest}')
+        print(format_console('ok', f'Ядро Django установлено: {dest}'))
     finally:
         shutil.rmtree(spec_dir, ignore_errors=True)
 
@@ -73,29 +65,54 @@ def _ensure_venv_commonjs():
         venv_pkg.write_text('{"type": "commonjs"}\n', encoding='utf-8')
 
 
+def _print_startup_info():
+    from src.config.jupyter_runtime import (
+        effective_jupyter_access_mode,
+        effective_jupyter_bind_host,
+        effective_jupyter_bind_port,
+        effective_jupyter_security,
+        jupyter_public_lab_url,
+    )
+
+    mode = effective_jupyter_access_mode()
+    security = effective_jupyter_security()
+    bind_host = effective_jupyter_bind_host()
+    bind_port = effective_jupyter_bind_port()
+    lab_url = jupyter_public_lab_url()
+
+    print(format_console('info', f'Режим доступа Jupyter: {mode}'))
+    print(format_console('info', f'Bind: {bind_host}:{bind_port}'))
+    print(format_console('info', f'Публичный адрес: {lab_url}'))
+
+    if security['require_token']:
+        print(format_console(
+            'info',
+            'Токен задан в API_JUPYTER_TOKEN — откройте lab с параметром ?token=...',
+        ))
+    if security['require_admin_gate']:
+        print(format_console(
+            'info',
+            'За nginx доступ только для глобального администратора (сессия SPA + токен Jupyter)',
+        ))
+
+
 def _start_jupyterlab():
-    """Запускает JupyterLab с настройками из .env."""
-    host, port = _get_jupyter_settings()
+    """Запускает JupyterLab с effective-настройками."""
+    from src.config.jupyter_runtime import build_jupyter_server_argv, validate_jupyter_startup
+
+    startup_error = validate_jupyter_startup()
+    if startup_error:
+        print(format_console('error', startup_error), file=sys.stderr)
+        return 1
 
     NOTEBOOKS_DIR.mkdir(parents=True, exist_ok=True)
     _ensure_venv_commonjs()
 
-    cmd = [
-        sys.executable, '-m', 'jupyterlab',
-        '--ip', host,
-        '--port', port,
-        '--notebook-dir', str(NOTEBOOKS_DIR),
-        '--ServerApp.allow_origin', '*',
-        '--ServerApp.allow_remote_access', 'True',
-        '--ServerApp.open_browser', 'False',
-        '--ServerApp.token', '',
-        '--ServerApp.password', '',
-        '--ServerApp.websocket_ping_timeout', '30000',
-    ]
+    cmd = [sys.executable, '-m', 'jupyterlab', *build_jupyter_server_argv(str(NOTEBOOKS_DIR))]
 
-    print(f'Запуск JupyterLab на {host}:{port}')
-    print(f'Каталог блокнотов: {NOTEBOOKS_DIR}')
-    print(f'Адрес: http://{host}:{port}/lab')
+    print(format_console('info', 'Запуск JupyterLab...'))
+    print(format_console('info', f'Каталог блокнотов: {NOTEBOOKS_DIR}'))
+    _print_startup_info()
 
     env = os.environ.copy()
     existing_pythonpath = env.get('PYTHONPATH', '')

@@ -27,18 +27,18 @@ def main() -> int:
     Точка входа скрипта warmup_caches_if_needed.
 
     Сценарии:
-      - REDIS_ENABLED=true -> запускаем Redis до прогрева (API и кэши зависят от него);
-      - кэш валиден -> выходим сразу (warmup пропускается);
+      - кэш валиден -> выходим сразу (warmup и detached Redis не требуются);
+      - REDIS_ENABLED=true и кэш невалиден -> запускаем Redis до Django warmup;
       - кэш невалиден -> вызываем Django-команду warmup_caches для прогрева.
     """
+    if cache_valid():
+        logger.info('warmup_caches_if_needed: кэш уже валиден, Django warmup не требуется')
+        return 0
+
     redis_code = ensure_redis_for_dev(quiet=True)
     if redis_code != 0:
         logger.warning('warmup_caches_if_needed: не удалось запустить Redis (код %s)', redis_code)
         return redis_code
-
-    if cache_valid():
-        logger.info('warmup_caches_if_needed: кэш уже валиден, Django warmup не требуется')
-        return 0
 
     logger.info('warmup_caches_if_needed: кэш невалиден, запускаем Django команду warmup_caches')
     result = subprocess.run(

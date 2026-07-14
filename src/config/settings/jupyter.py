@@ -1,5 +1,5 @@
 from src.config.settings.base import BASE_DIR, SYSTEM_DIR
-from src.config.env import env
+from src.config.jupyter_runtime import build_jupyter_server_argv
 import os
 import sys
 
@@ -12,28 +12,10 @@ except ImportError:
 # Путь к директории notebooks в корне проекта.
 PATH_TO_NOTEBOOK_DIR = SYSTEM_DIR / 'notebooks'
 
-# Хост сервера jupyter, полученный из переменной окружения.
-API_JUPYTER_HOST = env.str('API_JUPYTER_HOST', default='localhost')
-
-# Порт сервера jupyter, полученный из переменной окружения.
-API_JUPYTER_PORT = env.str('API_JUPYTER_PORT', default='8002')
-
-# Аргументы для запуска сервера jupyter.
+# Аргументы для запуска сервера jupyter (effective-значения из jupyter_runtime).
 NOTEBOOK_ARGUMENTS = [
-    '--ip', API_JUPYTER_HOST,
-    '--port', API_JUPYTER_PORT,
-    '--notebook-dir', str(PATH_TO_NOTEBOOK_DIR),
+    *build_jupyter_server_argv(str(PATH_TO_NOTEBOOK_DIR)),
     '--NotebookApp.default_url', notebook_default_url,
-    '--NotebookApp.allow_origin', '*',
-    '--NotebookApp.allow_remote_access', 'True',
-    '--NotebookApp.open_browser', 'False',
-    '--NotebookApp.token', '',
-    '--NotebookApp.password', '',
-    '--ServerApp.allow_origin', '*',
-    '--ServerApp.allow_remote_access', 'True',
-    '--ServerApp.open_browser', 'False',
-    '--ServerApp.token', '',
-    '--ServerApp.password', '',
 ]
 
 # Имя ядра IPython, полученное из переменной окружения.
