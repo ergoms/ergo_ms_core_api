@@ -11,7 +11,7 @@ def seed_ai_assistant_themes(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('settings', '0023_theme_module_key'),
+        ('settings', '0025_theme_module_pair'),
     ]
 
     operations = [

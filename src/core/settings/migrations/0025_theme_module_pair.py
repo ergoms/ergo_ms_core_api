@@ -9,7 +9,7 @@ def assign_default_pairs(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('settings', '0024_seed_ai_assistant_module_themes'),
+        ('settings', '0023_theme_module_key'),
     ]
 
     operations = [
