@@ -1,3 +1,14 @@
+from django.core.exceptions import FieldDoesNotExist
+
+
+def _model_has_field(model, field_name):
+    try:
+        model._meta.get_field(field_name)
+        return True
+    except FieldDoesNotExist:
+        return False
+
+
 DEFAULT_THEME_COLORS = {
     'light': {
         'headerBackground': 'rgba(255, 255, 255, 0.85)',
@@ -82,10 +93,14 @@ def ensure_system_themes(theme_model, *, update_existing=False):
             'is_active': False,
             'is_default': spec['is_default'],
         }
+        lookup = {
+            'name': spec['name'],
+            'is_system': True,
+        }
+        if _model_has_field(theme_model, 'module_key'):
+            lookup['module_key'] = None
         theme, was_created = theme_model.objects.get_or_create(
-            name=spec['name'],
-            is_system=True,
-            module_key=None,
+            **lookup,
             defaults=defaults,
         )
         if was_created:
