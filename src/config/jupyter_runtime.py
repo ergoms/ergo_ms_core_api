@@ -179,4 +179,7 @@ def build_jupyter_server_argv(notebooks_dir: str) -> list[str]:
     if mode == ACCESS_NGINX:
         argv.extend(['--ServerApp.base_url', effective_jupyter_base_path()])
 
+    if env.bool('DOCKER_ENABLED', default=False):
+        argv.append('--allow-root')
+
     return argv
