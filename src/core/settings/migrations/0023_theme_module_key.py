@@ -31,13 +31,16 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name='theme',
-            index=models.Index(fields=['module_key', 'is_active'], name='settings_th_module__a1b2c3_idx'),
+            index=models.Index(
+                fields=['module_key', 'is_active'],
+                name='settings_th_module__48e8e9_idx',
+            ),
         ),
         migrations.AddIndex(
             model_name='theme',
             index=models.Index(
                 fields=['module_key', 'is_default'],
-                name='settings_th_module__d4e5f6_idx',
+                name='settings_th_module__0d2baf_idx',
             ),
         ),
     ]

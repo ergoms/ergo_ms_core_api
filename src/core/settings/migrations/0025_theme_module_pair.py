@@ -19,7 +19,7 @@ class Migration(migrations.Migration):
             field=models.CharField(
                 blank=True,
                 default='',
-                help_text='Идентификатор пары light+dark для модуля. Пусто — тема сайта.',
+                help_text='Связка light+dark вариантов модуля. Пусто — тема сайта.',
                 max_length=64,
                 verbose_name='Пара модульной темы',
             ),

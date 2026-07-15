@@ -82,8 +82,14 @@ class Theme(models.Model):
         verbose_name_plural = _("Темы")
         ordering = ['-is_default', '-is_system', 'name']
         indexes = [
-            models.Index(fields=['module_key', 'is_active']),
-            models.Index(fields=['module_key', 'is_default']),
+            models.Index(
+                fields=['module_key', 'is_active'],
+                name='settings_th_module__48e8e9_idx',
+            ),
+            models.Index(
+                fields=['module_key', 'is_default'],
+                name='settings_th_module__0d2baf_idx',
+            ),
         ]
 
     def __str__(self):
