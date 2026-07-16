@@ -42,6 +42,15 @@ def _console_handler(level: str) -> dict[str, Any]:
     }
 
 
+def _default_file_handler_key(service: str) -> str:
+    """Файл по умолчанию для логгеров без явной регистрации (getLogger(__name__))."""
+    if service == 'celery_beat':
+        return 'celery_beat_file'
+    if service == 'celery':
+        return 'celery_worker_file'
+    return 'api_file'
+
+
 def build_logging_config(service: str | None = None) -> dict[str, Any]:
     if service is None:
         service = resolve_logging_service(sys.argv)
@@ -96,13 +105,11 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
 
     console = ['console'] if console_enabled else []
     celery_err = ['celery_error_console'] if console_enabled else []
+    default_file = _default_file_handler_key(service)
+    # При ERGO_LOG_CONSOLE=false (systemd) root без файла терял core.*, modules.*, daphne.*.
+    root_handlers = [default_file] + console
 
     loggers: dict[str, Any] = {
-        '': {
-            'handlers': console,
-            'level': 'DEBUG',
-            'propagate': True,
-        },
         'django': {
             'handlers': ['api_file'] + console,
             'level': 'INFO',
@@ -209,6 +216,10 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
             },
         },
         'handlers': handlers,
+        'root': {
+            'handlers': root_handlers,
+            'level': file_level,
+        },
         'loggers': loggers,
     }
 
