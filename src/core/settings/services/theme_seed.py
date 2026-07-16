@@ -36,28 +36,108 @@ DEFAULT_THEME_COLORS = {
     },
 }
 
+
+def _hex_to_rgb(value):
+    raw = (value or '').strip().lstrip('#')
+    if len(raw) != 6:
+        return None
+    try:
+        return tuple(int(raw[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+
+
+def _mix_hex(base_hex, accent_hex, ratio):
+    """Смешивает hex-цвета: ratio — доля accent (0..1)."""
+    base = _hex_to_rgb(base_hex)
+    accent = _hex_to_rgb(accent_hex)
+    if base is None or accent is None:
+        return base_hex
+    ratio = max(0.0, min(1.0, float(ratio)))
+    mixed = tuple(round(b * (1 - ratio) + a * ratio) for b, a in zip(base, accent))
+    return '#{:02x}{:02x}{:02x}'.format(*mixed)
+
+
+def _palette(base, accent, *, tint=0.06):
+    """Базовая палитра light/dark + accent и лёгкий tint поверхностей."""
+    colors = dict(DEFAULT_THEME_COLORS[base])
+    colors['accent'] = accent
+    colors['background'] = _mix_hex(colors['background'], accent, tint)
+    colors['secondaryBackground'] = _mix_hex(colors['secondaryBackground'], accent, tint * 0.85)
+    colors['hoverBackground'] = _mix_hex(colors['hoverBackground'], accent, tint * 1.15)
+    colors['border'] = _mix_hex(colors['border'], accent, tint * 1.4)
+    return colors
+
+
 SYSTEM_THEMES = (
     {
         'name': 'Светлая',
         'description': 'Системная светлая тема',
         'base_theme': 'light',
         'is_default': True,
+        'colors': DEFAULT_THEME_COLORS['light'],
     },
     {
         'name': 'Тёмная',
         'description': 'Системная тёмная тема',
         'base_theme': 'dark',
         'is_default': False,
+        'colors': DEFAULT_THEME_COLORS['dark'],
+    },
+    {
+        'name': 'Изумрудная',
+        'description': 'Системная светлая тема с изумрудным акцентом',
+        'base_theme': 'light',
+        'is_default': False,
+        'colors': _palette('light', '#059669'),
+    },
+    {
+        'name': 'Изумрудная (тёмная)',
+        'description': 'Системная тёмная тема с изумрудным акцентом',
+        'base_theme': 'dark',
+        'is_default': False,
+        'colors': _palette('dark', '#34d399', tint=0.08),
+    },
+    {
+        'name': 'Синяя',
+        'description': 'Системная светлая тема с синим акцентом',
+        'base_theme': 'light',
+        'is_default': False,
+        'colors': _palette('light', '#2563eb'),
+    },
+    {
+        'name': 'Синяя (тёмная)',
+        'description': 'Системная тёмная тема с синим акцентом',
+        'base_theme': 'dark',
+        'is_default': False,
+        'colors': _palette('dark', '#60a5fa', tint=0.08),
+    },
+    {
+        'name': 'Янтарная',
+        'description': 'Системная светлая тема с янтарным акцентом',
+        'base_theme': 'light',
+        'is_default': False,
+        'colors': _palette('light', '#d97706'),
+    },
+    {
+        'name': 'Янтарная (тёмная)',
+        'description': 'Системная тёмная тема с янтарным акцентом',
+        'base_theme': 'dark',
+        'is_default': False,
+        'colors': _palette('dark', '#fbbf24', tint=0.08),
     },
 )
+
+
+def _colors_for_spec(spec):
+    if spec.get('colors'):
+        return dict(spec['colors'])
+    return dict(DEFAULT_THEME_COLORS[spec['base_theme']])
 
 
 def _system_spec_for_theme(theme):
     for spec in SYSTEM_THEMES:
         if theme.name == spec['name']:
-            return spec
-    for spec in SYSTEM_THEMES:
-        if theme.base_theme == spec['base_theme']:
             return spec
     return None
 
@@ -72,14 +152,14 @@ def reset_system_theme_to_defaults(theme):
         return False
 
     theme.description = spec['description']
-    theme.colors = DEFAULT_THEME_COLORS[spec['base_theme']]
+    theme.colors = _colors_for_spec(spec)
     theme.bootstrap_colors = {}
     theme.save(update_fields=['description', 'colors', 'bootstrap_colors', 'updated_at'])
     return True
 
 
 def ensure_system_themes(theme_model, *, update_existing=False):
-    """Создаёт системные темы light/dark, если их ещё нет."""
+    """Создаёт системные темы сайта, если их ещё нет."""
     created = []
     updated = []
 
@@ -88,7 +168,7 @@ def ensure_system_themes(theme_model, *, update_existing=False):
             'description': spec['description'],
             'author': 'System',
             'base_theme': spec['base_theme'],
-            'colors': DEFAULT_THEME_COLORS[spec['base_theme']],
+            'colors': _colors_for_spec(spec),
             'bootstrap_colors': {},
             'is_active': False,
             'is_default': spec['is_default'],
