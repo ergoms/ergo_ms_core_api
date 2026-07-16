@@ -4,11 +4,55 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from src.config.env import env
 
 _KOMBU_REDIS_RESP2_PATCHED = False
+_HOST_LOOPBACK = '127.0.0.1'
+
+
+def running_in_container() -> bool:
+    """Процесс внутри Docker-контейнера (не хост ergoms dev / portable Redis)."""
+    if Path('/.dockerenv').is_file():
+        return True
+    cgroup = Path('/proc/self/cgroup')
+    if cgroup.is_file():
+        try:
+            return 'docker' in cgroup.read_text(encoding='utf-8', errors='ignore')
+        except OSError:
+            pass
+    return False
+
+
+def _docker_service_redis_names() -> frozenset[str]:
+    service = env.str('DOCKER_SERVICE_REDIS', default='redis').strip().lower() or 'redis'
+    return frozenset({service, 'redis'})
+
+
+def effective_redis_host() -> str:
+    """
+    Хост Redis для текущего runtime.
+
+    На хосте (ergoms dev, portable Redis) имя сервиса compose ``redis`` не резолвится —
+    подключаемся к 127.0.0.1. Внутри контейнера оставляем REDIS_HOST из .env.
+    """
+    host = env.str('REDIS_HOST', default=_HOST_LOOPBACK).strip() or _HOST_LOOPBACK
+    if not running_in_container() and host.strip().lower() in _docker_service_redis_names():
+        return _HOST_LOOPBACK
+    return host
+
+
+def _normalize_redis_url(url: str) -> str:
+    if running_in_container():
+        return url
+    parts = urlsplit(url)
+    if not parts.hostname or parts.hostname.strip().lower() not in _docker_service_redis_names():
+        return url
+    port = parts.port or redis_port()
+    netloc = f'{_HOST_LOOPBACK}:{port}'
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 def redis_enabled() -> bool:
@@ -43,7 +87,7 @@ def effective_celery_broker_backend() -> str:
 
 
 def redis_host() -> str:
-    return env.str('REDIS_HOST', default='127.0.0.1').strip() or '127.0.0.1'
+    return effective_redis_host()
 
 
 def redis_port() -> int:
@@ -111,28 +155,28 @@ def _celery_redis_url(db: int) -> str:
 def cache_redis_url() -> str:
     explicit = env.str('API_CACHE_REDIS_URL', default='').strip()
     if explicit:
-        return explicit
+        return _normalize_redis_url(explicit)
     return redis_url(redis_db_cache())
 
 
 def channel_layer_redis_url() -> str:
     explicit = env.str('CHANNEL_LAYER_REDIS_URL', default='').strip()
     if explicit:
-        return explicit
+        return _normalize_redis_url(explicit)
     return redis_url(redis_db_channel())
 
 
 def celery_broker_redis_url() -> str:
     explicit = env.str('CELERY_BROKER_URL', default='').strip()
     if explicit:
-        return sanitize_celery_redis_url(explicit)
+        return _normalize_redis_url(sanitize_celery_redis_url(explicit))
     return _celery_redis_url(redis_db_celery_broker())
 
 
 def celery_result_redis_url() -> str:
     explicit = env.str('CELERY_RESULT_BACKEND', default='').strip()
     if explicit:
-        return sanitize_celery_redis_url(explicit)
+        return _normalize_redis_url(sanitize_celery_redis_url(explicit))
     return _celery_redis_url(redis_db_celery_result())
 
 
