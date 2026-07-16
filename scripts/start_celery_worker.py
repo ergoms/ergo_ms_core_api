@@ -226,9 +226,10 @@ def main() -> int:
             env = os.environ.copy()
             env.setdefault('PYTHONPATH', '')
             env['PYTHONPATH'] = str(PROJECT_ROOT) + (os.pathsep + env['PYTHONPATH'] if env['PYTHONPATH'] else '')
+            # Не перенаправляем stdout в PIPE без чтения — иначе воркер зависает
+            # при заполнении буфера во время загрузки Django/Celery.
             proc = subprocess.Popen(
-                cmd, cwd=str(API_DIR), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                start_new_session=True, env=env,
+                cmd, cwd=str(API_DIR), start_new_session=True, env=env,
             )
             procs.append(proc)
             time.sleep(0.3)

@@ -29,6 +29,16 @@ class MenuAccessChecker:
         return PermissionService.get_user_role(self.user)
 
     def can_see(self, item) -> bool:
+        from src.core.utils.module_registry import (
+            is_module_disabled,
+            top_level_module_from_menu_source,
+        )
+
+        module_source = getattr(item, 'module_source', '') or ''
+        top_level = top_level_module_from_menu_source(module_source)
+        if top_level and is_module_disabled(top_level):
+            return False
+
         route_name = getattr(item, 'route_name', None)
         if route_name and route_name in self._route_overrides:
             return self._route_overrides[route_name]

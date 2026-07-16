@@ -246,6 +246,8 @@ def _discover_module_menu_migrations():
     Для каждого каталога берёт последнюю по номеру миграцию с populate_menu.
     Возвращает список (module_name, migration_stem, populate_func) в порядке зависимостей.
     """
+    from src.core.utils.module_registry import is_module_disabled, is_valid_module_dir_name
+
     if not MODULES_DIR.exists():
         return []
 
@@ -256,6 +258,9 @@ def _discover_module_menu_migrations():
             continue
 
         module_name = module_dir.name
+        if not is_valid_module_dir_name(module_name) or is_module_disabled(module_name):
+            continue
+
         entries = []
 
         for subpath_parts, migrations_dir in _iter_module_migration_dirs(module_dir):

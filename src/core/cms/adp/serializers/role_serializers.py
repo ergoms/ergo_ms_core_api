@@ -166,6 +166,7 @@ class UserPermissionsSerializer(Serializer):
 class AdminUserRoleInfoSerializer(Serializer):
     """Сериализатор для представления пользователей и их ролей"""
     user_id = IntegerField()
+    public_id = CharField(allow_null=True, required=False)
     username = CharField()
     email = CharField(allow_blank=True)
     full_name = CharField(allow_blank=True)

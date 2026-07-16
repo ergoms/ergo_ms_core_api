@@ -165,19 +165,33 @@ class QueueConcurrencyManager:
             semaphore.release()
             logger.debug(f"Очередь {queue_name}: слот освобожден (local)")
     
+    def _ensure_counter_key(self, cache_key: str) -> None:
+        """Создаёт счётчик в cache, если ключа ещё нет (incr/decr Redis иначе падают)."""
+        cache.add(cache_key, 0, self._cache_ttl)
+
     def _acquire_distributed(self, queue_name: str, blocking: bool = False) -> bool:
         """Распределенный захват через Django cache (требует Redis backend с incr)."""
         cache_key = f'celery:queue_concurrency:{queue_name}'
         limit = self._queue_limits.get(queue_name, 0)
 
         try:
-            new_value = cache.incr(cache_key)
+            self._ensure_counter_key(cache_key)
+            try:
+                new_value = cache.incr(cache_key)
+            except ValueError:
+                # Ключ исчез между add и incr (TTL/очистка) — создаём заново
+                cache.set(cache_key, 1, self._cache_ttl)
+                new_value = 1
+
             if new_value is None:
                 cache.set(cache_key, 1, self._cache_ttl)
                 new_value = 1
 
             if new_value > limit:
-                cache.decr(cache_key)
+                try:
+                    cache.decr(cache_key)
+                except ValueError:
+                    cache.set(cache_key, 0, self._cache_ttl)
                 logger.debug(
                     f"Очередь {queue_name}: лимит превышен ({new_value}/{limit}) (distributed)"
                 )
@@ -195,7 +209,12 @@ class QueueConcurrencyManager:
         """Распределенное освобождение через Django cache"""
         cache_key = f'celery:queue_concurrency:{queue_name}'
         try:
-            current = cache.decr(cache_key)
+            self._ensure_counter_key(cache_key)
+            try:
+                current = cache.decr(cache_key)
+            except ValueError:
+                cache.set(cache_key, 0, self._cache_ttl)
+                current = 0
             if current is None or current < 0:
                 cache.set(cache_key, 0, self._cache_ttl)
             logger.debug(f"Очередь {queue_name}: слот освобожден (distributed)")

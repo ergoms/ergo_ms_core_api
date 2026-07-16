@@ -17,6 +17,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from packaging.markers import InvalidMarker, Marker
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
@@ -330,6 +331,26 @@ class InstallCommand(PoetryCommand):
         except InvalidVersion:
             return False
 
+    @staticmethod
+    def _lock_marker_applies(marker: Optional[str]) -> bool:
+        if not marker:
+            return True
+        try:
+            return Marker(marker).evaluate()
+        except InvalidMarker:
+            return False
+
+    @staticmethod
+    def _parse_lock_marker_value(raw: str) -> str:
+        value = raw.strip()
+        try:
+            parsed = ast.literal_eval(value)
+            if isinstance(parsed, str):
+                return parsed
+        except (SyntaxError, ValueError):
+            pass
+        return value.strip('"')
+
     def _parse_poetry_lock(
         self, lock_path: Path, groups: Optional[frozenset] = None
     ) -> Dict[str, str]:
@@ -340,16 +361,24 @@ class InstallCommand(PoetryCommand):
         current_name: Optional[str] = None
         current_version: Optional[str] = None
         current_groups: List[str] = []
+        current_marker: Optional[str] = None
 
         def _flush() -> None:
-            nonlocal current_name, current_version, current_groups
+            nonlocal current_name, current_version, current_groups, current_marker
             if not current_name or not current_version:
+                return
+            if not self._lock_marker_applies(current_marker):
+                current_name = None
+                current_version = None
+                current_groups = []
+                current_marker = None
                 return
             if groups is None or any(group in groups for group in current_groups):
                 versions[current_name] = current_version
             current_name = None
             current_version = None
             current_groups = []
+            current_marker = None
 
         for line in lock_path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
@@ -365,6 +394,8 @@ class InstallCommand(PoetryCommand):
                     current_groups = ast.literal_eval(stripped.split("=", 1)[1].strip())
                 except (SyntaxError, ValueError):
                     current_groups = []
+            elif stripped.startswith("markers = "):
+                current_marker = self._parse_lock_marker_value(stripped.split("=", 1)[1])
 
         _flush()
         return versions
@@ -451,12 +482,15 @@ class InstallCommand(PoetryCommand):
         return data.get("tool", {}).get("poetry", {}).get("dependencies", {})
 
     def _scan_module_configs(self, project_root: Path) -> List[Tuple[str, dict]]:
+        from src.core.utils.module_registry import get_installed_module_names
+
         modules_dir = project_root / "modules"
         results: List[Tuple[str, dict]] = []
         if not modules_dir.exists():
             return results
+        enabled = set(get_installed_module_names())
         for module_dir in sorted(modules_dir.iterdir()):
-            if not module_dir.is_dir():
+            if not module_dir.is_dir() or module_dir.name not in enabled:
                 continue
             config_path = module_dir / "pyproject.toml"
             if not config_path.exists():
@@ -469,12 +503,17 @@ class InstallCommand(PoetryCommand):
         return results
 
     def _collect_all_sources(self, project_root: Path, root_data: dict) -> List[dict]:
+        from src.core.utils.module_registry import get_installed_module_names
+
         seen: Dict[str, dict] = {}
         for source in root_data.get("tool", {}).get("poetry", {}).get("source", []):
             seen[source["name"]] = source
         modules_dir = project_root / "modules"
+        enabled = set(get_installed_module_names())
         if modules_dir.exists():
             for module_dir in sorted(modules_dir.iterdir()):
+                if not module_dir.is_dir() or module_dir.name not in enabled:
+                    continue
                 config_path = module_dir / "pyproject.toml"
                 if not config_path.exists():
                     continue
