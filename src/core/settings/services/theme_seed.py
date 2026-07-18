@@ -676,8 +676,94 @@ def reset_system_theme_to_defaults(theme):
     return True
 
 
+def _site_system_themes_qs(theme_model, **filters):
+    qs = theme_model.objects.filter(is_system=True, **filters)
+    if _model_has_field(theme_model, 'module_key'):
+        qs = qs.filter(module_key__isnull=True)
+    return qs
+
+
+def _pick_canonical_theme(themes):
+    """Активная → default → меньший pk."""
+    return sorted(
+        themes,
+        key=lambda theme: (not theme.is_active, not theme.is_default, theme.pk),
+    )[0]
+
+
+def _merge_theme_flags(keeper, duplicate):
+    changed = False
+    if duplicate.is_active and not keeper.is_active:
+        keeper.is_active = True
+        changed = True
+    if duplicate.is_default and not keeper.is_default:
+        keeper.is_default = True
+        changed = True
+    return changed
+
+
+def _dedupe_system_themes_by_name(theme_model, name):
+    """Оставляет одну системную тему сайта с данным именем, лишние удаляет."""
+    existing = list(_site_system_themes_qs(theme_model, name=name).order_by('pk'))
+    if len(existing) <= 1:
+        return existing[0] if existing else None
+
+    keeper = _pick_canonical_theme(existing)
+    flags_changed = False
+    for duplicate in existing:
+        if duplicate.pk == keeper.pk:
+            continue
+        flags_changed = _merge_theme_flags(keeper, duplicate) or flags_changed
+        duplicate.delete()
+
+    if flags_changed:
+        keeper.save(update_fields=['is_active', 'is_default', 'updated_at'])
+    return keeper
+
+
+def rename_system_themes(theme_model, rename_map, *, descriptions=None):
+    """
+    Переименовывает системные темы сайта без дубликатов по имени.
+
+    Если целевое имя уже есть — переносит флаги active/default и удаляет старую запись.
+    """
+    descriptions = descriptions or {}
+    themes = list(_site_system_themes_qs(theme_model).order_by('pk'))
+
+    for theme in themes:
+        new_name = rename_map.get(theme.name)
+        if not new_name or new_name == theme.name:
+            continue
+
+        # Тема могла быть удалена как дубликат на предыдущей итерации.
+        if not _site_system_themes_qs(theme_model, pk=theme.pk).exists():
+            continue
+
+        targets = list(
+            _site_system_themes_qs(theme_model, name=new_name).exclude(pk=theme.pk)
+        )
+        if targets:
+            keeper = _pick_canonical_theme(targets)
+            flags_changed = _merge_theme_flags(keeper, theme)
+            if flags_changed:
+                keeper.save(update_fields=['is_active', 'is_default', 'updated_at'])
+            theme.delete()
+            continue
+
+        theme.name = new_name
+        update_fields = ['name', 'updated_at']
+        if new_name in descriptions:
+            theme.description = descriptions[new_name]
+            update_fields.insert(1, 'description')
+        theme.save(update_fields=update_fields)
+
+    # На случай уже существующих дублей с одинаковым именем.
+    for name in {spec['name'] for spec in SYSTEM_THEMES}:
+        _dedupe_system_themes_by_name(theme_model, name)
+
+
 def ensure_system_themes(theme_model, *, update_existing=False):
-    """Создаёт системные темы сайта, если их ещё нет."""
+    """Создаёт системные темы сайта, если их ещё нет (идемпотентно при дублях)."""
     created = []
     updated = []
 
@@ -691,17 +777,16 @@ def ensure_system_themes(theme_model, *, update_existing=False):
             'is_active': False,
             'is_default': spec['is_default'],
         }
-        lookup = {
-            'name': spec['name'],
-            'is_system': True,
-        }
-        if _model_has_field(theme_model, 'module_key'):
-            lookup['module_key'] = None
-        theme, was_created = theme_model.objects.get_or_create(
-            **lookup,
-            defaults=defaults,
-        )
-        if was_created:
+        theme = _dedupe_system_themes_by_name(theme_model, spec['name'])
+        if theme is None:
+            create_kwargs = {
+                'name': spec['name'],
+                'is_system': True,
+                **defaults,
+            }
+            if _model_has_field(theme_model, 'module_key'):
+                create_kwargs['module_key'] = None
+            theme = theme_model.objects.create(**create_kwargs)
             created.append(theme)
             continue
         if not update_existing:
