@@ -42,12 +42,40 @@ _setup_test_env_early()
 
 
 def _configure_stdio_utf8() -> None:
-    for stream in (sys.stdout, sys.stderr):
+    """UTF-8 для stdio; errors=replace — Docker/Windows (CP1251) не роняет interactive-команды."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
         if hasattr(stream, 'reconfigure'):
             try:
                 stream.reconfigure(encoding='utf-8', errors='replace')
             except (AttributeError, OSError, ValueError):
                 pass
+    _patch_getpass_unicode_errors()
+
+
+def _patch_getpass_unicode_errors() -> None:
+    """getpass читает /dev/tty отдельно от sys.stdin — ловим CP1251 с Windows-терминала."""
+    import getpass as getpass_mod
+
+    if getattr(getpass_mod, '_ergo_utf8_replace_patched', False):
+        return
+
+    original = getpass_mod.getpass
+
+    def _getpass(prompt='Password: ', stream=None):
+        try:
+            return original(prompt, stream)
+        except UnicodeDecodeError as exc:
+            raise SystemExit(
+                '[ERROR] Не удалось прочитать пароль (кодировка терминала Windows → Docker).\n'
+                '[INFO] Задайте пароль латиницей или без интерактива:\n'
+                '  export DJANGO_SUPERUSER_USERNAME=admin\n'
+                '  export DJANGO_SUPERUSER_PASSWORD=\'...\'\n'
+                '  export DJANGO_SUPERUSER_EMAIL=admin@example.com\n'
+                '  ergoms api createsuperuser --noinput'
+            ) from exc
+
+    getpass_mod.getpass = _getpass
+    getpass_mod._ergo_utf8_replace_patched = True
 
 
 def _run_bootstrap_command() -> None:

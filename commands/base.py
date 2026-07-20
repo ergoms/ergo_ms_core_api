@@ -87,7 +87,23 @@ class PoetryCommand:
             return 0
             
         except SystemExit as e:
-            return e.code if e.code is not None else 0
+            code = e.code
+            if isinstance(code, str):
+                print(code, file=sys.stderr)
+                return 1
+            return code if code is not None else 0
+        except UnicodeDecodeError as e:
+            print(
+                'Ошибка кодировки ввода (часто Windows-терминал → Docker).\n'
+                'Используйте латиницу в пароле/email или:\n'
+                '  export DJANGO_SUPERUSER_USERNAME=...\n'
+                '  export DJANGO_SUPERUSER_PASSWORD=...\n'
+                '  export DJANGO_SUPERUSER_EMAIL=...\n'
+                '  ergoms api createsuperuser --noinput\n'
+                f'Детали: {e}',
+                file=sys.stderr,
+            )
+            return 1
         except Exception as e:
             print(f"Ошибка при выполнении Django команды: {e}")
             return 1
