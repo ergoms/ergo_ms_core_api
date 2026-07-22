@@ -92,7 +92,7 @@ MEDIA_API_HOST = effective_media_public_host('localhost')
 MEDIA_API_PORT = int(effective_media_public_port('8003'))
 MEDIA_API_PROTOCOL = 'https' if nginx_use_https() else os.getenv('MEDIA_API_PROTOCOL', 'http')
 MEDIA_URL_EXPIRATION = int(os.getenv('MEDIA_URL_EXPIRATION', '3600'))
-MEDIA_UPLOAD_MAX_SIZE = int(os.getenv('MEDIA_UPLOAD_MAX_SIZE', '104857600'))
+MEDIA_UPLOAD_MAX_SIZE = int(os.getenv('MEDIA_UPLOAD_MAX_SIZE', '524288000'))
 MEDIA_UPLOAD_TOKEN_EXPIRATION = int(os.getenv('MEDIA_UPLOAD_TOKEN_EXPIRATION', '300'))
 
 # Режим доступа core/api к файлам: local (прямая ФС) или remote (HTTP к media_api)

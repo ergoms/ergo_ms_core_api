@@ -82,7 +82,7 @@ def generate_upload_token(
         Подписанный base64-токен.
     """
     if max_size is None:
-        max_size = getattr(settings, 'MEDIA_UPLOAD_MAX_SIZE', 104857600)
+        max_size = getattr(settings, 'MEDIA_UPLOAD_MAX_SIZE', 524288000)
 
     if expires_in is None:
         expires_in = getattr(settings, 'MEDIA_UPLOAD_TOKEN_EXPIRATION', 300)
