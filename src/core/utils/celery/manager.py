@@ -12,9 +12,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, Tuple
 
 from src.core.utils.celery.base import CeleryModuleConfig
-from src.core.utils.auto_api.auto_config import is_valid_module_name
 from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
 from src.core.utils.celery_config_cache import read_routes_queues_cache, write_routes_queues_cache
+from src.core.utils.module_registry import is_valid_module_name
 
 
 class CeleryModuleManager:

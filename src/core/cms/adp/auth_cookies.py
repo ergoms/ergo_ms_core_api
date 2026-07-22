@@ -69,13 +69,7 @@ def ensure_session_hint_cookie(request, response, max_age_seconds: int) -> None:
 
 
 def get_refresh_token_from_request(request) -> str | None:
-    cookie_value = request.COOKIES.get(REFRESH_COOKIE_NAME)
-    if cookie_value:
-        return cookie_value
-    body_refresh = getattr(request, 'data', None)
-    if isinstance(body_refresh, dict):
-        return body_refresh.get('refresh')
-    return None
+    return request.COOKIES.get(REFRESH_COOKIE_NAME) or None
 
 
 def refresh_cookie_max_age(refresh_lifetime: timedelta) -> int:

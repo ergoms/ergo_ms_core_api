@@ -120,6 +120,7 @@ SYSTEM_THEME_RENAME_MAP = {
     'Янтарная (тёмная)': 'Янтарь · тёмная',
     'Морской доверие': 'Корпоративный',
     'Морской доверие (тёмная)': 'Корпоративный · тёмная',
+    # Исторические имена тем в БД (до переименования), не привязка к модулю CRM
     'CRM синий': 'Деловой синий',
     'CRM синий (тёмная)': 'Деловой синий · тёмная',
     'Бирюзовый фокус': 'Бирюза',
@@ -797,71 +798,6 @@ def ensure_system_themes(theme_model, *, update_existing=False):
     return created, updated
 
 
-AI_ASSISTANT_THEME_COLORS = {
-    'headerBackground': 'rgba(10, 12, 18, 0.92)',
-    'authBackground': 'rgba(5, 5, 8, 0.95)',
-    'background': '#050508',
-    'border': 'rgba(58, 232, 255, 0.12)',
-    'primaryText': '#e8ecf4',
-    'secondaryText': '#a0aec0',
-    'primaryBackground': '#0e1118',
-    'secondaryBackground': '#13161f',
-    'hoverBackground': '#191d28',
-    'accent': '#3ae8ff',
-}
-
-AI_ASSISTANT_MODULE_TOKENS = {
-    'neonCyan': '#3ae8ff',
-    'neonPurple': '#a855f7',
-    'neonGreen': '#22ff8d',
-    'neonPink': '#ff6eb4',
-    'neonBlue': '#4f8fff',
-    'glowCyan': '0 0 20px rgba(58, 232, 255, 0.4), 0 0 40px rgba(58, 232, 255, 0.2)',
-}
-
-AI_ASSISTANT_LIGHT_COLORS = {
-    'headerBackground': 'rgba(248, 250, 252, 0.92)',
-    'authBackground': 'rgba(248, 250, 252, 0.95)',
-    'background': '#f8fafc',
-    'border': 'rgba(15, 118, 138, 0.15)',
-    'primaryText': '#0f172a',
-    'secondaryText': '#334155',
-    'primaryBackground': '#f1f5f9',
-    'secondaryBackground': '#e2e8f0',
-    'hoverBackground': '#cbd5e1',
-    'accent': '#0e7490',
-}
-
-BUILTIN_MODULE_MANIFESTS = (
-    {
-        'moduleKey': 'ai_assistant',
-        'displayName': 'AI-ассистент',
-        'modulePair': 'default',
-        'baseTheme': 'dark',
-        'colors': AI_ASSISTANT_THEME_COLORS,
-        'bootstrap_colors': {},
-        'moduleTokens': AI_ASSISTANT_MODULE_TOKENS,
-        'systemThemes': (
-            {
-                'name': 'Neural (AI-ассистент)',
-                'description': 'Системная пара тем AI-ассистента',
-                'base_theme': 'dark',
-                'module_pair': 'default',
-                'is_default': True,
-            },
-            {
-                'name': 'Neural (AI-ассистент)',
-                'description': 'Системная пара тем AI-ассистента',
-                'base_theme': 'light',
-                'module_pair': 'default',
-                'is_default': True,
-                'colors': AI_ASSISTANT_LIGHT_COLORS,
-            },
-        ),
-    },
-)
-
-
 def _normalize_manifest(manifest):
     module_key = manifest.get('moduleKey') or manifest.get('module_key')
     if not module_key:
@@ -906,8 +842,41 @@ def _module_system_specs(manifest):
     )
 
 
+def _build_theme_defaults_snapshot(manifest, spec, *, colors, module_tokens):
+    return {
+        'moduleKey': manifest['module_key'],
+        'modulePair': spec.get('module_pair') or manifest.get('module_pair') or 'default',
+        'baseTheme': spec['base_theme'],
+        'colors': colors,
+        'bootstrap_colors': manifest['bootstrap_colors'],
+        'moduleTokens': module_tokens,
+        'name': spec['name'],
+        'description': spec.get('description', ''),
+    }
+
+
+def reset_module_theme_from_snapshot(theme):
+    """Сбрасывает модульную системную тему к snapshot из sync-module-defaults."""
+    snapshot = theme.defaults_snapshot or {}
+    if not snapshot:
+        return False
+
+    theme.description = snapshot.get('description') or theme.description
+    theme.colors = snapshot.get('colors') or {}
+    theme.bootstrap_colors = snapshot.get('bootstrap_colors') or {}
+    theme.module_tokens = snapshot.get('moduleTokens') or snapshot.get('module_tokens') or {}
+    if snapshot.get('name'):
+        theme.name = snapshot['name']
+    theme.save(
+        update_fields=[
+            'description', 'colors', 'bootstrap_colors', 'module_tokens', 'name', 'updated_at',
+        ]
+    )
+    return True
+
+
 def ensure_module_themes_from_manifests(theme_model, manifests, *, update_existing=False):
-    """Создаёт/обновляет системные темы модулей из manifest (клиент или builtin)."""
+    """Создаёт/обновляет системные темы модулей из manifest (клиент theme-defaults.js)."""
     created = []
     updated = []
 
@@ -921,6 +890,12 @@ def ensure_module_themes_from_manifests(theme_model, manifests, *, update_existi
                 spec['base_theme'], DEFAULT_THEME_COLORS['light']
             )
             module_tokens = spec.get('module_tokens') or manifest['module_tokens'] or {}
+            snapshot = _build_theme_defaults_snapshot(
+                manifest,
+                spec,
+                colors=colors,
+                module_tokens=module_tokens,
+            )
             defaults = {
                 'description': spec.get('description', ''),
                 'author': 'System',
@@ -930,6 +905,7 @@ def ensure_module_themes_from_manifests(theme_model, manifests, *, update_existi
                 'colors': colors,
                 'bootstrap_colors': manifest['bootstrap_colors'],
                 'module_tokens': module_tokens,
+                'defaults_snapshot': snapshot,
                 'is_active': False,
                 'is_default': spec.get('is_default', False),
             }
@@ -952,10 +928,12 @@ def ensure_module_themes_from_manifests(theme_model, manifests, *, update_existi
             theme.base_theme = defaults['base_theme']
             theme.module_pair = defaults['module_pair']
             theme.name = spec['name']
+            theme.defaults_snapshot = snapshot
             theme.save(
                 update_fields=[
                     'description', 'colors', 'bootstrap_colors',
-                    'module_tokens', 'base_theme', 'module_pair', 'name', 'updated_at',
+                    'module_tokens', 'base_theme', 'module_pair', 'name',
+                    'defaults_snapshot', 'updated_at',
                 ]
             )
             updated.append(theme)
@@ -964,8 +942,5 @@ def ensure_module_themes_from_manifests(theme_model, manifests, *, update_existi
 
 
 def ensure_builtin_module_themes(theme_model, *, update_existing=False):
-    return ensure_module_themes_from_manifests(
-        theme_model,
-        BUILTIN_MODULE_MANIFESTS,
-        update_existing=update_existing,
-    )
+    """Устарело: модульные темы синхронизируются через POST settings/themes/sync-module-defaults/."""
+    return [], []

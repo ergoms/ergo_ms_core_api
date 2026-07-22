@@ -33,7 +33,7 @@ class MenuMigrationHelper:
         
         Args:
             apps: apps из миграции (первый аргумент populate функции)
-            module_source: путь к модулю (например: 'modules/crm', 'core/cms')
+            module_source: путь к модулю (например: 'modules/module_template', 'core/cms')
         """
         self.MenuItem = apps.get_model('cms_adp', 'MenuItem')
         self.MenuSeparator = apps.get_model('cms_adp', 'MenuSeparator')

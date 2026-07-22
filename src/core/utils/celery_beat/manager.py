@@ -12,9 +12,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, Tuple
 
 from src.core.utils.celery_beat.base import CeleryBeatModuleConfig
-from src.core.utils.auto_api.auto_config import is_valid_module_name
 from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
 from src.core.utils.celery_config_cache import read_beat_schedule_cache, write_beat_schedule_cache
+from src.core.utils.module_registry import is_valid_module_name
 
 
 class CeleryBeatModuleManager:
@@ -66,7 +66,7 @@ class CeleryBeatModuleManager:
         """Загружает конфигурацию Beat конкретного модуля"""
         try:
             # Пытаемся импортировать конфигурацию Beat модуля
-            config_module_path = f'{app_path}.celery_beat_config' if app_path else f'src.modules.{module_name}.api.celery_beat_config'
+            config_module_path = f'{app_path}.celery_beat_config' if app_path else f'modules.{module_name}.api.celery_beat_config'
             config_module = importlib.import_module(config_module_path)
             
             for attr_name in dir(config_module):

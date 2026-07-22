@@ -42,7 +42,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'src.core.utils.middleware.organization_middleware.OrganizationMiddleware',
+    'src.core.utils.middleware.session_context_middleware.SessionContextMiddleware',
     'src.core.cms.adp.middleware.permission_request_cache.PermissionRequestCacheMiddleware',
     'src.core.audit.context.AuditContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',

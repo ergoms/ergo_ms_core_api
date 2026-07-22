@@ -19,8 +19,8 @@ def _extract_module_name_from_import(import_path: str) -> Optional[str]:
     Извлекает имя модуля из пути импорта.
     
     Примеры:
-        'modules.organizations.api.models' -> 'organizations'
-        'modules.tasks.api.serializers' -> 'tasks'
+        'modules.my_module.api.models' -> 'my_module'
+        'modules.my_module.api.serializers' -> 'my_module'
         'src.core.utils' -> None (не модуль)
     """
     if not import_path.startswith('modules.'):
@@ -93,7 +93,7 @@ def get_module_dependencies(module_name: str, visited: Optional[set[str]] = None
     Рекурсивно анализирует зависимости зависимостей.
     
     Args:
-        module_name: Имя модуля (например, 'crm_remastered')
+        module_name: Имя модуля (например, 'my_module')
         visited: Множество уже посещённых модулей (для предотвращения циклов)
     
     Returns:
@@ -136,8 +136,8 @@ def _get_module_apps(module_name: str) -> list[str]:
     Возвращает список всех приложений модуля (включая подмодули).
     
     Примеры:
-        'organizations' -> ['modules.organizations.api']
-        'project_ed' -> ['modules.project_ed.api', 'modules.project_ed.api.projects', ...]
+        'my_module' -> ['modules.my_module.api']
+        'my_module' -> ['modules.my_module.api', 'modules.my_module.api.<подраздел>', ...]
     """
     apps = []
     module_api_path = MODULES_DIR / module_name / 'api'
@@ -167,7 +167,7 @@ def get_isolated_apps(target_module: str) -> list[str]:
     - Все зависимости целевого модуля (рекурсивно, включая их подмодули)
     
     Args:
-        target_module: Имя целевого модуля (например, 'crm_remastered')
+        target_module: Имя целевого модуля (например, 'my_module')
     
     Returns:
         Список путей приложений для INSTALLED_APPS
@@ -189,8 +189,8 @@ def extract_module_from_test_path(test_path: str) -> Optional[str]:
     Извлекает имя модуля из пути теста.
     
     Примеры:
-        'modules.crm_remastered.api.tests.TestClass' -> 'crm_remastered'
-        'modules.lms.api.tests' -> 'lms'
+        'modules.my_module.api.tests.TestClass' -> 'my_module'
+        'modules.my_module.api.tests' -> 'my_module'
         'src.core.utils.tests' -> None (ядро, не модуль)
     
     Args:

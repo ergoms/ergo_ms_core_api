@@ -1,12 +1,16 @@
 """
-Прогрев только celery-кэшей: discovered_apps, celery_routes_queues, celery_queues, celery_beat_schedule.
+Прогрев только celery-кэшей: discovered_apps, celery_routes_queues,
+celery_queues, celery_beat_schedule.
 
 Быстрее чем warmup_caches — не заполняет modules_env.
+Тонкая обёртка над run_file_cache_warmup для call_command внутри Django.
 """
 import logging
 import time
 
 from django.core.management.base import BaseCommand
+
+from src.core.utils.warmup_file_caches import run_file_cache_warmup
 
 logger = logging.getLogger('core.utils.commands')
 
@@ -16,26 +20,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         start = time.perf_counter()
-
-        from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
-        apps = get_discovered_apps(use_cache=False)
-        self.stdout.write(f'Обнаружено приложений: {len(apps)}')
-
-        from src.core.utils.celery.manager import CeleryModuleManager
-        from src.core.utils.celery_queues_cache import write_queues_cache
-
-        manager = CeleryModuleManager(use_config_cache=False)
-        routes = manager.get_all_task_routes()
-        queues = manager.get_all_task_queues()
-
-        write_queues_cache(queues)
-        queue_names = sorted(queues.keys())
-        self.stdout.write(f'Celery: {len(routes)} маршрутов, {len(queue_names)} очередей')
-
-        from src.core.utils.celery_beat.manager import CeleryBeatModuleManager
-        beat_manager = CeleryBeatModuleManager(use_config_cache=False)
-        schedule = beat_manager.get_all_beat_schedules()
-        self.stdout.write(f'Расписание Beat: {len(schedule)} задач')
-
+        result = run_file_cache_warmup(include_modules_env=False)
+        self.stdout.write(f'Обнаружено приложений: {result["apps"]}')
+        self.stdout.write(
+            f'Celery: {result["routes"]} маршрутов, {result["queues"]} очередей'
+        )
+        self.stdout.write(f'Расписание Beat: {result["beat_tasks"]} задач')
         elapsed = time.perf_counter() - start
         self.stdout.write(self.style.SUCCESS(f'Celery кэши прогреты ({elapsed:.2f}s)'))

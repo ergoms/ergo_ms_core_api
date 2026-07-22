@@ -387,20 +387,19 @@ class UserRoleAssignView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
                 assigned_by=request.user
             )
 
-            try:
-                from src.core.integrations import bridge
-                bridge.call(
-                    'audit.record',
-                    action='user.role_assigned',
-                    source_module='core.cms.adp',
-                    request=request,
-                    severity='security',
-                    entity={'type': 'user', 'ref': '', 'label': user.get_full_name() or user.username},
-                    changes=[{'field': 'role', 'label': 'Роль', 'old': '', 'new': role.name}],
-                    meta={'target_username': user.username},
-                )
-            except Exception:
-                pass
+            audit_log(
+                'user.role_assigned',
+                source_module='core.cms.adp',
+                request=request,
+                severity='security',
+                entity={
+                    'type': 'user',
+                    'ref': str(user.public_id) if getattr(user, 'public_id', None) else '',
+                    'label': user.get_full_name() or user.username,
+                },
+                changes=[{'field': 'role', 'label': 'Роль', 'old': '', 'new': role.name}],
+                meta={'target_username': user.username},
+            )
 
             serializer = UserRoleSerializer(user_role)
             return Response(serializer.data)

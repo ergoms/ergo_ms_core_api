@@ -12,7 +12,7 @@ def get_content_type(content_type_str):
         if qs.count() > 1:
             raise ValidationError(
                 f'Неоднозначный тип контента "{content_type_str}". '
-                'Укажите в формате app_label.model (например: tasks.task)'
+                'Укажите в формате app_label.model (например: my_module.mymodel)'
             )
         return qs.get()
     except ContentType.DoesNotExist:

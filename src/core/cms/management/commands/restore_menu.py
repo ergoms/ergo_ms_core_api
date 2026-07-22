@@ -17,7 +17,7 @@ from src.config.settings.base import CORE_DIR, MODULES_DIR
 from src.core.cms.adp.menu.models import MenuItem, MenuSeparator
 
 MENU_MARKERS = ('MenuMigrationHelper', 'MenuItem', 'MenuSeparator')
-MODULE_MENU_POPULATE_MARKERS = ('populate_lms_menu', 'populate_mct_menu')
+_RE_POPULATE_MENU_FUNC = re.compile(r'\bpopulate_\w+_menu\b')
 
 _RE_HELPER_SOURCE = re.compile(r"MenuMigrationHelper\s*\(\s*apps\s*,\s*['\"]([^'\"]+)['\"]")
 _RE_DELETE_SOURCE = re.compile(
@@ -207,7 +207,7 @@ def _is_module_menu_migration(content: str) -> bool:
         return False
     if 'MenuMigrationHelper' in content:
         return True
-    if any(marker in content for marker in MODULE_MENU_POPULATE_MARKERS):
+    if _RE_POPULATE_MENU_FUNC.search(content):
         return True
     return 'MenuItem' in content and 'module_source' in content
 
@@ -215,7 +215,7 @@ def _is_module_menu_migration(content: str) -> bool:
 def _iter_module_migration_dirs(module_dir):
     """
     Каталоги миграций модуля: api/migrations и вложенные api/*/migrations
-    (например lms/api/mct/migrations).
+    (например api/<подраздел>/migrations).
     """
     api_dir = module_dir / 'api'
     if not api_dir.is_dir():

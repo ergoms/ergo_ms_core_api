@@ -207,7 +207,7 @@ def invalidate_cache_targets(targets: Iterable[str]) -> dict[str, str]:
 
 
 def warmup_file_caches() -> str:
-    from django.core.management import call_command
+    from src.core.utils.warmup_file_caches import run_file_cache_warmup
 
-    call_command('warmup_caches')
+    run_file_cache_warmup(include_modules_env=True)
     return 'warmup_caches выполнен'

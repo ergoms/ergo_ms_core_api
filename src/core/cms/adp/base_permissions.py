@@ -1,8 +1,10 @@
 """
 Базовые классы permissions для модулей системы.
 
-Используется для проверки прав доступа к функционалу модулей
-с поддержкой контекста организации.
+Проверка прав к функционалу модулей через PermissionService. Контекст scope —
+опциональный: модуль-владелец домена объявляет ``scope_type``, и тогда id
+соответствующей сущности извлекается из запроса и передаётся в проверку прав.
+Ядро не знает конкретных scope-типов.
 """
 from rest_framework.permissions import BasePermission
 
@@ -16,53 +18,65 @@ class BaseModulePermission(BasePermission):
     Наследуйте от этого класса в модулях и переопределите:
     - module_name: str — название модуля
     - required_permission: str | None — ключ требуемого разрешения
+    - scope_type: str | None — тип scope-контекста, объявляемый модулем;
+      если задан, id сущности передаётся в проверку как ``{scope_type}_id``
     
     Пример использования:
     
         class CanViewProjects(BaseModulePermission):
-            module_name = "projects"
+            module_name = "my_module"
             required_permission = "project_view"
     """
     
     module_name: str = None
     required_permission: str | None = None
+    scope_type: str | None = None
 
-    def _get_organization_id(self, request, view) -> int | None:
+    def _get_scope_id(self, request, view, scope_type: str) -> int | None:
         """
-        Извлечь organization_id из запроса.
-        
-        Проверяет:
-        1. Query params: ?organization_id=123
-        2. Request body: {"organization_id": 123} или {"organization": 123}
-        3. URL kwargs: /organizations/<organization_id>/... или /organizations/<organization_pk>/...
+        Извлечь id scope-сущности из запроса.
+
+        Проверяет для scope_type='foo':
+        1. Query params: ?foo_id=123
+        2. Request body: {"foo_id": 123} или {"foo": 123}
+        3. URL kwargs: /.../<foo_id>/... или /.../<foo_pk>/...
         """
-        # Из query params
-        org_id = request.query_params.get('organization_id')
-        if org_id:
+        def _as_int(value):
+            if value in (None, ''):
+                return None
             try:
-                return int(org_id)
+                return int(value)
             except (ValueError, TypeError):
-                pass
-        
+                return None
+
+        # Из query params
+        scope_id = _as_int(request.query_params.get(f'{scope_type}_id'))
+        if scope_id is not None:
+            return scope_id
+
         # Из body (для POST/PUT/PATCH)
         if hasattr(request, 'data') and request.data:
-            org_id = request.data.get('organization_id') or request.data.get('organization')
-            if org_id:
-                try:
-                    return int(org_id)
-                except (ValueError, TypeError):
-                    pass
-        
+            scope_id = _as_int(
+                request.data.get(f'{scope_type}_id') or request.data.get(scope_type)
+            )
+            if scope_id is not None:
+                return scope_id
+
         # Из URL kwargs (для nested routes)
         if hasattr(view, 'kwargs') and view.kwargs:
-            org_id = view.kwargs.get('organization_id') or view.kwargs.get('organization_pk')
-            if org_id:
-                try:
-                    return int(org_id)
-                except (ValueError, TypeError):
-                    pass
-        
+            scope_id = _as_int(
+                view.kwargs.get(f'{scope_type}_id') or view.kwargs.get(f'{scope_type}_pk')
+            )
+            if scope_id is not None:
+                return scope_id
+
         return None
+
+    def _scope_kwargs(self, request, view) -> dict:
+        """Контекст scope для передачи в проверку прав ({scope_type}_id=...)."""
+        if not self.scope_type:
+            return {}
+        return {f'{self.scope_type}_id': self._get_scope_id(request, view, self.scope_type)}
 
     def has_permission(self, request, view) -> bool:
         """
@@ -71,7 +85,7 @@ class BaseModulePermission(BasePermission):
         Иерархия проверки:
         1. Пользователь должен быть аутентифицирован
         2. Если required_permission не задан — разрешить
-        3. Проверить права через PermissionService с учётом контекста организации
+        3. Проверить права через PermissionService с учётом scope-контекста
         """
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
@@ -86,12 +100,10 @@ class BaseModulePermission(BasePermission):
                 "Переопределите атрибут module_name в классе."
             )
 
-        organization_id = self._get_organization_id(request, view)
-
         return PermissionService.check_module_permission(
             user=user,
             module_name=self.module_name,
             permission_key=self.required_permission,
-            organization_id=organization_id,
+            **self._scope_kwargs(request, view),
         )
 

@@ -73,6 +73,13 @@ class Theme(models.Model):
         default='',
         help_text=_("Связка light+dark вариантов модуля. Пусто — тема сайта."),
     )
+
+    defaults_snapshot = models.JSONField(
+        _("Снимок начальных значений"),
+        default=dict,
+        blank=True,
+        help_text=_("Manifest-данные для сброса модульной темы (заполняется при sync-module-defaults)."),
+    )
     
     created_at = models.DateTimeField(_("Создана"), auto_now_add=True)
     updated_at = models.DateTimeField(_("Обновлена"), auto_now=True)

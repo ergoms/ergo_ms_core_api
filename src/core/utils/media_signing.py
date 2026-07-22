@@ -73,7 +73,7 @@ def generate_upload_token(
 
     Args:
         user_id: ID пользователя
-        target_dir: целевая директория (например, 'tasks/attachments')
+        target_dir: целевая директория (например, 'reports/attachments')
         max_size: максимальный размер файла в байтах
         allowed_types: список разрешённых расширений (например, ['pdf', 'docx'])
         expires_in: время жизни токена в секундах

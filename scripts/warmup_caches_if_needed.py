@@ -2,7 +2,8 @@
 Прогрев кэшей только при необходимости.
 
 Проверяет celery_queues.bin / celery_routes_queues.bin без Django.
-Если кэш валиден — выход за миллисекунды. Иначе — вызывает warmup_caches (Django).
+Если кэш валиден — выход за миллисекунды. Иначе — вызывает warmup_caches
+(script-команда без django.setup()).
 """
 
 import logging
@@ -28,8 +29,8 @@ def main() -> int:
 
     Сценарии:
       - REDIS_ENABLED=true -> запускаем Redis до API (даже если файловый кэш Celery валиден);
-      - кэш валиден -> выходим без Django warmup;
-      - кэш невалиден -> вызываем Django-команду warmup_caches для прогрева.
+      - кэш валиден -> выходим без прогрева;
+      - кэш невалиден -> вызываем warmup_caches для прогрева.
     """
     redis_code = ensure_redis_for_dev(quiet=True)
     if redis_code != 0:
@@ -37,10 +38,10 @@ def main() -> int:
         return redis_code
 
     if cache_valid():
-        logger.info('warmup_caches_if_needed: кэш уже валиден, Django warmup не требуется')
+        logger.info('warmup_caches_if_needed: кэш уже валиден, прогрев не требуется')
         return 0
 
-    logger.info('warmup_caches_if_needed: кэш невалиден, запускаем Django команду warmup_caches')
+    logger.info('warmup_caches_if_needed: кэш невалиден, запускаем warmup_caches')
     result = subprocess.run(
         [sys.executable, '-m', 'commands', 'warmup_caches'],
         cwd=str(API_DIR),

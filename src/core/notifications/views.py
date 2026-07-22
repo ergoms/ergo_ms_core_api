@@ -93,6 +93,8 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='source_modules')
     def source_modules(self, request):
+        from .catalog import get_catalog
+
         modules = (
             Notification.objects.filter(
                 recipient=request.user,
@@ -104,7 +106,15 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             .distinct()
             .order_by('source_module')
         )
-        return Response({'results': list(modules)})
+        catalog = get_catalog()
+        results = [
+            {
+                'id': module,
+                'name': (catalog.get(module) or {}).get('module_label') or module,
+            }
+            for module in modules
+        ]
+        return Response({'results': results})
 
     @action(detail=True, methods=['post'], url_path='mark_read')
     def mark_read(self, request, pk=None):

@@ -7,7 +7,7 @@
 Пример:
 
     class CourseViewSet(AuditedModelMixin, SwaggerSafeMixin, viewsets.ModelViewSet):
-        audit_module = 'lms'
+        audit_module = 'my_module'
         # всё; при желании — audit_action_map / audit_entity_type
 """
 

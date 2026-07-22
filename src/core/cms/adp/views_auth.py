@@ -14,7 +14,6 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.serializers import ValidationError as DRFValidationError
 from rest_framework.throttling import AnonRateThrottle
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from src.core.cms.adp.auth_cookies import (
     clear_auth_cookies,
@@ -35,6 +34,9 @@ from src.core.cms.adp.services.session_devices import (
     attach_device_to_refresh_token,
     bind_device_to_refresh_token,
 )
+from src.core.cms.adp.session_context_tokens import ScopedSessionRefreshToken
+from src.core.integrations import bridge
+from src.core.integrations.module_contracts import SESSION_RESTORE_CLAIMS
 from src.core.cms.adp.user_agent_utils import (
     build_device_display_name,
     detect_device_type,
@@ -420,7 +422,14 @@ class UserAuthorizationView(BaseAPIView):
 
                 access_lifetime, refresh_lifetime = get_token_lifetime(remember_me)
 
-                refresh = RefreshToken.for_user(user)
+                restore_claims = bridge.call(SESSION_RESTORE_CLAIMS, user=user) or {}
+                if not isinstance(restore_claims, dict):
+                    restore_claims = {}
+
+                refresh = ScopedSessionRefreshToken.for_user_with_claims(
+                    user,
+                    **restore_claims,
+                )
                 refresh.set_exp(lifetime=refresh_lifetime)
 
                 access_token = refresh.access_token

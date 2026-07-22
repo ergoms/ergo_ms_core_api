@@ -22,7 +22,7 @@ def _module_ref_prefix(module: str) -> str:
 class UniqueRefNameSerializerInspector(ReferencingSerializerInspector):
     """
     Генерирует уникальные ref_name для сериализаторов с одинаковым именем класса
-    в разных модулях (например StudyGroupSerializer в students и neural_networks_hub).
+    в разных модулях (например одноимённый Serializer в двух разных модулях).
     """
 
     def get_serializer_ref_name(self, serializer):

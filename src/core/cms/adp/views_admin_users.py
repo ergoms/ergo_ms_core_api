@@ -46,28 +46,16 @@ logger = logging.getLogger(__name__)
 
 
 class _AdminUserTargetMixin:
-    """Resolve admin target user by public_id (preferred) or deprecated numeric pk."""
+    """Resolve admin target user by public_id."""
 
-    def _resolve_target_user(self, request, *, user_id=None, ref=None, select_related=True):
-        if ref is not None:
-            qs = User.objects.filter(public_id=ref)
-            if select_related:
-                qs = qs.select_related('adp_profile')
-            return qs.first()
+    def _resolve_target_user(self, request, *, ref=None, select_related=True):
+        if ref is None:
+            return None
 
-        if user_id is not None:
-            logger.warning(
-                'Deprecated admin-users/<int:user_id>/ route; use admin-users/by-ref/<uuid:ref>/ '
-                '(user_id=%s path=%s)',
-                user_id,
-                getattr(request, 'path', ''),
-            )
-            qs = User.objects.filter(pk=user_id)
-            if select_related:
-                qs = qs.select_related('adp_profile')
-            return qs.first()
-
-        return None
+        qs = User.objects.filter(public_id=ref)
+        if select_related:
+            qs = qs.select_related('adp_profile')
+        return qs.first()
 
 
 def _get_user_avatar_url(user):
@@ -378,8 +366,8 @@ class AdminUserDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, Ba
         operation_description="Получить полный профиль пользователя (для админ-панели)",
         responses={200: CMSUserSerializer()},
     )
-    def get(self, request, user_id=None, ref=None):
-        user = self._resolve_target_user(request, user_id=user_id, ref=ref)
+    def get(self, request, ref=None):
+        user = self._resolve_target_user(request, ref=ref)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -394,8 +382,8 @@ class AdminUserDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, Ba
         request_body=UpdateUserProfileSerializer,
         responses={200: CMSUserSerializer(), 400: 'Ошибка валидации данных.'},
     )
-    def put(self, request, user_id=None, ref=None):
-        user = self._resolve_target_user(request, user_id=user_id, ref=ref)
+    def put(self, request, ref=None):
+        user = self._resolve_target_user(request, ref=ref)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -424,8 +412,8 @@ class AdminUserDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, Ba
             404: 'Пользователь не найден',
         },
     )
-    def delete(self, request, user_id=None, ref=None):
-        user = self._resolve_target_user(request, user_id=user_id, ref=ref)
+    def delete(self, request, ref=None):
+        user = self._resolve_target_user(request, ref=ref)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -458,8 +446,8 @@ class AdminUserAvatarView(_AdminUserTargetMixin, MediaApiFileMixin, BaseAPIViewG
         operation_description="Загрузить или заменить аватар пользователя (для админ-панели)",
         responses={200: 'Аватар обновлён', 404: 'Пользователь не найден'},
     )
-    def post(self, request, user_id=None, ref=None):
-        user = self._resolve_target_user(request, user_id=user_id, ref=ref, select_related=False)
+    def post(self, request, ref=None):
+        user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -490,8 +478,8 @@ class AdminUserAvatarView(_AdminUserTargetMixin, MediaApiFileMixin, BaseAPIViewG
         operation_description="Удалить аватар пользователя (для админ-панели)",
         responses={204: 'Аватар удалён', 404: 'Пользователь или аватар не найден'},
     )
-    def delete(self, request, user_id=None, ref=None):
-        user = self._resolve_target_user(request, user_id=user_id, ref=ref, select_related=False)
+    def delete(self, request, ref=None):
+        user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},
@@ -521,8 +509,8 @@ class AdminUserResetPasswordView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMi
         request_body=AdminResetUserPasswordSerializer,
         responses={200: 'Пароль сброшен или установлен'},
     )
-    def post(self, request, user_id=None, ref=None):
-        user = self._resolve_target_user(request, user_id=user_id, ref=ref, select_related=False)
+    def post(self, request, ref=None):
+        user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
                 {'error': 'Пользователь не найден'},

@@ -23,10 +23,10 @@ class QueueConcurrencyManager:
     
     Использование:
         manager = QueueConcurrencyManager()
-        manager.set_queue_limit('porosity_analysis', 4)
+        manager.set_queue_limit('my_module', 4)
         
         # В задаче:
-        with manager.acquire('porosity_analysis'):
+        with manager.acquire('my_module'):
             # Выполнение задачи
     """
     
@@ -283,7 +283,7 @@ def _get_task_queue_from_request(request) -> Optional[str]:
         task_name = getattr(request, 'task', None)
         if task_name and 'modules.' in task_name:
             parts = task_name.split('.')
-            # modules.porosity_analysis.api.tasks.run_porosity_analysis
+            # modules.my_module.api.tasks.run_example_task
             for i, part in enumerate(parts):
                 if part == 'modules' and i + 1 < len(parts):
                     return parts[i + 1]
@@ -386,7 +386,7 @@ def with_queue_limit(queue_name: Optional[str] = None):
     
     Использование:
         @shared_task(bind=True)
-        @with_queue_limit('porosity_analysis')
+        @with_queue_limit('my_module')
         def my_task(self, ...):
             # Задача автоматически ограничена по параллелизму
     
@@ -429,7 +429,7 @@ class QueueLimitContext:
     Контекстный менеджер для ограничения параллелизма задач.
     
     Использование:
-        with QueueLimitContext('porosity_analysis', task=self) as acquired:
+        with QueueLimitContext('my_module', task=self) as acquired:
             if not acquired:
                 raise self.retry(countdown=60)
             # Выполнение задачи

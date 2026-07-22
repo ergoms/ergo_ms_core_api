@@ -34,7 +34,7 @@ def _create_notification(
         level (str): info|success|warning|error.
         icon (str): имя lucide-иконки (PascalCase), например 'BookOpen'.
             Если пусто — клиент применит fallback по source_module, затем по level.
-        source_module (str): идентификатор модуля-источника, например 'lms'.
+        source_module (str): идентификатор модуля-источника, например 'my_module'.
         event_key (str): тип события внутри модуля, например 'course.review_required'.
         link_url (str|None): относительный путь без числовых pk (public_id/UUID).
         route (dict|None): {'name': '<RouteName>', 'params': {...}} — params только UUID

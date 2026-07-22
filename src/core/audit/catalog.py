@@ -98,32 +98,35 @@ def get_modules() -> list[dict]:
     ]
 
 
-def _build_distinct_actors(limit: int = 500) -> list[dict]:
+def _build_distinct_actors(limit: int = 500, scope: dict | None = None) -> list[dict]:
     from .models import AuditActor, AuditEvent
 
-    dimension = list(
-        AuditActor.objects
-        .order_by('label')
-        .values('filter_value', 'label')[:limit]
-    )
-    if dimension:
-        return [
-            {'value': row['filter_value'], 'label': row['label']}
-            for row in dimension
-        ]
+    scope_filter = {'scope__contains': scope} if scope else {}
+
+    if not scope:
+        dimension = list(
+            AuditActor.objects
+            .order_by('label')
+            .values('filter_value', 'label')[:limit]
+        )
+        if dimension:
+            return [
+                {'value': row['filter_value'], 'label': row['label']}
+                for row in dimension
+            ]
 
     from urllib.parse import quote
 
     linked = (
         AuditEvent.objects
-        .filter(actor_id__isnull=False, actor__public_id__isnull=False)
+        .filter(actor_id__isnull=False, actor__public_id__isnull=False, **scope_filter)
         .values('actor__public_id')
         .annotate(label=Max('actor_label'))
         .order_by('label')[:limit]
     )
     orphans = (
         AuditEvent.objects
-        .filter(actor_id__isnull=True)
+        .filter(actor_id__isnull=True, **scope_filter)
         .exclude(actor_label='')
         .values('actor_label')
         .distinct()
@@ -146,12 +149,16 @@ def _build_distinct_actors(limit: int = 500) -> list[dict]:
     return result
 
 
-def get_distinct_actors(limit: int = 500) -> list[dict]:
+def get_distinct_actors(limit: int = 500, scope: dict | None = None) -> list[dict]:
     """Уникальные инициаторы из журнала для фильтра UI."""
-    cache_key = f'{ACTORS_CACHE_KEY}:{limit}'
+    if scope:
+        scope_suffix = ','.join(f'{k}={scope[k]}' for k in sorted(scope))
+    else:
+        scope_suffix = 'all'
+    cache_key = f'{ACTORS_CACHE_KEY}:{limit}:{scope_suffix}'
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = _build_distinct_actors(limit=limit)
+    result = _build_distinct_actors(limit=limit, scope=scope)
     cache.set(cache_key, result, ACTORS_CACHE_TTL)
     return result

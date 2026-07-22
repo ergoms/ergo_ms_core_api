@@ -6,7 +6,7 @@
     client = get_media_client()
     src = client.localize(video.file.name)        # local: тот же файл; remote: скачано в cache
     run_ffmpeg(src.path, out_path)                 # нативный путь в обоих режимах
-    client.commit_local(out_path, 'video_analysis/results/x.mp4')
+    client.commit_local(out_path, 'my_module/results/file.mp4')
     if src.cached:
         src.release()                              # удалить кэш-копию (опционально)
 """

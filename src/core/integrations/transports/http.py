@@ -11,7 +11,7 @@ HTTP-транспорт для микросервисного режима (ст
 
 2. Удалённый вызов (`call`).
    Ищем в settings.BRIDGE_REMOTES URL для имени операции по префиксу
-   (например, 'organizations.*' -> 'http://organizations-svc:8000').
+   (например, 'my_module.*' -> 'http://my-module-svc:8000').
    Делаем requests.post(url + '/bridge/call/' + name,
                         json={'args': [...], 'kwargs': {...}}).
    Сериализация: JSON (значит, операции, уходящие в HTTP, должны
@@ -35,7 +35,7 @@ HTTP-транспорт для микросервисного режима (ст
 
     BRIDGE_TRANSPORT = 'http'        # или 'routing'
     BRIDGE_REMOTES = {
-        'organizations.*': 'http://organizations-svc:8000',
+        'my_module.*': 'http://my-module-svc:8000',
         ...
     }
 

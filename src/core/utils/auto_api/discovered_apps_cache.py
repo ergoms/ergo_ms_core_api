@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import List, Optional
 
 from src.config.settings.base import CORE_DIR, MODULES_DIR, VIRTUAL_ENV_DIR
-from src.core.utils.auto_api.auto_config import ModuleDiscoverer
 
 logger = logging.getLogger('utils')
 
@@ -129,6 +128,8 @@ def _find_apps_in_api_fast(current_dir: str, current_module: str, installed_apps
 
 def _run_discovery() -> List[str]:
     """Выполняет полное discovery с проверкой AppConfig (медленно)."""
+    from src.core.utils.auto_api.auto_config import ModuleDiscoverer
+
     discoverer = ModuleDiscoverer()
     core_apps: List[str] = []
     discoverer._recursively_find_apps(str(CORE_DIR), 'src.core', core_apps)

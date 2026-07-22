@@ -8,29 +8,78 @@ from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from src.core.settings.permissions import IsGlobalAdmin
+from src.core.cms.adp.services.permissions import PermissionService
 from src.core.utils.mixins import SwaggerSafeMixin
 
 from . import catalog
+from .dimensions import (
+    get_dimensions_for_ui,
+    get_read_guard_dimensions,
+    get_scope_dimensions,
+)
 from .models import AuditEvent
 from .pagination import AuditPagination
+from .permissions import CanReadAuditLog
 from .serializers import AuditEventDetailSerializer, AuditEventListSerializer
 
 
 class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
     """Единый журнал действий пользователей (только чтение).
 
-    Доступен глобальному администратору. Фильтры: модуль, действие,
-    инициатор, важность, период, организация, поиск по объекту/инициатору.
+    Доступен глобальному администратору и тем, кому разрешает провайдер
+    ``audit.can_read`` в пределах read_guard-измерений scope.
+    Фильтры: модуль, действие, инициатор, важность, период, измерения scope,
+    поиск по объекту/инициатору.
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsGlobalAdmin]
+    permission_classes = [permissions.IsAuthenticated, CanReadAuditLog]
     pagination_class = AuditPagination
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
             return AuditEventDetailSerializer
         return AuditEventListSerializer
+
+    def _is_global_admin(self) -> bool:
+        user = getattr(self.request, 'user', None)
+        return bool(user and user.is_authenticated and PermissionService.is_admin(user))
+
+    def _read_scope_values(self) -> dict | None:
+        """Значения всех read_guard-измерений из запроса для не-админа.
+
+        Возвращает {key: value}. Если хотя бы у одного read_guard-измерения нет
+        значения — возвращает None (выборка должна быть пустой).
+        """
+        values: dict = {}
+        for dim in get_read_guard_dimensions():
+            resolve = dim.get('resolve')
+            value = resolve(self.request) if callable(resolve) else None
+            if value in (None, ''):
+                return None
+            values[dim['key']] = value
+        return values
+
+    def _apply_read_scope(self, qs):
+        """Обязательное ограничение выборки для не-админа по read_guard-измерениям.
+
+        Глобальный админ видит весь журнал (опциональные фильтры — отдельно).
+        Не-админ — только события своего scope; нет read_guard-измерений или их
+        значений -> пустая выборка.
+        """
+        if self._is_global_admin():
+            return qs
+
+        read_guard = get_read_guard_dimensions()
+        if not read_guard:
+            return qs.none()
+
+        scope = self._read_scope_values()
+        if scope is None:
+            return qs.none()
+
+        for key, value in scope.items():
+            qs = qs.filter(scope__contains={key: value})
+        return qs
 
     def _apply_search_filter(self, qs, search: str):
         if connection.vendor == 'postgresql':
@@ -55,6 +104,32 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             | Q(entity_label__icontains=search)
             | Q(actor__username__icontains=search)
         ).order_by('-created_at', '-id')
+
+    @staticmethod
+    def _coerce_dimension_value(raw):
+        text = str(raw).strip()
+        if text.lstrip('-').isdigit():
+            try:
+                return int(text)
+            except (TypeError, ValueError):
+                return text
+        return text
+
+    def _apply_dimension_filters(self, qs):
+        """Опциональные фильтры по измерениям аудита из query (для всех измерений).
+
+        Значения измерений хранятся в JSON-поле scope; фильтр использует
+        containment (@>) по scope, что задействует GIN-индекс. Для не-админа
+        обязательное ограничение уже наложено через _apply_read_scope; здесь —
+        только сужение по переданным параметрам.
+        """
+        params = self.request.query_params
+        for dim in get_scope_dimensions():
+            raw = params.get(dim['filter_param'])
+            if raw in (None, ''):
+                continue
+            qs = qs.filter(scope__contains={dim['key']: self._coerce_dimension_value(raw)})
+        return qs
 
     def _apply_filters(self, qs):
         params = self.request.query_params
@@ -90,12 +165,7 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         if actor_label:
             qs = qs.filter(actor_id__isnull=True, actor_label=actor_label)
 
-        organization_id = params.get('organization_id')
-        if organization_id:
-            try:
-                qs = qs.filter(organization_id=int(organization_id))
-            except (TypeError, ValueError):
-                pass
+        qs = self._apply_dimension_filters(qs)
 
         date_from = params.get('date_from')
         if date_from:
@@ -123,7 +193,21 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         qs = AuditEvent.objects.select_related('actor').all()
         if self.action == 'list':
             qs = qs.defer('changes', 'meta', 'user_agent', 'request_id')
+        qs = self._apply_read_scope(qs)
         return self._apply_filters(qs)
+
+    def _resolve_actor_scope(self) -> dict:
+        """scope для списка инициаторов: query-фильтры (админ) или read-scope."""
+        if self._is_global_admin():
+            scope: dict = {}
+            params = self.request.query_params
+            for dim in get_scope_dimensions():
+                raw = params.get(dim['filter_param'])
+                if raw not in (None, ''):
+                    scope[dim['key']] = self._coerce_dimension_value(raw)
+            return scope
+
+        return self._read_scope_values() or {}
 
     @action(detail=False, methods=['get'], url_path='catalog')
     def catalog(self, request):
@@ -135,8 +219,13 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
                 {'value': value, 'label': label}
                 for value, label in AuditEvent.SEVERITY_CHOICES
             ],
-            'actors': catalog.get_distinct_actors(),
+            'actors': catalog.get_distinct_actors(scope=self._resolve_actor_scope()),
         })
+
+    @action(detail=False, methods=['get'], url_path='dimensions')
+    def dimensions(self, request):
+        """Расширяемые измерения аудита (scope) для фильтров UI."""
+        return Response({'dimensions': get_dimensions_for_ui()})
 
     @action(detail=False, methods=['get'], url_path='export')
     def export(self, request):

@@ -5,19 +5,19 @@ Module Bridge — единый механизм межмодульного вз�
 ('module.operation', 'module.event'), потребители обращаются
 через bridge.call / bridge.emit без прямых импортов другого модуля.
 
-Пример провайдера (modules/organizations/api/integrations.py):
+Пример провайдера (modules/my_module/api/integrations.py):
 
     from src.core.integrations import bridge
-    from .models import OrganizationMember
+    from .models import MyEntity
 
-    @bridge.provide_op('organizations.get_user_department_ids')
-    def _get_user_department_ids(user):
+    @bridge.provide_op('my_module.get_user_entity_ids')
+    def _get_user_entity_ids(user):
         if not user or not getattr(user, 'is_authenticated', False):
             return []
         return list(
-            OrganizationMember.objects
-            .filter(user=user, department__isnull=False)
-            .values_list('department_id', flat=True)
+            MyEntity.objects
+            .filter(user=user)
+            .values_list('id', flat=True)
         )
 
     @bridge.subscribe_to('adp.permission_check')
@@ -28,13 +28,13 @@ Module Bridge — единый механизм межмодульного вз�
 
     from src.core.integrations import bridge
 
-    dept_ids = bridge.call(
-        'organizations.get_user_department_ids',
+    entity_ids = bridge.call(
+        'my_module.get_user_entity_ids',
         user=request.user,
         default=[],
     )
 
-    if not bridge.has('organizations.get_organization'):
+    if not bridge.has('my_module.get_entity'):
         return Response(...)
 
 Если модуль-провайдер не подключён, bridge.call возвращает default

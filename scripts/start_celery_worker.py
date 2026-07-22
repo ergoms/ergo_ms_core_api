@@ -1,7 +1,7 @@
 """
 Скрипт запуска Celery worker.
 
-Читает celery_workers.yaml и кэш очередей, при пустом кэше вызывает warmup_caches,
+Читает celery_workers.yaml и кэш очередей, при пустом кэше вызывает warmup_celery,
 затем запускает celery -A src worker. Django грузится только в Celery-процессе.
 """
 

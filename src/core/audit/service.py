@@ -1,7 +1,7 @@
 """Точка входа записи аудита.
 
 Используется внутри ядра и через ModuleBridge (`audit.record`). Инициатор,
-IP, User-Agent, организация и request_id подхватываются автоматически из
+IP, User-Agent, измерения (scope) и request_id подхватываются автоматически из
 контекста запроса — вызывающему коду достаточно передать `action`.
 """
 
@@ -51,14 +51,14 @@ def log_audit_event(payload: dict) -> None:
     changes = payload.get('changes')
     changes_count = len(changes) if isinstance(changes, list) else 0
     logger.info(
-        'action=%s module=%s severity=%s actor=%s entity=%s/%s org=%s ip=%s request_id=%s changes=%s',
+        'action=%s module=%s severity=%s actor=%s entity=%s/%s scope=%s ip=%s request_id=%s changes=%s',
         payload.get('action') or '-',
         payload.get('source_module') or '-',
         payload.get('severity') or '-',
         payload.get('actor_label') or '-',
         payload.get('entity_type') or '-',
         payload.get('entity_ref') or '-',
-        payload.get('organization_id') or '-',
+        payload.get('scope') or '-',
         payload.get('ip_address') or '-',
         payload.get('request_id') or '-',
         changes_count,
@@ -90,21 +90,21 @@ class AuditService:
         changes: list | None = None,
         meta: dict | None = None,
         severity: str = AuditEvent.SEVERITY_INFO,
-        organization_id: Any = _UNSET,
-        department_id: Any = _UNSET,
+        scope: dict | None = None,
     ) -> None:
         """Зафиксировать действие.
 
         Параметры:
             action (str): ключ действия, например 'user.role_assigned' (обязателен).
-            source_module (str): идентификатор источника ('core.cms.adp', 'lms').
+            source_module (str): идентификатор источника ('core.cms.adp', 'my_module').
             actor: User; по умолчанию берётся из контекста запроса.
             request: явный request (если контекст недоступен, напр. в Celery).
             entity (dict|None): {'type', 'ref', 'label'} — ref это public_id, не pk.
             changes (list|None): [{'field', 'label', 'old', 'new'}].
             meta (dict|None): произвольные данные (будут очищены от секретов).
             severity (str): info|security|critical.
-            organization_id / department_id: переопределяют контекст.
+            scope (dict|None): переопределения измерений журнала (audit.scope_dimensions);
+                значение None у ключа удаляет измерение из контекста.
 
         Ничего не возвращает и никогда не бросает исключение наружу —
         сбой аудита не должен ломать основной запрос.
@@ -119,6 +119,15 @@ class AuditService:
             resolved_actor = ctx['actor'] if actor is _UNSET else actor
             actor_id = getattr(resolved_actor, 'pk', None) if resolved_actor is not None else None
 
+            # Измерения (scope): контекст запроса + переопределения вызывающего кода.
+            resolved_scope = dict(ctx.get('scope') or {})
+            if scope:
+                for key, value in scope.items():
+                    if value is None:
+                        resolved_scope.pop(key, None)
+                    else:
+                        resolved_scope[key] = value
+
             payload = {
                 'action': action[:128],
                 'source_module': (source_module or '')[:64],
@@ -128,8 +137,7 @@ class AuditService:
                 'ip_address': ctx['ip_address'],
                 'user_agent': ctx['user_agent'],
                 'request_id': ctx['request_id'],
-                'organization_id': ctx['organization_id'] if organization_id is _UNSET else organization_id,
-                'department_id': ctx['department_id'] if department_id is _UNSET else department_id,
+                'scope': resolved_scope,
                 'changes': redact_changes(changes) if changes else None,
                 'meta': redact(meta) if isinstance(meta, dict) else {},
                 **_normalize_entity(entity),

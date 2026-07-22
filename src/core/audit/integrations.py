@@ -22,14 +22,15 @@ def _record(
     changes=None,
     meta=None,
     severity='info',
-    organization_id=None,
-    department_id=None,
+    scope=None,
 ):
     """Зафиксировать действие пользователя в едином журнале.
 
-    Инициатор, IP, User-Agent, организация и request_id подхватываются из
+    Инициатор, IP, User-Agent, измерения (scope) и request_id подхватываются из
     контекста запроса автоматически — обычно достаточно передать `action`
     и (по желанию) `entity` / `changes`.
+
+    scope (dict|None) — переопределения измерений журнала (audit.scope_dimensions).
     """
     kwargs = dict(
         action=action,
@@ -40,13 +41,10 @@ def _record(
         meta=meta,
         severity=severity,
     )
-    # actor/organization/department переопределяют контекст только если заданы.
     if actor is not None:
         kwargs['actor'] = actor
-    if organization_id is not None:
-        kwargs['organization_id'] = organization_id
-    if department_id is not None:
-        kwargs['department_id'] = department_id
+    if scope is not None:
+        kwargs['scope'] = scope
 
     AuditService.record(**kwargs)
 

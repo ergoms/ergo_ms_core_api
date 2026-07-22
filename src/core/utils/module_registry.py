@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import FrozenSet, List
@@ -52,6 +53,14 @@ def is_valid_module_dir_name(name: str) -> bool:
     from lifecycle.modules.catalog import ModuleCatalog  # noqa: WPS433
 
     return ModuleCatalog.is_valid_module_dir_name(name)
+
+
+def is_valid_module_name(module_name: str) -> bool:
+    """
+    Имя модуля для Celery/discovery: только a-z и `_`, без цифр и верхнего регистра.
+    Без Django — используется при прогреве кэшей без django.setup().
+    """
+    return bool(re.match(r'^[a-z_]+$', module_name))
 
 
 def get_installed_module_names(*, include_disabled: bool = False) -> List[str]:

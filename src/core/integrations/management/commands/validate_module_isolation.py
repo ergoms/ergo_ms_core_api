@@ -27,8 +27,9 @@ from src.core.integrations.isolation import (
     ALLOWED_MODULE_PREFIXES as ALLOWED_PREFIXES,
     find_modules_dir,
 )
+from src.core.integrations.module_contracts import CORE_BRIDGE_PREFIXES
 
-CORE_BRIDGE_PREFIX_WHITELIST = ('audit.', 'notifications.', 'core.')
+CORE_BRIDGE_PREFIX_WHITELIST = CORE_BRIDGE_PREFIXES
 
 
 class _Violation:

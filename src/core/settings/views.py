@@ -328,7 +328,7 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
         """Сбросить системную тему к начальным значениям"""
         from src.core.settings.services.theme_seed import (
             reset_system_theme_to_defaults,
-            BUILTIN_MODULE_MANIFESTS,
+            reset_module_theme_from_snapshot,
             ensure_module_themes_from_manifests,
         )
 
@@ -340,16 +340,21 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
             )
 
         if theme.module_key:
-            manifest = next(
-                (m for m in BUILTIN_MODULE_MANIFESTS if m.get('moduleKey') == theme.module_key),
-                None,
-            )
-            if manifest is None:
+            manifest = request.data.get('manifest')
+            if manifest:
+                ensure_module_themes_from_manifests(Theme, [manifest], update_existing=True)
+                theme.refresh_from_db()
+                return Response(ThemeSerializer(theme).data)
+            if not reset_module_theme_from_snapshot(theme):
                 return Response(
-                    {'error': 'Не удалось определить начальные значения модульной темы'},
+                    {
+                        'error': (
+                            'Не удалось сбросить модульную тему: нет снимка начальных значений. '
+                            'Выполните синхронизацию модульных тем в редакторе тем.'
+                        ),
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            ensure_module_themes_from_manifests(Theme, [manifest], update_existing=True)
             theme.refresh_from_db()
             return Response(ThemeSerializer(theme).data)
 

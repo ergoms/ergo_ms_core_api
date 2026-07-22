@@ -89,16 +89,14 @@ class AuditEvent(models.Model):
         blank=True,
         verbose_name='Метаданные',
     )
-    organization_id = models.PositiveBigIntegerField(
-        null=True,
+    # Расширяемые измерения аудита: {dimension_key: value}, заполняются из
+    # зарегистрированных модулями измерений (audit.scope_dimensions).
+    # Фильтрация — через containment (@>) с GIN-индексом. Ядро не хранит
+    # отдельных колонок под конкретные измерения scope.
+    scope = models.JSONField(
+        default=dict,
         blank=True,
-        db_index=True,
-        verbose_name='Организация',
-    )
-    department_id = models.PositiveBigIntegerField(
-        null=True,
-        blank=True,
-        verbose_name='Подразделение',
+        verbose_name='Измерения (scope)',
     )
     ip_address = models.GenericIPAddressField(
         null=True,
@@ -126,8 +124,11 @@ class AuditEvent(models.Model):
         indexes = [
             models.Index(fields=['source_module', 'action', 'created_at']),
             models.Index(fields=['actor', 'created_at']),
-            models.Index(fields=['organization_id', 'created_at']),
             models.Index(fields=['entity_type', 'entity_ref']),
+            GinIndex(
+                fields=['scope'],
+                name='audit_scope_gin',
+            ),
             GinIndex(
                 fields=['actor_label'],
                 name='audit_actor_label_trgm',

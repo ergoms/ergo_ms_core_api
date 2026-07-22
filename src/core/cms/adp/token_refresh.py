@@ -18,7 +18,7 @@ from src.config.settings.auth import REFRESH_TOKEN_LIFETIME
 
 
 class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
-    # refresh опционален в теле — источник HttpOnly cookie (или legacy body при миграции)
+    # refresh в теле не требуется — источник HttpOnly cookie
     refresh = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):

@@ -12,11 +12,13 @@ from typing import Optional
 def _extract_test_module(args: list[str]) -> Optional[str]:
     """
     Извлекает имя модуля из аргументов команды test.
-    
+
+    Имя берётся из первого аргумента вида ``modules.<имя>...`` — работает для
+    любого модуля, без списка известных имён (адаптивно к составу проекта).
+
     Примеры:
-        ['modules.crm_remastered.api.tests.TestClass'] -> 'crm_remastered'
-        ['modules.lms.api.tests'] -> 'lms'
-        ['--keepdb', 'modules.tasks.api.tests'] -> 'tasks'
+        ['modules.my_module.api.tests.TestClass'] -> 'my_module'
+        ['--keepdb', 'modules.my_module.api.tests'] -> 'my_module'
         ['src.core.utils.tests'] -> None
     """
     for arg in args:
@@ -77,8 +79,6 @@ class PoetryCommand:
             from django.core.management import execute_from_command_line
             
             django_args = ['manage.py', self.command_name]
-            if self.command_name in ('warmup_caches', 'warmup_celery'):
-                django_args.append('--skip-checks')
             if args_str:
                 django_args.extend(args_str.split())
 
@@ -144,17 +144,18 @@ class PoetryCommand:
             if project_root not in sys.path:
                 sys.path.insert(0, project_root)
 
-            warmup_commands = ('warmup_caches', 'warmup_celery')
-            if self.command_name in warmup_commands:
-                os.environ['DJANGO_SETTINGS_MODULE'] = 'src.config.patterns.warmup'
-            elif self.command_name == 'test':
+            if self.command_name == 'test':
                 self._init_test_settings()
             else:
                 deploy_type = _get_deploy_type()
                 os.environ['DJANGO_SETTINGS_MODULE'] = deploy_type
 
             import django
-            if not django.conf.settings.configured:
+            from django.conf import settings
+
+            # Нельзя писать django.conf после одного import django:
+            # в Python 3.12 submodule не подгружается через getattr.
+            if not settings.configured:
                 django.setup()
         except Exception as e:
             print(f"Предупреждение: Не удалось инициализировать Django: {e}")

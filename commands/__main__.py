@@ -12,6 +12,8 @@ _BOOTSTRAP_COMMANDS = frozenset({
     'module-add',
     'module-remove',
     'module-list',
+    'warmup_caches',
+    'warmup_celery',
 })
 
 
@@ -79,9 +81,10 @@ def _patch_getpass_unicode_errors() -> None:
 
 
 def _run_bootstrap_command() -> None:
-    """Установка зависимостей без Django/Celery — для свежего venv и setup-full."""
+    """Установка зависимостей и прогрев кэшей без Django/Celery — для свежего venv и setup-full."""
     from commands.install import InstallCommand
     from commands.module_add import ModuleAddCommand, ModuleListCommand, ModuleRemoveCommand
+    from commands.warmup import WarmupCachesCommand, WarmupCeleryCommand
 
     _configure_stdio_utf8()
 
@@ -90,10 +93,16 @@ def _run_bootstrap_command() -> None:
         'module-add': ModuleAddCommand,
         'module-remove': ModuleRemoveCommand,
         'module-list': ModuleListCommand,
+        'warmup_caches': WarmupCachesCommand,
+        'warmup_celery': WarmupCeleryCommand,
     }
 
     if len(sys.argv) < 2:
-        print('Использование: ergoms api <install|module-add|module-remove|module-list> [аргументы...]')
+        print(
+            'Использование: ergoms api '
+            '<install|module-add|module-remove|module-list|warmup_caches|warmup_celery> '
+            '[аргументы...]'
+        )
         sys.exit(1)
 
     command_name = sys.argv[1]
@@ -118,6 +127,7 @@ def _run_full_main() -> None:
     from commands.discovery import discovery
     from commands.install import InstallCommand
     from commands.module_add import ModuleAddCommand, ModuleListCommand, ModuleRemoveCommand
+    from commands.warmup import WarmupCachesCommand, WarmupCeleryCommand
     from src.config.settings.logger import LOGGING
     from src.core.utils.startup_timing import set_start_time_if_earlier
 
@@ -140,6 +150,8 @@ def _run_full_main() -> None:
         ModuleAddCommand,
         ModuleRemoveCommand,
         ModuleListCommand,
+        WarmupCachesCommand,
+        WarmupCeleryCommand,
     ]
 
     def get_commands() -> Dict[str, Type[PoetryCommand]]:

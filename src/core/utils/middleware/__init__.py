@@ -2,12 +2,14 @@
 Middleware модуль для ядра системы ERGO MS.
 """
 
-from .organization_middleware import (
-    OrganizationMiddleware,
-    is_organizations_module_available,
+from .session_context_middleware import (
+    SessionContextMiddleware,
+    SessionScopeRequiredMiddleware,
+    has_session_entity_resolver,
 )
 
 __all__ = [
-    'OrganizationMiddleware',
-    'is_organizations_module_available',
+    'SessionContextMiddleware',
+    'SessionScopeRequiredMiddleware',
+    'has_session_entity_resolver',
 ]

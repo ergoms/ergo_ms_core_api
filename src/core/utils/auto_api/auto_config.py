@@ -338,18 +338,7 @@ def get_env_deploy_type():
     return get_settings_module()
     
 def is_valid_module_name(module_name: str) -> bool:
-    """
-    Проверяет, соответствует ли имя модуля требованиям:
-    - только английские буквы в нижнем регистре
-    - допустим символ подчеркивания `_`
-    - не должно содержать цифр, других символов или букв в верхнем регистре
+    """Проверка имени модуля; реализация — в module_registry (без Django)."""
+    from src.core.utils.module_registry import is_valid_module_name as _is_valid
 
-    Args:
-        module_name (str): Имя модуля для проверки
-
-    Returns:
-        bool: True, если имя допустимо, иначе False
-    """
-    # Регулярное выражение для проверки
-    pattern = r'^[a-z_]+$'
-    return bool(re.match(pattern, module_name))
+    return _is_valid(module_name)

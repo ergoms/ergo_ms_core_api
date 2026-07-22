@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 
 logger = logging.getLogger(__name__)
@@ -17,15 +16,8 @@ _REDIS_WARMUP_ATTEMPTS = 5
 _REDIS_WARMUP_DELAY_SEC = 0.5
 
 
-def _is_warmup_settings() -> bool:
-    return os.environ.get('DJANGO_SETTINGS_MODULE', '') == 'src.config.patterns.warmup'
-
-
 def warmup_runtime_connections() -> None:
     """Устанавливает соединение с БД и проверяет cache backend; ошибки не прерывают старт."""
-    if _is_warmup_settings():
-        return
-
     try:
         from django.db import connections
 

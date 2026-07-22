@@ -190,9 +190,9 @@ def _wait_for_warmup() -> bool:
 
 def ensure_caches(*, verbose: Optional[bool] = None) -> List[str]:
     """
-    Если кэш пуст — вызывает warmup_caches через Django, затем перечитывает.
+    Если кэш пуст — вызывает warmup_celery (без django.setup()), затем перечитывает.
     Использует file lock чтобы при параллельном старте N воркеров только один
-    процесс загружал Django, остальные ждали результата.
+    процесс прогревал кэши, остальные ждали результата.
     """
     from src.core.utils.celery.startup_format import celery_startup_verbose, format_name_list
 
@@ -212,7 +212,7 @@ def ensure_caches(*, verbose: Optional[bool] = None) -> List[str]:
 
     if _acquire_warmup_lock():
         try:
-            print('Кэш очередей Celery пуст или невалиден. Заполняем через warmup_celery (команда Django)...')
+            print('Кэш очередей Celery пуст или невалиден. Заполняем через warmup_celery...')
             result = subprocess.run(
                 [sys.executable, '-m', 'commands', 'warmup_celery'],
                 cwd=str(API_DIR),

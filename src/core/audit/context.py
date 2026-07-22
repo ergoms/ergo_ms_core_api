@@ -1,12 +1,12 @@
 """Контекст текущего запроса для аудита.
 
-Ядро само подхватывает IP, User-Agent, request_id, организацию и инициатора
-из активного запроса — модулям не нужно передавать эти данные вручную.
+Ядро само подхватывает IP, User-Agent, request_id, измерения (scope) и
+инициатора из активного запроса — модулям не нужно передавать эти данные вручную.
 
 Механика:
 - `AuditContextMiddleware` кладёт в contextvar ссылку на request и сетевые
-  атрибуты. Значения actor / organization_id читаются лениво в момент записи,
-  потому что DRF аутентифицирует пользователя уже внутри view (после middleware).
+  атрибуты. Значения actor / scope читаются лениво в момент записи, потому что
+  DRF аутентифицирует пользователя уже внутри view (после middleware).
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from __future__ import annotations
 import contextvars
 import uuid
 from typing import Any
+
+from .dimensions import resolve_scope
 
 _audit_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     'ergo_audit_ctx', default=None
@@ -33,20 +35,18 @@ def resolve_context(request=None) -> dict:
     Приоритет источников:
       1. Явно переданный `request` (например, из view).
       2. request из contextvar (установлен middleware).
-    Возвращает dict с ключами actor, organization_id, department_id,
+    Возвращает dict с ключами actor, scope (generic-измерения),
     ip_address, user_agent, request_id.
     """
     ctx = _audit_ctx.get() or {}
     req = request or ctx.get('request')
 
     actor = _extract_user(req) if req is not None else None
-    organization_id = getattr(req, 'organization_id', None) if req is not None else None
-    department_id = getattr(req, 'department_id', None) if req is not None else None
+    scope = resolve_scope(req) if req is not None else {}
 
     return {
         'actor': actor,
-        'organization_id': organization_id,
-        'department_id': department_id,
+        'scope': scope,
         'ip_address': ctx.get('ip_address'),
         'user_agent': ctx.get('user_agent', ''),
         'request_id': ctx.get('request_id', ''),

@@ -97,8 +97,7 @@ class AuditEventListSerializer(_AuditCatalogMixin, serializers.ModelSerializer):
             'entity_type',
             'entity_ref',
             'entity_label',
-            'organization_id',
-            'department_id',
+            'scope',
             'ip_address',
             'ip_location',
         )
