@@ -1,8 +1,9 @@
 import logging
 
-from rest_framework import permissions, viewsets
+from rest_framework import permissions, status, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+from rest_framework.response import Response
 
 from src.core.realtime.hub import RealtimeHub
 from src.core.realtime.polling import apply_after_id
@@ -62,6 +63,19 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
     def _check_author(self, instance):
         if instance.author != self.request.user:
             raise PermissionDenied('Вы можете изменять только свои сообщения.')
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ct_name = serializer.validated_data.get('content_type_name')
+        object_id = serializer.validated_data.get('object_id')
+        if ct_name is not None and object_id is not None:
+            ct = get_content_type(ct_name)
+            if not self._has_messenger_access(ct, object_id):
+                raise PermissionDenied('Нет доступа к чату.')
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
     def perform_create(self, serializer):
         message = serializer.save(author=self.request.user)
