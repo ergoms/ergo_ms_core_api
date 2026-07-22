@@ -5,6 +5,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
+from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
 
 from src.core.utils.mixins import SwaggerSafeMixin
@@ -19,6 +20,11 @@ from .serializers import NotificationSerializer
 from .services import NotificationService
 
 
+class NotificationPagination(LimitOffsetPagination):
+    default_limit = 30
+    max_limit = 100
+
+
 class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
     """Инбокс уведомлений текущего пользователя.
 
@@ -31,12 +37,23 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
     serializer_class = NotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = NotificationPagination
 
     def get_queryset(self):
         if self.is_swagger_fake_view():
             return Notification.objects.none()
 
-        qs = Notification.objects.filter(recipient=self.request.user, in_app_visible=True)
+        qs = Notification.objects.filter(
+            recipient=self.request.user,
+            in_app_visible=True,
+            deleted_at__isnull=True,
+        )
+
+        archived = self.request.query_params.get('archived')
+        if archived is not None and archived.lower() in ('1', 'true', 'yes'):
+            qs = qs.filter(archived_at__isnull=False)
+        else:
+            qs = qs.filter(archived_at__isnull=True)
 
         is_read = self.request.query_params.get('is_read')
         if is_read is not None:
@@ -49,7 +66,7 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
         if self.request.query_params.get('inbox') == 'sidebar':
             week_ago = timezone.now() - timedelta(days=7)
-            qs = qs.filter(
+            qs = qs.filter(sidebar_hidden_at__isnull=True).filter(
                 Q(is_read=False)
                 | Q(is_read=True, read_at__gte=week_ago)
                 | Q(is_read=True, read_at__isnull=True, created_at__gte=week_ago)
@@ -67,9 +84,27 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
         return qs
 
+    def _serialize(self, notification):
+        return NotificationSerializer(notification).data
+
     @action(detail=False, methods=['get'], url_path='unread_count')
     def unread_count(self, request):
         return Response({'count': NotificationService.unread_count(request.user)})
+
+    @action(detail=False, methods=['get'], url_path='source_modules')
+    def source_modules(self, request):
+        modules = (
+            Notification.objects.filter(
+                recipient=request.user,
+                in_app_visible=True,
+                deleted_at__isnull=True,
+            )
+            .exclude(source_module='')
+            .values_list('source_module', flat=True)
+            .distinct()
+            .order_by('source_module')
+        )
+        return Response({'results': list(modules)})
 
     @action(detail=True, methods=['post'], url_path='mark_read')
     def mark_read(self, request, pk=None):
@@ -83,11 +118,58 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='mark_all_read')
     def mark_all_read(self, request):
-        updated = NotificationService.mark_all_read(request.user)
+        source_module = (request.data.get('source_module') or '').strip() or None
+        updated = NotificationService.mark_all_read(
+            request.user,
+            source_module=source_module,
+        )
         return Response({
             'success': True,
             'updated': updated,
-            'unread_count': 0,
+            'unread_count': NotificationService.unread_count(request.user),
+        })
+
+    @action(detail=True, methods=['post'], url_path='archive')
+    def archive(self, request, pk=None):
+        notif = NotificationService.archive(pk, request.user)
+        if notif is None:
+            return Response({'success': False}, status=404)
+        return Response({
+            'success': True,
+            'notification': self._serialize(notif),
+            'unread_count': NotificationService.unread_count(request.user),
+        })
+
+    @action(detail=True, methods=['post'], url_path='unarchive')
+    def unarchive(self, request, pk=None):
+        notif = NotificationService.unarchive(pk, request.user)
+        if notif is None:
+            return Response({'success': False}, status=404)
+        return Response({
+            'success': True,
+            'notification': self._serialize(notif),
+            'unread_count': NotificationService.unread_count(request.user),
+        })
+
+    @action(detail=True, methods=['post'], url_path='hide_from_sidebar')
+    def hide_from_sidebar(self, request, pk=None):
+        notif = NotificationService.hide_from_sidebar(pk, request.user)
+        if notif is None:
+            return Response({'success': False}, status=404)
+        return Response({
+            'success': True,
+            'notification': self._serialize(notif),
+            'unread_count': NotificationService.unread_count(request.user),
+        })
+
+    @action(detail=True, methods=['post', 'delete'], url_path='delete')
+    def soft_delete(self, request, pk=None):
+        ok = NotificationService.soft_delete(pk, request.user)
+        if not ok:
+            return Response({'success': False}, status=404)
+        return Response({
+            'success': True,
+            'unread_count': NotificationService.unread_count(request.user),
         })
 
     @action(detail=True, methods=['post'], url_path='execute_action')

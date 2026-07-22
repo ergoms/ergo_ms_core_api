@@ -136,7 +136,11 @@ class NotificationService:
     @staticmethod
     def mark_read(notification_id: int, user) -> bool:
         try:
-            notif = Notification.objects.get(pk=notification_id, recipient=user)
+            notif = Notification.objects.get(
+                pk=notification_id,
+                recipient=user,
+                deleted_at__isnull=True,
+            )
         except Notification.DoesNotExist:
             return False
         if not notif.is_read:
@@ -147,10 +151,17 @@ class NotificationService:
         return True
 
     @staticmethod
-    def mark_all_read(user) -> int:
-        updated = Notification.objects.filter(
-            recipient=user, is_read=False, in_app_visible=True,
-        ).update(
+    def mark_all_read(user, *, source_module: str | None = None) -> int:
+        qs = Notification.objects.filter(
+            recipient=user,
+            is_read=False,
+            in_app_visible=True,
+            deleted_at__isnull=True,
+            archived_at__isnull=True,
+        )
+        if source_module:
+            qs = qs.filter(source_module=source_module)
+        updated = qs.update(
             is_read=True,
             read_at=timezone.now(),
         )
@@ -169,10 +180,87 @@ class NotificationService:
             return cached
 
         count = Notification.objects.filter(
-            recipient=user, is_read=False, in_app_visible=True,
+            recipient=user,
+            is_read=False,
+            in_app_visible=True,
+            deleted_at__isnull=True,
+            archived_at__isnull=True,
         ).count()
         set_cached_unread_count(user_id, count)
         return count
+
+    @staticmethod
+    def _get_owned(notification_id: int, user) -> Notification | None:
+        try:
+            return Notification.objects.get(
+                pk=notification_id,
+                recipient=user,
+                deleted_at__isnull=True,
+            )
+        except Notification.DoesNotExist:
+            return None
+
+    @staticmethod
+    def archive(notification_id: int, user) -> Notification | None:
+        notif = NotificationService._get_owned(notification_id, user)
+        if notif is None:
+            return None
+        if notif.archived_at is None:
+            notif.archived_at = timezone.now()
+            if not notif.is_read:
+                notif.is_read = True
+                notif.read_at = notif.archived_at
+                notif.save(update_fields=['archived_at', 'is_read', 'read_at'])
+                invalidate_unread_count_cache(user.pk)
+            else:
+                notif.save(update_fields=['archived_at'])
+        return notif
+
+    @staticmethod
+    def unarchive(notification_id: int, user) -> Notification | None:
+        notif = NotificationService._get_owned(notification_id, user)
+        if notif is None:
+            return None
+        if notif.archived_at is not None:
+            notif.archived_at = None
+            notif.save(update_fields=['archived_at'])
+        return notif
+
+    @staticmethod
+    def hide_from_sidebar(notification_id: int, user) -> Notification | None:
+        notif = NotificationService._get_owned(notification_id, user)
+        if notif is None:
+            return None
+        if notif.sidebar_hidden_at is None:
+            now = timezone.now()
+            notif.sidebar_hidden_at = now
+            update_fields = ['sidebar_hidden_at']
+            if not notif.is_read:
+                notif.is_read = True
+                notif.read_at = now
+                update_fields.extend(['is_read', 'read_at'])
+                notif.save(update_fields=update_fields)
+                invalidate_unread_count_cache(user.pk)
+            else:
+                notif.save(update_fields=update_fields)
+        return notif
+
+    @staticmethod
+    def soft_delete(notification_id: int, user) -> bool:
+        notif = NotificationService._get_owned(notification_id, user)
+        if notif is None:
+            return False
+        was_unread = not notif.is_read and notif.archived_at is None
+        notif.deleted_at = timezone.now()
+        if not notif.is_read:
+            notif.is_read = True
+            notif.read_at = notif.deleted_at
+            notif.save(update_fields=['deleted_at', 'is_read', 'read_at'])
+        else:
+            notif.save(update_fields=['deleted_at'])
+        if was_unread:
+            invalidate_unread_count_cache(user.pk)
+        return True
 
     @staticmethod
     @transaction.atomic
@@ -183,6 +271,7 @@ class NotificationService:
                 pk=notification_id,
                 recipient=user,
                 in_app_visible=True,
+                deleted_at__isnull=True,
             )
         except Notification.DoesNotExist:
             return {'success': False, 'error': 'not_found'}

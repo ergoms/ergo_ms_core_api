@@ -99,6 +99,24 @@ class Notification(models.Model):
         verbose_name='Показывать в клиенте',
         help_text='False — email-only уведомление: запись хранит данные для письма, но не отображается в inbox',
     )
+    archived_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        verbose_name='В архиве с',
+        help_text='Не показывается в колокольчике и основном списке',
+    )
+    deleted_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        verbose_name='Удалено в',
+        help_text='Мягкое удаление — скрыто из UI',
+    )
+    sidebar_hidden_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        verbose_name='Скрыто из колокольчика',
+        help_text='Не показывается в dropdown, остаётся в истории',
+    )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name='Создано')
     read_at = models.DateTimeField(blank=True, null=True, verbose_name='Прочитано в')
 
@@ -110,6 +128,10 @@ class Notification(models.Model):
             models.Index(
                 fields=['recipient', 'is_read', 'created_at'],
                 name='core_notif_recipient_idx',
+            ),
+            models.Index(
+                fields=['recipient', 'deleted_at', 'archived_at', 'created_at'],
+                name='core_notif_inbox_idx',
             ),
         ]
         constraints = [

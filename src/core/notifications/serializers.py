@@ -23,6 +23,9 @@ class NotificationSerializer(serializers.ModelSerializer):
             'resolved_action_id',
             'resolved_at',
             'is_read',
+            'archived_at',
+            'deleted_at',
+            'sidebar_hidden_at',
             'created_at',
             'read_at',
         )
