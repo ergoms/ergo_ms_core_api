@@ -60,8 +60,13 @@ class PoetryCommand:
     def run(self, *args) -> int:
         """Выполнение команды."""
         self._test_args = list(args)
-        
-        filtered_args = [arg for arg in args if arg and arg != '--full']
+
+        # --full относится к ergoms api test (полный прогон); для остальных
+        # Django-команд (например recalc_analytics --full) флаг нельзя съедать.
+        if self.command_name == 'test':
+            filtered_args = [arg for arg in args if arg and arg != '--full']
+        else:
+            filtered_args = [arg for arg in args if arg]
         args_str = " ".join(str(arg) for arg in filtered_args)
 
         if self.django_command_name:
