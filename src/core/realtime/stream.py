@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
+from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 
@@ -31,7 +32,7 @@ async def sse_event_stream(user) -> AsyncIterator[str]:
 
     async def sync_groups() -> None:
         nonlocal subscribed_groups
-        target_groups = set(groups_for_user(user))
+        target_groups = set(await database_sync_to_async(groups_for_user)(user))
         for group in target_groups - subscribed_groups:
             await channel_layer.group_add(group, channel_name)
         for group in subscribed_groups - target_groups:
