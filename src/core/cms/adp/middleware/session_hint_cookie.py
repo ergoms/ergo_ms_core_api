@@ -13,5 +13,9 @@ class SessionHintCookieMiddleware:
 
     def __call__(self, request):
         response = self.get_response(request)
+        # Logout чистит refresh в response, но request.COOKIES ещё со старым refresh —
+        # ensure_* иначе снова поставит ergo_session и клиент уйдёт в restore↔logout цикл.
+        if request.path.rstrip('/').endswith('/logout'):
+            return response
         ensure_session_hint_cookie(request, response, self._hint_max_age)
         return response
