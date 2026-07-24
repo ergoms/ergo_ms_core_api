@@ -454,19 +454,38 @@ class UserAuthorizationView(BaseAPIView):
                     severity='security',
                 )
                 return response
-            else:
+
+            inactive_user = (
+                User.objects
+                .filter(username=username, is_active=False)
+                .first()
+            )
+            if inactive_user is not None and inactive_user.check_password(password):
                 audit_log(
                     'auth.login_failed',
                     request=request,
                     severity='security',
-                    meta={'username': username},
+                    meta={'username': username, 'reason': 'account_suspended'},
                 )
                 return Response(
                     {
-                        "message": "Неверные учетные данные."
+                        'message': 'Аккаунт приостановлен. Обратитесь к администратору.',
                     },
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_403_FORBIDDEN,
                 )
+
+            audit_log(
+                'auth.login_failed',
+                request=request,
+                severity='security',
+                meta={'username': username},
+            )
+            return Response(
+                {
+                    "message": "Неверные учетные данные."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         errors = parse_errors_to_dict(serializer.errors)
         return Response(

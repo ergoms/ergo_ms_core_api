@@ -16,7 +16,7 @@ from src.core.settings.models import UserAvatar
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewGlobalAdminMixin
 from src.core.utils.mixins import MediaApiFileMixin
 from src.core.cms.adp.services.user_search import apply_user_search
-from src.core.cms.adp.models import Role, RoleGroup, UserRole, UserProfile
+from src.core.cms.adp.models import Role, RoleGroup, UserRole, UserProfile, UserDevice
 from src.core.cms.adp.serializers import (
     RoleSerializer,
     RoleGroupSerializer,
@@ -25,6 +25,11 @@ from src.core.cms.adp.serializers import (
     UpdateUserProfileSerializer,
     AdminResetUserPasswordSerializer,
     AdminCreateUserSerializer,
+    UserDeviceSerializer,
+)
+from src.core.cms.adp.services.session_devices import (
+    is_current_device,
+    revoke_user_device_session,
 )
 from src.core.cms.adp.services.permissions import PermissionService
 from src.core.cms.adp.services import presence as presence_service
@@ -83,6 +88,31 @@ def _validate_admin_user_deletion(request, target_user):
             )
 
     return None
+
+
+def _validate_admin_user_suspend(request, target_user):
+    if request.user.id == target_user.id:
+        return Response(
+            {'error': 'Нельзя приостановить собственную учётную запись.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if PermissionService.is_admin(target_user) and PermissionService.count_global_admins() <= 1:
+        return Response(
+            {'error': 'Нельзя приостановить последнего администратора системы.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return None
+
+
+def _set_admin_user_active(user, *, is_active: bool) -> None:
+    if user.is_active == is_active:
+        return
+    user.is_active = is_active
+    user.save(update_fields=['is_active'])
+    if not is_active:
+        revoke_user_auth(user)
 
 
 def _perform_admin_user_deletion(user):
@@ -174,6 +204,7 @@ def _build_admin_user_list_item(user, user_role=None, admin_role=None, presence_
         'last_name': user.last_name or '',
         'date_joined': user.date_joined,
         'last_login': user.last_login,
+        'is_active': bool(user.is_active),
         'is_online': presence_entry.is_online,
         'last_seen': presence_entry.last_seen,
         'role': role,
@@ -573,3 +604,203 @@ class AdminUserResetPasswordView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMi
             )
 
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+class AdminUserStatusView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
+    """Приостановка и возобновление учётной записи пользователя."""
+
+    @swagger_auto_schema(
+        operation_description=(
+            "Установить статус аккаунта (is_active). "
+            "При приостановке все сессии пользователя завершаются."
+        ),
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['is_active'],
+            properties={
+                'is_active': openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description='true — возобновить, false — приостановить',
+                ),
+            },
+        ),
+        responses={200: CMSUserSerializer(), 400: 'Нельзя изменить статус'},
+    )
+    def post(self, request, ref=None):
+        user = self._resolve_target_user(request, ref=ref, select_related=False)
+        if not user:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if 'is_active' not in request.data:
+            return Response(
+                {'error': 'Поле is_active обязательно.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        raw = request.data.get('is_active')
+        if isinstance(raw, bool):
+            is_active = raw
+        elif isinstance(raw, str) and raw.strip().lower() in ('true', '1', 'false', '0'):
+            is_active = raw.strip().lower() in ('true', '1')
+        else:
+            return Response(
+                {'error': 'Поле is_active должно быть булевым значением.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not is_active:
+            validation_error = _validate_admin_user_suspend(request, user)
+            if validation_error:
+                return validation_error
+
+        previous = bool(user.is_active)
+        _set_admin_user_active(user, is_active=is_active)
+        user = User.objects.select_related('adp_profile').get(pk=user.pk)
+
+        if previous != is_active:
+            audit_log(
+                'user.activated' if is_active else 'user.suspended',
+                request=request,
+                severity='security',
+                entity={'type': 'user', 'label': user.get_full_name() or user.username},
+                meta={'username': user.username, 'is_active': is_active},
+            )
+
+        return Response(_build_admin_user_detail(user), status=status.HTTP_200_OK)
+
+
+class AdminUserDevicesView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
+    """Список активных сессий (устройств) пользователя для админ-панели."""
+
+    @swagger_auto_schema(
+        operation_description="Получить активные сессии пользователя (админ-панель)",
+        responses={200: UserDeviceSerializer(many=True)},
+    )
+    def get(self, request, ref=None):
+        user = self._resolve_target_user(request, ref=ref, select_related=False)
+        if not user:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        devices = (
+            UserDevice.objects
+            .filter(user=user, is_active=True)
+            .order_by('-last_activity')
+        )
+        serializer = UserDeviceSerializer(
+            devices,
+            many=True,
+            context={'request': request},
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AdminUserDeviceDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
+    """Отзыв одной сессии пользователя администратором."""
+
+    @swagger_auto_schema(
+        operation_description="Отозвать сессию пользователя (админ-панель)",
+        responses={200: 'Сессия завершена', 404: 'Не найдено'},
+    )
+    def delete(self, request, ref=None, device_id=None):
+        user = self._resolve_target_user(request, ref=ref, select_related=False)
+        if not user:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        device = UserDevice.objects.filter(id=device_id, user=user).first()
+        if device is None:
+            return Response(
+                {'error': 'Сессия не найдена.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if request.user.pk == user.pk and is_current_device(request, device):
+            return Response(
+                {'error': 'Нельзя завершить текущую сессию'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        revoke_user_device_session(device)
+        audit_log(
+            'user.session_revoked',
+            request=request,
+            severity='security',
+            entity={'type': 'user', 'label': user.get_full_name() or user.username},
+            meta={'username': user.username, 'device_id': device_id},
+        )
+        return Response({'message': 'Сессия завершена.'}, status=status.HTTP_200_OK)
+
+
+class AdminUserRevokeSessionsView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
+    """Отзыв всех сессий пользователя администратором."""
+
+    @swagger_auto_schema(
+        operation_description=(
+            "Отозвать все сессии пользователя. "
+            "Для собственной учётной записи текущая сессия сохраняется."
+        ),
+        responses={200: 'Сессии отозваны', 404: 'Пользователь не найден'},
+    )
+    def post(self, request, ref=None):
+        user = self._resolve_target_user(request, ref=ref, select_related=False)
+        if not user:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if request.user.pk == user.pk:
+            current_device_id = None
+            devices = list(
+                UserDevice.objects.filter(user=user, is_active=True).order_by('-last_activity')
+            )
+            revoked = 0
+            for device in devices:
+                if is_current_device(request, device):
+                    current_device_id = device.id
+                    continue
+                revoke_user_device_session(device)
+                revoked += 1
+            audit_log(
+                'user.sessions_revoked',
+                request=request,
+                severity='security',
+                entity={'type': 'user', 'label': user.get_full_name() or user.username},
+                meta={
+                    'username': user.username,
+                    'revoked_count': revoked,
+                    'kept_current': current_device_id is not None,
+                },
+            )
+            return Response(
+                {
+                    'message': 'Остальные сессии завершены.',
+                    'revoked_count': revoked,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        active_count = UserDevice.objects.filter(user=user, is_active=True).count()
+        revoke_user_auth(user)
+        audit_log(
+            'user.sessions_revoked',
+            request=request,
+            severity='security',
+            entity={'type': 'user', 'label': user.get_full_name() or user.username},
+            meta={'username': user.username, 'revoked_count': active_count},
+        )
+        return Response(
+            {
+                'message': 'Все сессии завершены.',
+                'revoked_count': active_count,
+            },
+            status=status.HTTP_200_OK,
+        )

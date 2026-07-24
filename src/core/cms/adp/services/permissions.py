@@ -170,8 +170,6 @@ class PermissionService:
         was_admin = PermissionService._is_global_admin(user)
         will_be_admin = PermissionService._is_admin_role(role)
         if was_admin and not will_be_admin:
-            if assigned_by and assigned_by.pk == user.pk:
-                return 'Нельзя снять с себя роль администратора.'
             if PermissionService.count_global_admins() <= 1:
                 return 'Нельзя снять роль у последнего администратора системы.'
         return None

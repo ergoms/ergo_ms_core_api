@@ -36,6 +36,10 @@ USER_PASSWORD_RESET_ADMIN = 'user.password_reset_by_admin'
 USER_CREATED = 'user.created'
 USER_UPDATED = 'user.updated'
 USER_DELETED = 'user.deleted'
+USER_SUSPENDED = 'user.suspended'
+USER_ACTIVATED = 'user.activated'
+USER_SESSIONS_REVOKED = 'user.sessions_revoked'
+USER_SESSION_REVOKED = 'user.session_revoked'
 
 # --- Права и политики ---
 ROLE_CREATED = 'role.created'
@@ -129,6 +133,10 @@ CORE_AUDIT_SECTION = {
         _users(USER_CREATED, 'Пользователь создан', 'UserPlus'),
         _users(USER_UPDATED, 'Пользователь изменён', 'UserCog'),
         _users(USER_DELETED, 'Пользователь удалён', 'UserX', severity=_SEC),
+        _users(USER_SUSPENDED, 'Аккаунт приостановлен', 'UserRoundX', severity=_SEC),
+        _users(USER_ACTIVATED, 'Аккаунт возобновлён', 'UserCheck', severity=_SEC),
+        _users(USER_SESSIONS_REVOKED, 'Все сессии отозваны', 'ShieldOff', severity=_SEC),
+        _users(USER_SESSION_REVOKED, 'Сессия отозвана', 'LogOut', severity=_SEC),
         _users(USER_ROLE_ASSIGNED, 'Назначена роль', 'KeySquare', severity=_SEC),
         _users(USER_PASSWORD_CHANGED, 'Смена пароля', 'KeyRound', severity=_SEC),
         _users(USER_PASSWORD_RESET, 'Восстановление пароля', 'KeyRound', severity=_SEC),

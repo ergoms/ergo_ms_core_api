@@ -50,6 +50,10 @@ from src.core.cms.adp.views_admin_users import (
     AdminUserDetailView,
     AdminUserAvatarView,
     AdminUserResetPasswordView,
+    AdminUserStatusView,
+    AdminUserDevicesView,
+    AdminUserDeviceDetailView,
+    AdminUserRevokeSessionsView,
 )
 
 from src.core.cms.adp.views_presence import (
@@ -151,6 +155,26 @@ urlpatterns = [
         'admin-users/by-ref/<uuid:ref>/reset-password/',
         AdminUserResetPasswordView.as_view(),
         name='admin_user_reset_password_by_ref',
+    ),
+    path(
+        'admin-users/by-ref/<uuid:ref>/status/',
+        AdminUserStatusView.as_view(),
+        name='admin_user_status_by_ref',
+    ),
+    path(
+        'admin-users/by-ref/<uuid:ref>/devices/',
+        AdminUserDevicesView.as_view(),
+        name='admin_user_devices_by_ref',
+    ),
+    path(
+        'admin-users/by-ref/<uuid:ref>/devices/<int:device_id>/',
+        AdminUserDeviceDetailView.as_view(),
+        name='admin_user_device_detail_by_ref',
+    ),
+    path(
+        'admin-users/by-ref/<uuid:ref>/revoke-sessions/',
+        AdminUserRevokeSessionsView.as_view(),
+        name='admin_user_revoke_sessions_by_ref',
     ),
     path('presence/', UserPresenceBatchView.as_view(), name='user_presence_batch'),
     path('presence/heartbeat/', UserPresenceHeartbeatView.as_view(), name='user_presence_heartbeat'),

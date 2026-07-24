@@ -174,6 +174,7 @@ class AdminUserRoleInfoSerializer(Serializer):
     last_name = CharField(allow_blank=True, required=False)
     date_joined = DateTimeField(allow_null=True, required=False)
     last_login = DateTimeField(allow_null=True, required=False)
+    is_active = BooleanField(required=False, default=True)
     is_online = BooleanField(required=False)
     last_seen = DateTimeField(allow_null=True, required=False)
     role = RoleListMinimalSerializer(allow_null=True)
