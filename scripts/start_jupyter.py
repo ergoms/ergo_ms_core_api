@@ -58,7 +58,7 @@ def _install_django_kernel():
 def _ensure_venv_commonjs():
     """
     Создаёт package.json с type=commonjs в virtual_env/, чтобы Node.js
-    не наследовал "type": "module" из корневого package.json проекта.
+    не наследовал "type": "module" из package.json корня или virtual_env/npm.
     Без этого JupyterLab's node-version-check.js падает с ReferenceError
     т.к. require() недоступен в ESM-контексте.
     """

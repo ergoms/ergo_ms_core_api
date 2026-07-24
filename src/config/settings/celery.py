@@ -22,7 +22,6 @@
     - Секции databases.yaml: celery_worker / celery / celery_beat (SQL-брокер)
 """
 
-import logging
 import os
 
 from src.config.redis_runtime import (
@@ -39,8 +38,6 @@ for _env_key in ('CELERY_BROKER_URL', 'CELERY_RESULT_BACKEND'):
 
 # Импортируем централизованный менеджер БД для Celery
 from src.core.utils.database.config_manager import CeleryDatabaseConfigLoader
-
-logger = logging.getLogger('config.celery')
 
 # ==================== Конфигурация для Celery Worker ====================
 
@@ -61,14 +58,6 @@ CELERY_RESULT_BACKEND = worker_config['result_backend']
 
 if uses_redis_celery_backend(CELERY_BROKER_URL, CELERY_RESULT_BACKEND):
     ensure_kombu_redis_resp2()
-
-# Логируем активную конфигурацию
-if worker_config['mode'] == 'redis':
-    logger.info('Celery Worker: брокер Redis (%s)', worker_config['broker_url'].split('?')[0])
-elif worker_config['mode'] == 'database':
-    logger.info(f"Celery Worker: Используется БД '{worker_config['section']}' ({worker_config['engine']})")
-else:
-    logger.info("Celery Worker: Используется локальный SQLite режим")
 
 # ==================== Общие настройки Celery ====================
 

@@ -18,6 +18,10 @@ from typing import Any, Dict
 from celery import Celery
 from django.conf import settings
 
+from src.config.log_format import (
+    CELERY_WORKER_LOG_FORMAT,
+    CELERY_WORKER_TASK_LOG_FORMAT,
+)
 from src.core.utils.auto_api.auto_config import get_env_deploy_type
 
 # ---------------------------------------------------------------------------
@@ -138,11 +142,8 @@ if IS_CELERY_PROCESS:
             "task_queues": task_queues,
             "task_annotations": manager.get_all_task_annotations(),
             "task_acks_late": True,
-            "worker_log_format": "[%(asctime)s: %(levelname)s/%(processName)s] %(message)s",
-            "worker_task_log_format": (
-                "[%(asctime)s: %(levelname)s/%(processName)s]"
-                "[%(task_name)s(%(task_id)s)] %(message)s"
-            ),
+            "worker_log_format": CELERY_WORKER_LOG_FORMAT,
+            "worker_task_log_format": CELERY_WORKER_TASK_LOG_FORMAT,
             "worker_log_color": False,
             "worker_redirect_stdouts": False,
             "worker_redirect_stdouts_level": "INFO",

@@ -61,11 +61,18 @@ def main() -> int:
     if deploy_type == 'production':
         from media_server.deploy import get_settings_module
 
+        # Тот же формат, что у API (core/api/src/config/log_format.py).
+        api_src = PROJECT_ROOT / 'core' / 'api' / 'src'
+        if str(api_src) not in sys.path:
+            sys.path.insert(0, str(api_src))
+        from src.config.log_format import DAPHNE_LOG_FMT
+
         env.setdefault('DJANGO_SETTINGS_MODULE', get_settings_module())
         cmd = [
             sys.executable, '-m', 'daphne',
             '-b', host,
             '-p', port,
+            '--log-fmt', DAPHNE_LOG_FMT,
             'media_server.asgi:application',
         ]
         print(f'Media API (запуск как на сервере): daphne на {host}:{port}')

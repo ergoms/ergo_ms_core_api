@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from src.config.log_format import verbose_formatter_dict
 from src.config.log_paths import (
     file_level_for_key,
     log_basename,
@@ -18,7 +19,7 @@ from src.config.log_paths import (
     rotation_settings,
     service_levels,
 )
-from src.config.settings.base import ENV_FILE_PATH, SYSTEM_DIR
+from src.config.paths import ENV_FILE_PATH, SYSTEM_DIR
 
 
 def _rotating_handler(level: str, filename: str, max_bytes: int, backup_count: int) -> dict[str, Any]:
@@ -38,7 +39,7 @@ def _console_handler(level: str) -> dict[str, Any]:
     return {
         'level': level,
         'class': 'logging.StreamHandler',
-        'formatter': 'simple',
+        'formatter': 'verbose',
     }
 
 
@@ -239,17 +240,7 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
     return {
         'version': 1,
         'disable_existing_loggers': False,
-        'formatters': {
-            'verbose': {
-                'format': '[{levelname}] {asctime} {name} {module} {message}',
-                'style': '{',
-                'datefmt': '%Y-%m-%d %H:%M:%S',
-            },
-            'simple': {
-                'format': '[{levelname}] {name}: {message}',
-                'style': '{',
-            },
-        },
+        'formatters': verbose_formatter_dict(),
         'handlers': handlers,
         'root': {
             'handlers': root_handlers,

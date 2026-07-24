@@ -135,9 +135,11 @@ def _run_full_main() -> None:
 
     logger = logging.getLogger('commands')
     logger.propagate = False
+    verbose = LOGGING['formatters']['verbose']
     formatter = logging.Formatter(
-        fmt=LOGGING['formatters']['simple']['format'],
-        style=LOGGING['formatters']['simple']['style'],
+        fmt=verbose['format'],
+        style=verbose['style'],
+        datefmt=verbose.get('datefmt'),
     )
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)

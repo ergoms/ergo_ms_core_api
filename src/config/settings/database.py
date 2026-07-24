@@ -4,17 +4,14 @@
 Использует централизованную объектно-ориентированную систему управления БД.
 """
 
-import logging.config
+import logging
 import os
 import sys
 
-from src.config.settings.logger import LOGGING
 from src.config.settings.base import SYSTEM_DIR, RESOURCES_DIR
 from src.config.env import env
 
 from src.core.utils.database.config_manager import DjangoDatabaseConfigLoader
-
-logging.config.dictConfig(LOGGING)
 
 logger = logging.getLogger('config.database')
 

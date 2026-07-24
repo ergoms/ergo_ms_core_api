@@ -49,6 +49,8 @@ def get_api_bind_port(default: str = '8000') -> str:
 
 def build_daphne_command(python_executable: str | None = None) -> List[str]:
     """Команда production-запуска API через daphne (ASGI, без autoreload)."""
+    from src.config.log_format import DAPHNE_LOG_FMT
+
     exe = python_executable or sys.executable
     return [
         exe,
@@ -58,6 +60,8 @@ def build_daphne_command(python_executable: str | None = None) -> List[str]:
         get_api_bind_host(),
         '-p',
         get_api_bind_port(),
+        '--log-fmt',
+        DAPHNE_LOG_FMT,
         ASGI_APPLICATION,
     ]
 

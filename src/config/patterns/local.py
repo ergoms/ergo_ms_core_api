@@ -6,8 +6,14 @@
 """
 
 import importlib
+import logging.config
 import sys
 from pathlib import Path
+
+# До glob settings: иначе celery.py логирует до dictConfig (алфавитный порядок).
+from src.config.settings.logger import LOGGING
+
+logging.config.dictConfig(LOGGING)
 
 settings_dir = Path(__file__).parent.parent / 'settings'
 
