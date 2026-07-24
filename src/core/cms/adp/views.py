@@ -55,6 +55,10 @@ class ProtectedView(BaseAPIViewAuthMixin):
 class LogoutView(BaseAPIView):
     """Очистка HttpOnly refresh-cookie (доступно без валидного access)."""
 
+    # Идемпотентная очистка cookie: не режем throttle'ом — иначе шторм 401→logout
+    # получает 429 и refresh-cookie так и не сбрасывается.
+    throttle_classes = []
+
     def post(self, request):
         response = Response(status=status.HTTP_204_NO_CONTENT)
         clear_auth_cookies(response)

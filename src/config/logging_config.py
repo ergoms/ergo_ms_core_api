@@ -109,39 +109,74 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
     # При ERGO_LOG_CONSOLE=false (systemd) root без файла терял core.*, modules.*, daphne.*.
     root_handlers = [default_file] + console
 
+    # Access (middleware) — INFO всегда, даже при ERGO_LOG_FILE_LEVEL=info.
+    # Daphne http_protocol / environ — не ниже WARNING (иначе «мусорка» на DEBUG).
+    api_loggers_common = ['api_file'] + console
+
     loggers: dict[str, Any] = {
         'django': {
-            'handlers': ['api_file'] + console,
+            'handlers': api_loggers_common,
             'level': 'INFO',
             'propagate': False,
         },
+        # Как у runserver: одна строка на HTTP-запрос
+        'django.server': {
+            'handlers': api_loggers_common,
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'daphne': {
+            'handlers': api_loggers_common,
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'daphne.http_protocol': {
+            'handlers': api_loggers_common,
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'daphne.http_disconnect': {
+            'handlers': api_loggers_common,
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'environ': {
+            'handlers': api_loggers_common,
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'environ.environ': {
+            'handlers': api_loggers_common,
+            'level': 'WARNING',
+            'propagate': False,
+        },
         'config': {
-            'handlers': ['api_file'] + console,
+            'handlers': api_loggers_common,
             'level': 'DEBUG',
             'propagate': False,
         },
         'config.database': {
-            'handlers': ['api_file'] + console,
+            'handlers': api_loggers_common,
             'level': 'DEBUG',
             'propagate': False,
         },
         'commands': {
-            'handlers': ['api_file'] + console,
+            'handlers': api_loggers_common,
             'level': 'INFO',
             'propagate': False,
         },
         'core.utils': {
-            'handlers': ['api_file'] + console,
+            'handlers': api_loggers_common,
             'level': 'INFO',
             'propagate': False,
         },
         'core.utils.commands': {
-            'handlers': ['api_file'] + console,
+            'handlers': api_loggers_common,
             'level': 'INFO',
             'propagate': False,
         },
         'core.utils.server': {
-            'handlers': ['api_file'] + console,
+            'handlers': api_loggers_common,
             'level': 'INFO',
             'propagate': False,
         },

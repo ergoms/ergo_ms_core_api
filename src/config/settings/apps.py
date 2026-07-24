@@ -47,7 +47,9 @@ MIDDLEWARE = [
     'src.core.audit.context.AuditContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware'
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    # В конце цепочки — финальный status_code; одна строка INFO (и daphne, и runserver)
+    'src.core.utils.middleware.access_log_middleware.AccessLogMiddleware',
 ]
 
 _security_index = MIDDLEWARE.index('django.middleware.security.SecurityMiddleware')
