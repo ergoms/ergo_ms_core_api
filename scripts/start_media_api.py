@@ -38,7 +38,8 @@ def _build_env() -> dict:
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUTF8'] = '1'
     existing = env.get('PYTHONPATH', '')
-    paths = [str(MEDIA_SRC), str(PROJECT_ROOT)]
+    # API_DIR — для общего log_format (src.config.*) из media_server.
+    paths = [str(MEDIA_SRC), str(API_DIR), str(PROJECT_ROOT)]
     if existing:
         paths.append(existing)
     env['PYTHONPATH'] = os.pathsep.join(paths)
@@ -62,9 +63,9 @@ def main() -> int:
         from media_server.deploy import get_settings_module
 
         # Тот же формат, что у API (core/api/src/config/log_format.py).
-        api_src = PROJECT_ROOT / 'core' / 'api' / 'src'
-        if str(api_src) not in sys.path:
-            sys.path.insert(0, str(api_src))
+        # В path нужен core/api, иначе `from src.config...` не резолвится.
+        if str(API_DIR) not in sys.path:
+            sys.path.insert(0, str(API_DIR))
         from src.config.log_format import DAPHNE_LOG_FMT
 
         env.setdefault('DJANGO_SETTINGS_MODULE', get_settings_module())
