@@ -1,6 +1,9 @@
 """
 Прогрев соединений PostgreSQL и cache (Redis) при старте процесса API.
 
+Вызывать из asgi.py / wsgi.py после get_*_application(), не из AppConfig.ready():
+иначе Django выдаёт RuntimeWarning (доступ к БД до полной инициализации apps).
+
 Первый HTTP-запрос после «Listening» у daphne не должен ждать cold connect к БД и кэшу.
 """
 

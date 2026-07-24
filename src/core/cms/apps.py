@@ -30,7 +30,3 @@ class CmsConfig(AppConfig):
 
     def ready(self):
         ModelBase.__new__ = new_model_base
-
-        from src.core.system.runtime_warmup import warmup_runtime_connections
-
-        warmup_runtime_connections()

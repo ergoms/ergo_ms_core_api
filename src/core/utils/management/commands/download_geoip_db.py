@@ -73,8 +73,12 @@ class Command(BaseCommand):
         )
 
     def _download_once(self, url: str) -> Path:
+        from src.config.paths import VIRTUAL_ENV_DIR
+
         suffix = Path(urlparse(url).path).suffix or '.gz'
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp_root = VIRTUAL_ENV_DIR / 'cache' / 'tmp'
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=str(tmp_root))
         tmp_path = Path(tmp.name)
         try:
             with requests.get(url, stream=True, timeout=_REQUEST_TIMEOUT) as response:
@@ -98,8 +102,12 @@ class Command(BaseCommand):
             raise
 
     def _extract_mmdb(self, archive_path: Path) -> Path:
+        from src.config.paths import VIRTUAL_ENV_DIR
+
         suffixes = ''.join(archive_path.suffixes).lower()
-        extract_dir = Path(tempfile.mkdtemp(prefix='geoip_extract_'))
+        tmp_root = VIRTUAL_ENV_DIR / 'cache' / 'tmp'
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        extract_dir = Path(tempfile.mkdtemp(prefix='geoip_extract_', dir=str(tmp_root)))
         try:
             if suffixes.endswith('.tar.gz') or suffixes.endswith('.tgz'):
                 with tarfile.open(archive_path, 'r:*') as tar:

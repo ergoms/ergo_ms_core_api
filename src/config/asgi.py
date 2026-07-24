@@ -16,6 +16,11 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', get_settings_module())
 
 django_asgi_app = get_asgi_application()
 
+# После полной инициализации apps (не в AppConfig.ready — иначе RuntimeWarning).
+from src.core.system.runtime_warmup import warmup_runtime_connections
+
+warmup_runtime_connections()
+
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
 

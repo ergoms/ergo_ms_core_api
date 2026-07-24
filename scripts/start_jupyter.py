@@ -9,13 +9,21 @@
 
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 from _common import API_DIR, PROJECT_ROOT, format_console
+
+_DEPLOYMENT_DIR = PROJECT_ROOT / 'core' / 'deployment'
+if str(_DEPLOYMENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_DEPLOYMENT_DIR))
+
+from project_layout import (  # noqa: E402
+    ensure_dir,
+    jupyter_dir,
+    jupyter_kernels_dir,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KERNEL_NAME = 'ergo_django'
@@ -25,7 +33,7 @@ NOTEBOOKS_DIR = PROJECT_ROOT / 'notebooks'
 
 
 def _install_django_kernel():
-    """Создаёт и устанавливает Django-aware IPython kernel spec."""
+    """Создаёт Django-aware IPython kernel spec в virtual_env/jupyter/kernels."""
     python_exe = sys.executable.replace('\\', '/')
     launcher_path = str(KERNEL_LAUNCHER).replace('\\', '/')
 
@@ -38,18 +46,13 @@ def _install_django_kernel():
         },
     }
 
-    spec_dir = tempfile.mkdtemp(prefix='ergo_django_kernel_')
-    try:
-        kernel_json_path = Path(spec_dir) / 'kernel.json'
-        with open(kernel_json_path, 'w', encoding='utf-8') as f:
-            json.dump(kernel_spec, f, indent=2, ensure_ascii=False)
-
-        from jupyter_client.kernelspec import KernelSpecManager
-        ksm = KernelSpecManager()
-        dest = ksm.install_kernel_spec(spec_dir, KERNEL_NAME, user=True)
-        print(format_console('ok', f'Ядро Django установлено: {dest}'))
-    finally:
-        shutil.rmtree(spec_dir, ignore_errors=True)
+    dest = ensure_dir(jupyter_kernels_dir(PROJECT_ROOT) / KERNEL_NAME)
+    kernel_json_path = dest / 'kernel.json'
+    kernel_json_path.write_text(
+        json.dumps(kernel_spec, indent=2, ensure_ascii=False) + '\n',
+        encoding='utf-8',
+    )
+    print(format_console('ok', f'Ядро Django установлено: {dest}'))
 
 
 def _ensure_venv_commonjs():
@@ -108,6 +111,7 @@ def _start_jupyterlab():
     NOTEBOOKS_DIR.mkdir(parents=True, exist_ok=True)
     _ensure_venv_commonjs()
 
+    data_dir = ensure_dir(jupyter_dir(PROJECT_ROOT))
     cmd = [sys.executable, '-m', 'jupyterlab', *build_jupyter_server_argv(str(NOTEBOOKS_DIR))]
 
     print(format_console('info', 'Запуск JupyterLab...'))
@@ -117,6 +121,8 @@ def _start_jupyterlab():
     env = os.environ.copy()
     existing_pythonpath = env.get('PYTHONPATH', '')
     env['PYTHONPATH'] = str(PROJECT_ROOT) + (os.pathsep + existing_pythonpath if existing_pythonpath else '')
+    env['JUPYTER_DATA_DIR'] = str(data_dir)
+    env['JUPYTER_PATH'] = str(data_dir)
 
     try:
         proc = subprocess.Popen(cmd, env=env)

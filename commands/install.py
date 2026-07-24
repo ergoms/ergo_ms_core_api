@@ -151,7 +151,9 @@ class InstallCommand(PoetryCommand):
         all_sources = self._collect_all_sources(project_root, root_data)
         extra_index_urls = self._collect_extra_index_urls(module_deps, all_sources)
 
-        tmp_dir = Path(tempfile.mkdtemp(prefix="ergo_install_"))
+        cache_tmp = project_root / 'virtual_env' / 'cache' / 'tmp'
+        cache_tmp.mkdir(parents=True, exist_ok=True)
+        tmp_dir = Path(tempfile.mkdtemp(prefix='ergo_install_', dir=str(cache_tmp)))
         try:
             if regular_deps:
                 constraints_path = tmp_dir / "core_constraints.txt"
@@ -182,7 +184,14 @@ class InstallCommand(PoetryCommand):
                     "Установка модульных пакетов: pip install -r requirements-modules.txt "
                     "(constraints: poetry.lock ядра)..."
                 )
-                result = subprocess.run(cmd, cwd=str(project_root))
+                pip_env = os.environ.copy()
+                pip_cache = project_root / 'virtual_env' / 'cache' / 'pip'
+                poetry_cache = project_root / 'virtual_env' / 'cache' / 'poetry'
+                pip_cache.mkdir(parents=True, exist_ok=True)
+                poetry_cache.mkdir(parents=True, exist_ok=True)
+                pip_env['PIP_CACHE_DIR'] = str(pip_cache)
+                pip_env['POETRY_CACHE_DIR'] = str(poetry_cache)
+                result = subprocess.run(cmd, cwd=str(project_root), env=pip_env)
                 if result.returncode != 0:
                     return result.returncode
 
