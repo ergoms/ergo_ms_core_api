@@ -43,6 +43,8 @@ IS_CELERY_PROCESS = bool(_argv_lower & {"worker", "beat"})
 # ---------------------------------------------------------------------------
 
 celery_app = Celery("src")
+# Иначе @shared_task в API (daphne) цепляется к анонимному Celery("default") → amqp://localhost.
+celery_app.set_default()
 
 
 # ---------------------------------------------------------------------------
@@ -246,21 +248,19 @@ if IS_CELERY_PROCESS:
         logger.info("Beat: запуск синхронизации с БД в фоне...")
         _sync_thread = threading.Thread(target=_run_beat_sync, daemon=True)
         _sync_thread.start()
-else:
-    # В процессе Django (runserver и т.д.): broker, result_backend.
-    # Маршруты и очереди загружаются лениво при первом использовании Celery.
-    try:
-        if hasattr(settings, "CELERY_BROKER_URL"):
-            celery_app.conf.broker_url = settings.CELERY_BROKER_URL
-        if hasattr(settings, "CELERY_RESULT_BACKEND"):
-            celery_app.conf.result_backend = settings.CELERY_RESULT_BACKEND
-    except Exception:
-        pass
 
+    def ensure_django_celery_configured() -> None:
+        """Worker/beat уже сконфигурированы при импорте."""
+        return
+
+else:
+    # API (daphne/wsgi): broker после django.setup — см. asgi.py / wsgi.py.
+    # Import celery_app до get_*_application обязателен (set_default), иначе amqp.
     _django_celery_lock = threading.Lock()
     _django_celery_configured = False
 
-    def _ensure_celery_routes_configured() -> None:
+    def ensure_django_celery_configured() -> None:
+        """Broker и маршруты для .delay() из API. Вызывать один раз после Django setup."""
         global _django_celery_configured
         if _django_celery_configured:
             return
@@ -268,24 +268,32 @@ else:
             if _django_celery_configured:
                 return
             try:
+                from django.conf import settings as django_settings
+                from src.config.redis_runtime import (
+                    ensure_kombu_redis_resp2,
+                    uses_redis_celery_backend,
+                )
                 from src.core.utils.celery.manager import CeleryModuleManager
+
+                celery_app.config_from_object(django_settings, namespace='CELERY')
+                broker = celery_app.conf.broker_url
+                result = celery_app.conf.result_backend
+                if broker and uses_redis_celery_backend(str(broker), str(result or '')):
+                    ensure_kombu_redis_resp2()
+
                 manager = CeleryModuleManager()
-                celery_app.conf.task_routes = manager.get_all_task_routes()
-                celery_app.conf.task_default_queue = "default"
-                celery_app.conf.task_queues = manager.get_all_task_queues()
-                if "default" not in celery_app.conf.task_queues:
-                    celery_app.conf.task_queues["default"] = {
-                        "exchange": "default",
-                        "routing_key": "default",
+                queues = manager.get_all_task_queues()
+                if 'default' not in queues:
+                    queues['default'] = {
+                        'exchange': 'default',
+                        'routing_key': 'default',
                     }
+                celery_app.conf.update(
+                    task_routes=manager.get_all_task_routes(),
+                    task_default_queue='default',
+                    task_queues=queues,
+                )
                 _django_celery_configured = True
-            except Exception as e:
-                logger.warning("Failed to configure Celery routes: %s", e)
-
-    _original_send_task = celery_app.send_task
-
-    def _send_task_patched(name, args=None, kwargs=None, **opts):
-        _ensure_celery_routes_configured()
-        return _original_send_task(name, args=args, kwargs=kwargs, **opts)
-
-    celery_app.send_task = _send_task_patched
+                logger.info('Celery (Django): broker=%s', celery_app.conf.broker_url)
+            except Exception as exc:
+                logger.warning('Celery (Django): не удалось сконфигурировать: %s', exc)

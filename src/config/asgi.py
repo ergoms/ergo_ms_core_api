@@ -10,11 +10,15 @@ import os
 
 from django.core.asgi import get_asgi_application
 
+# celery_app: set_default() при import — до загрузки apps (@shared_task → не amqp).
+from src.config.celery import celery_app as _celery_app  # noqa: F401
+from src.config.celery import ensure_django_celery_configured
 from src.config.deploy import get_settings_module
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', get_settings_module())
 
 django_asgi_app = get_asgi_application()
+ensure_django_celery_configured()
 
 # После полной инициализации apps (не в AppConfig.ready — иначе RuntimeWarning).
 from src.core.system.runtime_warmup import warmup_runtime_connections
