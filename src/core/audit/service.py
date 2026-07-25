@@ -22,6 +22,33 @@ logger = logging.getLogger('core.audit')
 
 _UNSET = object()
 
+# Поля, допустимые в AuditEvent.objects.create (attname FK — actor_id).
+_PERSIST_FIELDS = frozenset({
+    'action',
+    'source_module',
+    'severity',
+    'actor_id',
+    'actor_label',
+    'ip_address',
+    'user_agent',
+    'request_id',
+    'scope',
+    'changes',
+    'meta',
+    'entity_type',
+    'entity_ref',
+    'entity_label',
+})
+
+
+def _normalize_persist_payload(payload: dict) -> dict:
+    """Оставить только поля модели; устаревшие ключи привести к текущей схеме."""
+    data = dict(payload or {})
+    if 'actor_id' not in data and 'actor_user_id' in data:
+        data['actor_id'] = data['actor_user_id']
+    data.pop('actor_user_id', None)
+    return {key: data[key] for key in _PERSIST_FIELDS if key in data}
+
 
 def _actor_label(actor) -> str:
     if actor is None:
@@ -67,12 +94,13 @@ def log_audit_event(payload: dict) -> None:
 
 def persist_audit_event_sync(payload: dict) -> int:
     """Сохранить запись аудита в БД и продублировать в audit.log."""
-    event = AuditEvent.objects.create(**payload)
+    clean = _normalize_persist_payload(payload)
+    event = AuditEvent.objects.create(**clean)
     upsert_audit_actor(
-        actor_id=payload.get('actor_id'),
-        actor_label=payload.get('actor_label') or '',
+        actor_id=clean.get('actor_id'),
+        actor_label=clean.get('actor_label') or '',
     )
-    log_audit_event(payload)
+    log_audit_event(clean)
     return event.pk
 
 

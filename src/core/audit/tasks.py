@@ -20,8 +20,11 @@ def persist_audit_event(self, payload: dict) -> int | None:
     except Exception as exc:
         logger.exception(
             'core.audit.persist: ошибка сохранения action=%s',
-            payload.get('action'),
+            payload.get('action') if isinstance(payload, dict) else None,
         )
+        # Битый payload (неверные ключи/типы) — повтор не поможет.
+        if isinstance(exc, (TypeError, ValueError)):
+            return None
         raise self.retry(exc=exc)
 
 
