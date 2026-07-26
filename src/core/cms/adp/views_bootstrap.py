@@ -12,8 +12,8 @@ class SessionBootstrapView(BaseAPIViewAuthMixin, BaseAPIView):
     """
     Агрегированные данные сессии для холодного старта клиента.
 
-    Заменяет цепочку: /protected/, user-menu-data, menu, profile, avatars,
-    check_access_to_admin_panel, realtime/config — одним запросом.
+    Агрегирует данные сессии (пользователь, меню, профиль, аватар,
+    realtime/config и т.п.) одним ответом, включая access_to_panel.
     """
 
     @swagger_auto_schema(

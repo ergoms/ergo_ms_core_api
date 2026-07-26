@@ -26,6 +26,10 @@ def main():
     deploy_type = get_env_deploy_type()
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', deploy_type)
 
+    from src.core.utils.django_cli import prepare_lean_schema_django
+
+    prepare_lean_schema_django()
+
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

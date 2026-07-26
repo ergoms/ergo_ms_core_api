@@ -8,4 +8,9 @@ class NotificationsConfig(AppConfig):
     verbose_name = 'Уведомления'
 
     def ready(self):
+        from src.core.utils.django_cli import is_lean_schema_cli
+
+        if is_lean_schema_cli():
+            return
+
         from . import integrations  # noqa: F401

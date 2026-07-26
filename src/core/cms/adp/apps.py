@@ -33,14 +33,20 @@ class AdpConfig(AppConfig):
     label = 'cms_adp'
 
     def ready(self):
-        from src.core.cms.adp import signals  # noqa: F401
-
-        signals.connect_user_signals()
-
         from django.db.models.signals import post_migrate
 
+        from src.core.utils.django_cli import is_lean_schema_cli
+
+        # post_migrate нужен и при lean migrate (системные роли после схемы)
         post_migrate.connect(
             create_system_roles_signal_handler,
             sender=self,
             dispatch_uid='cms_adp.create_system_roles',
         )
+
+        if is_lean_schema_cli():
+            return
+
+        from src.core.cms.adp import signals  # noqa: F401
+
+        signals.connect_user_signals()

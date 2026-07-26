@@ -12,7 +12,7 @@ _client: 'MediaClient | None' = None
 
 def _create_client() -> 'MediaClient':
     mode = getattr(settings, 'MEDIA_ACCESS_MODE', 'local').strip().lower()
-    if mode in ('remote', 'http'):
+    if mode == 'remote':
         from src.core.utils.media_client.remote import RemoteMediaClient
         return RemoteMediaClient()
     if mode == 'local':

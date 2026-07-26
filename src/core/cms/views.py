@@ -25,41 +25,6 @@ def _has_admin_panel_access(user) -> bool:
     return PermissionService.can_access_admin_panel(user)
 
 
-class CheckAccessToAdminPanel(BaseAPIViewAuthMixin):
-    @swagger_auto_schema(
-        operation_description="Получение прав доступа к панели администратора",
-        responses={
-            200: "Права доступа к панели администратора получены",
-            401: "Пользователь не авторизован",
-            403: "Нет доступа",
-        },
-    )
-    def get(self, request: Request):
-        from src.core.cms.adp.services.permissions import PermissionService
-
-        is_global_admin = PermissionService.can_manage_users_as_global_admin(request.user)
-
-        return Response(
-            {
-                'access_to_panel': PermissionService.can_access_admin_panel(request.user),
-                'access_to_category': is_global_admin,
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-class GetUserName(BaseAPIViewAuthMixin):
-    @swagger_auto_schema(
-        operation_description="Получение имени текущего пользователя",
-        responses={
-            200: "Имя пользователя получено",
-            401: "Пользователь не авторизован",
-        },
-    )
-    def get(self, request: Request):
-        return Response(request.user.username, status=status.HTTP_200_OK)
-
-
 class UserPublicInfoView(BaseAPIViewAuthMixin):
     """Публичные данные пользователя (имя, аватар).
 

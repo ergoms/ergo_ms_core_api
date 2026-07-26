@@ -130,7 +130,3 @@ class AuditEventDetailSerializer(_AuditCatalogMixin, serializers.ModelSerializer
         from src.core.utils.geoip import format_ip_location
 
         return format_ip_location(obj.ip_address)
-
-
-# Обратная совместимость импортов
-AuditEventSerializer = AuditEventDetailSerializer

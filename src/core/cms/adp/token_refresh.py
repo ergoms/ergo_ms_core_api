@@ -31,11 +31,14 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
         device_id = refresh.payload.get('device_id')
         user_id = refresh.payload.get('user_id')
 
+        if device_id is None:
+            raise ValidationError('Сессия завершена. Войдите снова.')
+
         if user_id is not None:
             user = get_user_model().objects.filter(pk=user_id).first()
             if user is None:
                 raise ValidationError('Сессия завершена. Войдите снова.')
-            if device_id is not None and not is_device_session_active(user, device_id):
+            if not is_device_session_active(user, device_id):
                 raise ValidationError('Сессия завершена. Войдите снова.')
 
         try:
@@ -43,14 +46,10 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
         except get_user_model().DoesNotExist:
             raise ValidationError('Сессия завершена. Войдите снова.') from None
 
-        if device_id is None:
-            return data
-
         access = refresh.access_token
         access['device_id'] = device_id
         data['access'] = str(access)
         return data
-
 
 class DeviceBoundTokenRefreshView(TokenRefreshView):
     serializer_class = DeviceBoundTokenRefreshSerializer

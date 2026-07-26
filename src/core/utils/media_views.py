@@ -12,6 +12,8 @@ class MediaUploadTokenView(APIView):
     POST /api/utils/media/upload-token/
     Body: {target_dir, max_size?, allowed_types?}
     Response: {upload_url, token}
+
+    Параметры проверяются на сервере (см. media_upload_validation).
     """
     permission_classes = [IsAuthenticated]
 
@@ -19,9 +21,6 @@ class MediaUploadTokenView(APIView):
         target_dir = request.data.get('target_dir', '')
         max_size = request.data.get('max_size')
         allowed_types = request.data.get('allowed_types')
-
-        if max_size is not None:
-            max_size = int(max_size)
 
         upload_info = get_upload_info(
             user_id=request.user.id,

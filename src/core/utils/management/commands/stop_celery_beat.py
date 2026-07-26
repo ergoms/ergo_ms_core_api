@@ -5,7 +5,7 @@
 функциональность для поиска и остановки запущенного процесса Celery beat.
 
 Пример использования:
->>> python src/manage.py celery_beat_stop
+>>> ergoms api stop_celery_beat
 """
 
 import logging

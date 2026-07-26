@@ -276,16 +276,6 @@ def _find_env_files_in_directory(directory: str, source_name: str) -> List[Tuple
     return env_files
 
 
-def collect_env_files_from_configs() -> Dict[str, str]:
-    """
-    Собирает все .env файлы из всех источников (обратная совместимость).
-    
-    Возвращает:
-        Dict[str, str]: Словарь переменных окружения {ключ: значение}
-    """
-    return collect_env_files_from_all_sources()
-
-
 def get_env_sources() -> Dict[str, List[str]]:
     """
     Возвращает информацию о том, из каких файлов взяты переменные окружения.

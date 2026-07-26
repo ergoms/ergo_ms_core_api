@@ -3,17 +3,15 @@ AppConfig для ``src.core.integrations``.
 
 На этапе ``ready()``:
 
-1. Подменяет in-process реализации ``ModuleBridge`` на удалённые
-   (HTTP / Celery), если это указано в Django settings
-   (``BRIDGE_TRANSPORT`` / ``BRIDGE_EVENT_BUS``).
+1. Проверяет, что ``BRIDGE_TRANSPORT`` / ``BRIDGE_EVENT_BUS`` остаются
+   ``local`` (удалённые транспорты не поддерживаются).
 2. Устанавливает runtime-страж изоляции модулей
    (см. :mod:`src.core.integrations.isolation`) согласно настройке
    ``BRIDGE_ISOLATION`` (``'off' | 'warn' | 'raise'``).
 
-Если транспорт и шина остаются ``'local'`` (по умолчанию),
-``ModuleBridge.configure`` не вызывается — это важно, чтобы не сбросить
-уже зарегистрированные провайдеры (порядок ``ready()`` Django-приложений
-строго не гарантируется).
+При ``local`` ``ModuleBridge.configure`` не вызывается — это важно, чтобы
+не сбросить уже зарегистрированные провайдеры (порядок ``ready()``
+Django-приложений строго не гарантируется).
 """
 
 from __future__ import annotations
@@ -37,25 +35,34 @@ class IntegrationsConfig(AppConfig):
     verbose_name = 'Module Bridge'
 
     def ready(self) -> None:
-        from .bridge import ModuleBridge
+        from src.core.utils.django_cli import is_lean_schema_cli
 
-        transport_name = getattr(settings, 'BRIDGE_TRANSPORT', 'local')
-        event_bus_name = getattr(settings, 'BRIDGE_EVENT_BUS', 'local')
+        # migrate/makemigrations: Local* bridge по умолчанию достаточен, audit hook не нужен
+        if is_lean_schema_cli():
+            return
 
-        new_transport = self._build_transport(transport_name)
-        new_event_bus = self._build_event_bus(event_bus_name)
-
-        if new_transport is None and new_event_bus is None:
-            logger.debug(
-                "ModuleBridge stays on default Local* implementations"
-            )
-        else:
-            ModuleBridge.configure(
-                transport=new_transport,
-                event_bus=new_event_bus,
-            )
-
+        self._ensure_local_bridge()
         self._install_isolation_guard()
+
+    @staticmethod
+    def _ensure_local_bridge() -> None:
+        transport_name = (getattr(settings, 'BRIDGE_TRANSPORT', 'local') or 'local').strip().lower()
+        event_bus_name = (getattr(settings, 'BRIDGE_EVENT_BUS', 'local') or 'local').strip().lower()
+
+        if transport_name != 'local':
+            raise ImproperlyConfigured(
+                f"BRIDGE_TRANSPORT={transport_name!r} не поддерживается. "
+                f"Допустимо только 'local'."
+            )
+        if event_bus_name != 'local':
+            raise ImproperlyConfigured(
+                f"BRIDGE_EVENT_BUS={event_bus_name!r} не поддерживается. "
+                f"Допустимо только 'local'."
+            )
+
+        logger.debug(
+            "ModuleBridge stays on default Local* implementations"
+        )
 
     @staticmethod
     def _install_isolation_guard() -> None:
@@ -73,31 +80,3 @@ class IntegrationsConfig(AppConfig):
                 modules_dir = find_modules_dir(Path(base_dir))
 
         install_isolation_audit_hook(mode=mode, modules_dir=modules_dir)
-
-    @staticmethod
-    def _build_transport(name: str):
-        normalized = (name or 'local').strip().lower()
-        if normalized == 'local':
-            return None
-        if normalized == 'http':
-            from .transports.http import HttpTransport
-
-            return HttpTransport()
-        raise ImproperlyConfigured(
-            f"Unknown BRIDGE_TRANSPORT value: {name!r}. "
-            f"Expected 'local' or 'http'."
-        )
-
-    @staticmethod
-    def _build_event_bus(name: str):
-        normalized = (name or 'local').strip().lower()
-        if normalized == 'local':
-            return None
-        if normalized == 'celery':
-            from .transports.celery_bus import CeleryEventBus
-
-            return CeleryEventBus()
-        raise ImproperlyConfigured(
-            f"Unknown BRIDGE_EVENT_BUS value: {name!r}. "
-            f"Expected 'local' or 'celery'."
-        )

@@ -28,12 +28,12 @@ import os
 import logging
 
 from src.config.paths import ENV_FILE_PATH
-from src.core.utils.environment.methods import collect_env_files_from_configs
+from src.core.utils.environment.methods import collect_env_files_from_all_sources
 
 logger = logging.getLogger(__name__)
 
 # Собираем переменные из всех .env файлов в папке modules
-modules_env_vars = collect_env_files_from_configs()
+modules_env_vars = collect_env_files_from_all_sources()
 
 # Инициализация объекта для работы с переменными окружения
 env = environ.Env()

@@ -43,7 +43,6 @@ from src.core.cms.adp.user_agent_utils import (
     get_client_ip,
 )
 from src.core.utils.base.base_views import BaseAPIView
-from src.core.utils.database.main import OrderedDictQueryExecutor
 from src.core.utils.methods import parse_errors_to_dict, send_confirmation_email
 from src.config.settings.auth import get_token_lifetime
 from src.core.audit.shortcuts import audit_log

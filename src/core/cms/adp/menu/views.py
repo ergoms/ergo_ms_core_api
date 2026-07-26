@@ -109,7 +109,7 @@ class MenuItemListView(BaseMenuAPIView):
             if parent_id == 'null':
                 queryset = queryset.filter(parent__isnull=True)
             else:
-                queryset = queryset.filter(parent_id=parent_id)
+                queryset = queryset.filter(parent__public_id=parent_id)
         
         if not include_inactive:
             queryset = queryset.filter(is_active=True)
@@ -168,7 +168,7 @@ class MenuItemDetailView(BaseMenuAPIView):
         },
         tags=['Menu Admin']
     )
-    def get(self, request, item_id):
+    def get(self, request, item_ref):
         if not self.is_admin(request.user):
             return Response(
                 {'error': 'Доступ запрещён'},
@@ -176,7 +176,7 @@ class MenuItemDetailView(BaseMenuAPIView):
             )
         
         try:
-            item = MenuItem.objects.get(id=item_id)
+            item = MenuItem.objects.get(public_id=item_ref)
         except MenuItem.DoesNotExist:
             return Response(
                 {'error': 'Элемент меню не найден'},
@@ -198,7 +198,7 @@ class MenuItemDetailView(BaseMenuAPIView):
         },
         tags=['Menu Admin']
     )
-    def put(self, request, item_id):
+    def put(self, request, item_ref):
         if not self.is_admin(request.user):
             return Response(
                 {'error': 'Доступ запрещён'},
@@ -206,7 +206,7 @@ class MenuItemDetailView(BaseMenuAPIView):
             )
         
         try:
-            item = MenuItem.objects.get(id=item_id)
+            item = MenuItem.objects.get(public_id=item_ref)
         except MenuItem.DoesNotExist:
             return Response(
                 {'error': 'Элемент меню не найден'},
@@ -233,7 +233,7 @@ class MenuItemDetailView(BaseMenuAPIView):
         },
         tags=['Menu Admin']
     )
-    def delete(self, request, item_id):
+    def delete(self, request, item_ref):
         if not self.is_admin(request.user):
             return Response(
                 {'error': 'Доступ запрещён'},
@@ -241,7 +241,7 @@ class MenuItemDetailView(BaseMenuAPIView):
             )
         
         try:
-            item = MenuItem.objects.get(id=item_id)
+            item = MenuItem.objects.get(public_id=item_ref)
         except MenuItem.DoesNotExist:
             return Response(
                 {'error': 'Элемент меню не найден'},
@@ -285,26 +285,24 @@ class MenuItemReorderView(BaseMenuAPIView):
             
             for item_data in items_data:
                 try:
-                    item = MenuItem.objects.get(id=item_data['id'])
+                    item = MenuItem.objects.get(public_id=item_data['id'])
                     item.order = item_data['order']
-                    
-                    # Обновляем parent_id если он передан
+
                     if 'parent_id' in item_data:
-                        parent_id = item_data['parent_id']
-                        if parent_id is None:
+                        parent_ref = item_data['parent_id']
+                        if parent_ref is None:
                             item.parent = None
                         else:
                             try:
-                                parent = MenuItem.objects.get(id=parent_id)
+                                parent = MenuItem.objects.get(public_id=parent_ref)
                                 item.parent = parent
                             except MenuItem.DoesNotExist:
                                 pass
-                    
-                    # Определяем какие поля обновлять
+
                     update_fields = ['order']
                     if 'parent_id' in item_data:
                         update_fields.append('parent')
-                    
+
                     item.save(update_fields=update_fields)
                 except MenuItem.DoesNotExist:
                     continue
@@ -387,7 +385,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
         },
         tags=['Menu Admin']
     )
-    def get(self, request, separator_id):
+    def get(self, request, separator_ref):
         if not self.is_admin(request.user):
             return Response(
                 {'error': 'Доступ запрещён'},
@@ -395,7 +393,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
             )
         
         try:
-            separator = MenuSeparator.objects.get(id=separator_id)
+            separator = MenuSeparator.objects.get(public_id=separator_ref)
         except MenuSeparator.DoesNotExist:
             return Response(
                 {'error': 'Разделитель не найден'},
@@ -417,7 +415,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
         },
         tags=['Menu Admin']
     )
-    def put(self, request, separator_id):
+    def put(self, request, separator_ref):
         if not self.is_admin(request.user):
             return Response(
                 {'error': 'Доступ запрещён'},
@@ -425,7 +423,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
             )
         
         try:
-            separator = MenuSeparator.objects.get(id=separator_id)
+            separator = MenuSeparator.objects.get(public_id=separator_ref)
         except MenuSeparator.DoesNotExist:
             return Response(
                 {'error': 'Разделитель не найден'},
@@ -450,7 +448,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
         },
         tags=['Menu Admin']
     )
-    def delete(self, request, separator_id):
+    def delete(self, request, separator_ref):
         if not self.is_admin(request.user):
             return Response(
                 {'error': 'Доступ запрещён'},
@@ -458,7 +456,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
             )
         
         try:
-            separator = MenuSeparator.objects.get(id=separator_id)
+            separator = MenuSeparator.objects.get(public_id=separator_ref)
         except MenuSeparator.DoesNotExist:
             return Response(
                 {'error': 'Разделитель не найден'},
@@ -483,7 +481,11 @@ class MenuAccessLogView(BaseMenuAPIView):
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
-                'menu_item_id': openapi.Schema(type=openapi.TYPE_INTEGER)
+                'menu_item_id': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format=openapi.FORMAT_UUID,
+                    description='public_id элемента меню',
+                )
             },
             required=['menu_item_id']
         ),
@@ -505,8 +507,8 @@ class MenuAccessLogView(BaseMenuAPIView):
             )
         
         try:
-            menu_item = MenuItem.objects.get(id=menu_item_id)
-        except MenuItem.DoesNotExist:
+            menu_item = MenuItem.objects.get(public_id=menu_item_id)
+        except (MenuItem.DoesNotExist, ValueError, TypeError):
             return Response(
                 {'error': 'Элемент меню не найден'},
                 status=status.HTTP_404_NOT_FOUND

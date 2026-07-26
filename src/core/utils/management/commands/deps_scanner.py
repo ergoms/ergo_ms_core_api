@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import ast
-import json
 import re
-import sys
-import tokenize
 import tomllib
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from django.conf import settings
-from django.core.management.base import BaseCommand, CommandError, CommandParser
+from django.core.management.base import CommandError
 
 
 SKIP_DIR_NAMES = {
@@ -201,6 +196,7 @@ def extract_declared_dependencies(pyproject_data: dict) -> set[str]:
                         dependencies.add(normalized)
 
     return dependencies
+
 
 def extract_deps_overrides(pyproject_data: dict) -> DepsOverrides:
     tool_data = pyproject_data.get("tool", {})
@@ -398,3 +394,25 @@ def detect_project_root(provided_root: str | None) -> Path:
 
     current = Path(__file__).resolve()
     for parent in current.parents:
+        if (parent / "core" / "api" / "src").is_dir() and (parent / "modules").is_dir():
+            return parent
+
+    raise CommandError("Failed to detect project root")
+
+
+def detect_core_path(project_root: Path) -> Path:
+    candidates = (
+        project_root / "core" / "api" / "src",
+        project_root / "core" / "api",
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise CommandError("Failed to detect core path")
+
+
+def find_shared_pyproject(project_root: Path) -> Path | None:
+    pyproject_path = project_root / "pyproject.toml"
+    if pyproject_path.is_file():
+        return pyproject_path
+    return None

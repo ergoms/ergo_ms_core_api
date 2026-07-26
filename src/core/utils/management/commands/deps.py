@@ -1,9 +1,40 @@
 """Management command: scan Python dependencies."""
 
-from django.core.management.base import BaseCommand
+from __future__ import annotations
 
-from .deps_scanner import *  # noqa: F403
-from .deps_scanner_workspace import *  # noqa: F403
+import json
+import sys
+from pathlib import Path
+
+from django.core.management.base import BaseCommand, CommandError, CommandParser
+
+from .deps_scanner import (
+    DepsOverrides,
+    ScanSummary,
+    ScopeReport,
+    WorkspaceAmbiguousImport,
+    WorkspaceReport,
+    build_resolver_maps,
+    compute_transitive_from_declared,
+    detect_core_path,
+    detect_project_root,
+    extract_declared_dependencies,
+    extract_deps_overrides,
+    find_shared_pyproject,
+    load_poetry_dependency_graph,
+    load_toml,
+)
+from .deps_workspace import (
+    build_common_local_import_names,
+    build_json_payload,
+    build_summary,
+    build_workspace_report,
+    collect_scope_local_import_names,
+    evaluate_strict_exit_code,
+    iter_module_dirs,
+    scan_scope,
+)
+
 
 class Command(BaseCommand):
     help = (

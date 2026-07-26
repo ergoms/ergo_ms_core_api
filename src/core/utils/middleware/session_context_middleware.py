@@ -15,7 +15,6 @@ from typing import Any
 
 from src.core.integrations.session_context import (
     collect_session_jwt_claims,
-    get_required_guard_claims,
     get_session_claim_descriptors,
     get_session_entity_resolvers,
 )
@@ -128,27 +127,20 @@ class SessionScopeRequiredMiddleware:
 
     Обязательные claim декларируют модули через дескриптор session-claim
     (``required_guard: True``). Не добавляется глобально — только на конкретные
-    views через декоратор.
+    views через декоратор ``session_scope_required`` или permission
+    ``RequiresSessionScope``.
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        required = get_required_guard_claims()
-        missing = [claim for claim in required if not getattr(request, claim, None)]
-        if missing:
-            from rest_framework import status
-            from rest_framework.response import Response
+        from .session_scope import (
+            missing_required_session_claims,
+            session_scope_forbidden_response,
+        )
 
-            return Response(
-                {
-                    'error': (
-                        'Требуется активный контекст сессии. '
-                        'Выполните вход в нужный контекст.'
-                    ),
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        if missing_required_session_claims(request):
+            return session_scope_forbidden_response(drf=False)
 
         return self.get_response(request)

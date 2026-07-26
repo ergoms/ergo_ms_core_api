@@ -1,8 +1,8 @@
 """
 In-process реализации Transport и EventBus.
 
-Используется в монолитном режиме (BRIDGE_TRANSPORT='local',
-BRIDGE_EVENT_BUS='local'). Хранит операции и подписчиков
+Используется при BRIDGE_TRANSPORT='local' / BRIDGE_EVENT_BUS='local'.
+Хранит операции и подписчиков
 в потокобезопасных словарях, вызывает их напрямую в текущем процессе.
 """
 

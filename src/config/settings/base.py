@@ -42,7 +42,7 @@ VIRTUAL_ENV_DIR = SYSTEM_DIR / 'virtual_env'
 # Корневая директория для ресурсов.
 RESOURCES_DIR = VIRTUAL_ENV_DIR / 'resources'
 
-# Корневая директория для обученных моделей.
+# Корневая директория для обученных моделей (модули: video_analysis, porosity_analysis, …).
 TRAINED_MODELS_PATH = VIRTUAL_ENV_DIR / 'trained_models'
 
 # Корневая директория для сторонних программ.
@@ -64,17 +64,12 @@ MEDIA_ROOT = os.path.join(SYSTEM_DIR, 'media')
 # Корневая директория для сгенерированных документов.
 GENERATED_DOCUMENTS_DIR = Path(MEDIA_ROOT) / 'generated_docs'
 
-# URL для доступа к логам.
-LOGS_URL = '/logs/'
-
 # Корневая директория для логов (ERGO_LOGS_DIR в .env или <корень>/logs).
 from src.config.log_paths import resolve_logs_root
 
 LOGS_ROOT = str(resolve_logs_root(SYSTEM_DIR))
 
 # Хранилище для статических файлов, использующее Whitenoise для сжатия и кэширования.
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-
 STORAGES = {
     'default': {
         'BACKEND': 'src.core.utils.media_storage.MediaApiStorage',
@@ -86,8 +81,8 @@ STORAGES = {
 
 # Media API (CDN / file server)
 MEDIA_API_PUBLIC_BASE_URL = media_api_public_base_url()
-MEDIA_API_INTERNAL_BASE_URL = media_api_internal_base_url()
-# Legacy-поля (деплой-скрипты, обратная совместимость; в .env можно не задавать)
+MEDIA_API_INTERNAL_URL = media_api_internal_base_url()
+# Компоненты публичного URL (override; в .env можно не задавать при MEDIA_API_URL)
 MEDIA_API_HOST = effective_media_public_host('localhost')
 MEDIA_API_PORT = int(effective_media_public_port('8003'))
 MEDIA_API_PROTOCOL = 'https' if nginx_use_https() else os.getenv('MEDIA_API_PROTOCOL', 'http')

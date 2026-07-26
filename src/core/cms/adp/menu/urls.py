@@ -19,10 +19,10 @@ from .views import (
 urlpatterns = [
     path('', UserMenuView.as_view(), name='user_menu'),
     path('items/', MenuItemListView.as_view(), name='menu_items'),
-    path('items/<int:item_id>/', MenuItemDetailView.as_view(), name='menu_item_detail'),
+    path('items/<uuid:item_ref>/', MenuItemDetailView.as_view(), name='menu_item_detail'),
     path('items/reorder/', MenuItemReorderView.as_view(), name='menu_items_reorder'),
     path('separators/', MenuSeparatorListView.as_view(), name='menu_separators'),
-    path('separators/<int:separator_id>/', MenuSeparatorDetailView.as_view(), name='menu_separator_detail'),
+    path('separators/<uuid:separator_ref>/', MenuSeparatorDetailView.as_view(), name='menu_separator_detail'),
     path('access-log/', MenuAccessLogView.as_view(), name='menu_access_log'),
     path('available-icons/', AvailableIconsView.as_view(), name='available_icons'),
     path('restore/', MenuRestoreView.as_view(), name='menu_restore'),

@@ -164,4 +164,4 @@ def _resolve_internal_key() -> str:
 
 
 def _resolve_internal_base_url() -> str:
-    return (getattr(settings, 'MEDIA_API_INTERNAL_BASE_URL', '') or '').rstrip('/')
+    return (getattr(settings, 'MEDIA_API_INTERNAL_URL', '') or '').rstrip('/')

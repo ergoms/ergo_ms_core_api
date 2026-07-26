@@ -5,7 +5,7 @@
 функциональность для запуска сервера разработки с настройками хоста и порта из конфигурации.
 
 Пример использования:
->>> python src/manage.py runserver [host:port]
+>>> ergoms api runserver [host:port]
 """
 
 import logging

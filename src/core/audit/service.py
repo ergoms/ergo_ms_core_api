@@ -42,11 +42,8 @@ _PERSIST_FIELDS = frozenset({
 
 
 def _normalize_persist_payload(payload: dict) -> dict:
-    """Оставить только поля модели; устаревшие ключи привести к текущей схеме."""
+    """Оставить только поля модели."""
     data = dict(payload or {})
-    if 'actor_id' not in data and 'actor_user_id' in data:
-        data['actor_id'] = data['actor_user_id']
-    data.pop('actor_user_id', None)
     return {key: data[key] for key in _PERSIST_FIELDS if key in data}
 
 

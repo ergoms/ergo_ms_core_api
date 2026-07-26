@@ -2,7 +2,7 @@
 Команда установки всех зависимостей: ядра и всех модулей.
 
 Использование:
-    api install            — установить ядро + все модули
+    api install            — установить ядро + модули, удалить лишние пакеты
     api install --force    — принудительно переустановить зависимости модулей
 """
 
@@ -26,6 +26,8 @@ from commands.base import PoetryCommand
 
 _CORE_LOCK_GROUPS = frozenset({"main"})
 _PIP_BATCH_SIZE = 40
+# Инструменты окружения: не в poetry.lock ядра, но нужны для ergoms/poetry/pip.
+_ENV_TOOL_PACKAGES = frozenset({"pip", "setuptools", "wheel", "poetry"})
 # moviepy 2.2.1 объявляет pillow<12.0, хотя с Pillow 12.x обычно работает (см. Zulko/moviepy#2553).
 _NO_DEPS_PACKAGES = frozenset({"moviepy"})
 _NO_DEPS_RUNTIME_DEPS: Dict[str, List[str]] = {
@@ -42,6 +44,7 @@ class InstallCommand(PoetryCommand):
     Устанавливает зависимости ядра через poetry install, затем сканирует
     pyproject.toml всех модулей и доустанавливает недостающие пакеты через pip
     (requirements-modules.txt + constraints из poetry.lock ядра).
+    В конце удаляет пакеты, которых нет в poetry.lock ядра и в зависимостях модулей.
     Корневой pyproject.toml при этом не изменяется.
     """
 
@@ -66,50 +69,61 @@ class InstallCommand(PoetryCommand):
             return 1
 
         module_configs = self._scan_module_configs(project_root)
+        module_only: Dict[str, Any] = {}
+
         if not module_configs:
-            print("Модульных pyproject.toml не найдено — установка завершена.")
-            return 0
+            print("Модульных pyproject.toml не найдено.")
+        else:
+            merged_deps, conflicts = self._merge_dependencies(root_data, module_configs)
 
-        merged_deps, conflicts = self._merge_dependencies(root_data, module_configs)
+            if conflicts:
+                print("\nКонфликты версий (применена более строгая):")
+                for pkg, sources in conflicts.items():
+                    for src, ver in sources.items():
+                        print(f"  {pkg} [{src}]: {ver}")
 
-        if conflicts:
-            print("\nКонфликты версий (применена более строгая):")
-            for pkg, sources in conflicts.items():
-                for src, ver in sources.items():
-                    print(f"  {pkg} [{src}]: {ver}")
+            root_deps = self._get_poetry_deps(root_data)
+            module_only = {
+                pkg: constraint
+                for pkg, constraint in merged_deps.items()
+                if pkg != "python" and pkg not in root_deps
+            }
 
-        root_deps = self._get_poetry_deps(root_data)
-        module_only = {
-            pkg: constraint
-            for pkg, constraint in merged_deps.items()
-            if pkg != "python" and pkg not in root_deps
-        }
+            if not module_only:
+                print("─── Дополнительных зависимостей модулей (вне ядра) нет.")
+            else:
+                to_install = module_only
+                if not force:
+                    to_install = self._filter_unsatisfied_module_deps(
+                        module_only, project_root
+                    )
 
-        if not module_only:
-            print("─── Дополнительных зависимостей модулей (вне ядра) нет.")
-            return 0
+                if not to_install:
+                    print("─── Все модульные пакеты уже установлены.")
+                else:
+                    print(
+                        f"\n─── Установка {len(to_install)} пакетов из модулей: "
+                        f"{', '.join(sorted(to_install))}"
+                    )
 
-        to_install = module_only
-        if not force:
-            to_install = self._filter_unsatisfied_module_deps(module_only, project_root)
+                    if force:
+                        self._uninstall_packages(list(to_install.keys()))
 
-        if not to_install:
-            print("─── Все модульные пакеты уже установлены.")
-            return self._sync_main_lock_versions(project_root)
+                    rc = self._install_module_packages(
+                        project_root, root_data, to_install
+                    )
+                    if rc != 0:
+                        return rc
 
-        print(
-            f"\n─── Установка {len(to_install)} пакетов из модулей: "
-            f"{', '.join(sorted(to_install))}"
-        )
-
-        if force:
-            self._uninstall_packages(list(to_install.keys()))
-
-        rc = self._install_module_packages(project_root, root_data, to_install)
+        rc = self._sync_main_lock_versions(project_root)
         if rc != 0:
             return rc
 
-        return self._sync_main_lock_versions(project_root)
+        rc = self._remove_orphaned_packages(project_root, module_only)
+        if rc != 0:
+            return rc
+
+        return self._prune_unused_dep_caches(project_root, module_only)
 
     def _install_core(self, project_root: Path) -> int:
         env = os.environ.copy()
@@ -468,6 +482,110 @@ class InstallCommand(PoetryCommand):
         subprocess.run(
             [sys.executable, "-m", "pip", "uninstall", "-y", *packages],
         )
+
+    def _desired_installed_packages(
+        self, project_root: Path, module_only: Dict[str, Any]
+    ) -> Set[str]:
+        """Имена пакетов, которые должны остаться в venv (lock + модули + инструменты)."""
+        lock_packages = {
+            canonicalize_name(name)
+            for name in self._parse_poetry_lock(
+                project_root / "poetry.lock",
+                groups=_CORE_LOCK_GROUPS,
+            )
+        }
+        if not lock_packages:
+            return set()
+
+        roots: Set[str] = set(lock_packages)
+        roots.update(_ENV_TOOL_PACKAGES)
+        for pkg in module_only:
+            roots.add(canonicalize_name(pkg))
+            for dep_line in _NO_DEPS_RUNTIME_DEPS.get(pkg, []):
+                try:
+                    roots.add(canonicalize_name(Requirement(dep_line).name))
+                except Exception:
+                    continue
+
+        return self._dependency_closure(roots)
+
+    def _remove_orphaned_packages(
+        self, project_root: Path, module_only: Dict[str, Any]
+    ) -> int:
+        """Удаляет пакеты, которых нет в poetry.lock ядра и зависимостях модулей."""
+        desired = self._desired_installed_packages(project_root, module_only)
+        if not desired:
+            print(
+                "─── poetry.lock ядра пуст или не найден — "
+                "удаление лишних пакетов пропущено."
+            )
+            return 0
+
+        installed = set(self._get_installed_versions())
+        orphans = sorted(installed - desired)
+
+        if not orphans:
+            print("─── Лишних пакетов в окружении нет.")
+            return 0
+
+        print(
+            f"─── Удаление {len(orphans)} пакетов, которых нет в файлах зависимостей: "
+            f"{', '.join(orphans)}"
+        )
+        for i in range(0, len(orphans), _PIP_BATCH_SIZE):
+            batch = orphans[i : i + _PIP_BATCH_SIZE]
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "uninstall", "-y", *batch],
+                cwd=str(project_root),
+            )
+            if result.returncode != 0:
+                return result.returncode
+        return 0
+
+    def _prune_unused_dep_caches(
+        self, project_root: Path, module_only: Dict[str, Any]
+    ) -> int:
+        """Чистит virtual_env/cache от артефактов пакетов вне текущих зависимостей."""
+        from commands.dep_caches import prune_python_dep_caches
+
+        desired = self._desired_installed_packages(project_root, module_only)
+        if not desired:
+            desired = set(self._get_installed_versions())
+            desired.update(_ENV_TOOL_PACKAGES)
+        try:
+            prune_python_dep_caches(project_root, desired)
+        except Exception as exc:
+            print(f"─── Предупреждение: не удалось очистить кэш зависимостей: {exc}")
+        return 0
+
+    def _dependency_closure(self, root_names: Set[str]) -> Set[str]:
+        """Имена установленных пакетов, достижимых из root_names по Requires-Dist."""
+        from importlib.metadata import PackageNotFoundError, distribution
+
+        result: Set[str] = set()
+        stack = [canonicalize_name(name) for name in root_names]
+        while stack:
+            name = stack.pop()
+            if name in result:
+                continue
+            result.add(name)
+            try:
+                dist = distribution(name)
+            except PackageNotFoundError:
+                continue
+            for req_str in dist.requires or []:
+                try:
+                    req = Requirement(req_str)
+                except Exception:
+                    continue
+                if req.marker is not None:
+                    try:
+                        if not req.marker.evaluate():
+                            continue
+                    except InvalidMarker:
+                        continue
+                stack.append(canonicalize_name(req.name))
+        return result
 
     def _find_project_root(self) -> Optional[Path]:
         candidates = [

@@ -82,7 +82,7 @@ class CMSUserMenuSerializer(ModelSerializer):
     Минимальный сериализатор пользователя для меню и session-bootstrap.
     Возвращает данные для бокового меню и карточки профиля:
     username, email, first_name, middle_name, full_name, initials_name, date_joined.
-    Используется в эндпоинте /api/cms/adp/user-menu-data/ и session-bootstrap.
+    Используется в session-bootstrap и данных пользователя для меню.
     """
     full_name = SerializerMethodField(read_only=True)
     initials_name = SerializerMethodField(read_only=True)

@@ -1,25 +1,20 @@
-        if (parent / "core" / "api" / "src").is_dir() and (parent / "modules").is_dir():
-            return parent
+from __future__ import annotations
 
-    raise CommandError("Failed to detect project root")
+import ast
+import tokenize
 
+from pathlib import Path
+from typing import Iterable
 
-def detect_core_path(project_root: Path) -> Path:
-    candidates = (
-        project_root / "core" / "api" / "src",
-        project_root / "core" / "api",
-    )
-    for candidate in candidates:
-        if candidate.is_dir():
-            return candidate
-    raise CommandError("Failed to detect core path")
-
-
-def find_shared_pyproject(project_root: Path) -> Path | None:
-    pyproject_path = project_root / "pyproject.toml"
-    if pyproject_path.is_file():
-        return pyproject_path
-    return None
+from .deps_scanner import (
+    SKIP_DIR_NAMES,
+    ParseErrorItem,
+    ScanSummary,
+    ScopeReport,
+    WorkspaceAmbiguousImport,
+    WorkspaceReport,
+    resolve_import_dependency,
+)
 
 
 def iter_module_dirs(modules_path: Path) -> Iterable[Path]:
@@ -392,5 +387,3 @@ def build_json_payload(
             "dependency_compare_error": workspace.dependency_compare_error,
         },
     }
-
-

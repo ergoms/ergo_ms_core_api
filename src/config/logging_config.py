@@ -176,11 +176,6 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
             'level': 'INFO',
             'propagate': False,
         },
-        'core.utils.server': {
-            'handlers': api_loggers_common,
-            'level': 'INFO',
-            'propagate': False,
-        },
         'client.browser': {
             'handlers': ['client_browser_file'],
             'level': read_log_level_env(

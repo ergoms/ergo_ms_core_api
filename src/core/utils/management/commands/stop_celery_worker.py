@@ -5,9 +5,9 @@
 функциональность для поиска и остановки запущенного процесса Celery worker.
 
 Пример использования:
->>> python src/manage.py stop_celery_worker --all
->>> python src/manage.py stop_celery_worker --worker=gpu
->>> python src/manage.py stop_celery_worker --hostname=gpu_worker
+>>> ergoms api stop_celery_worker --all
+>>> ergoms api stop_celery_worker --worker=gpu
+>>> ergoms api stop_celery_worker --hostname=gpu_worker
 """
 
 import psutil

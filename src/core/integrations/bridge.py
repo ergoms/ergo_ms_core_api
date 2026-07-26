@@ -25,12 +25,8 @@ ModuleBridge — фасад единого механизма межмодуль
     def handler(**payload): ...
 
 Все методы делегируются Transport (для операций) и EventBus (для событий).
-В монолитном режиме используются LocalTransport / LocalEventBus.
-В микросервисном режиме — HttpTransport / CeleryEventBus (см. transports/).
-
-Выбор реализации управляется Django settings:
-    BRIDGE_TRANSPORT  ('local' | 'http')
-    BRIDGE_EVENT_BUS  ('local' | 'celery')
+Используются LocalTransport / LocalEventBus (монолитный режим).
+``BRIDGE_TRANSPORT`` / ``BRIDGE_EVENT_BUS`` допускают только ``local``.
 """
 
 from __future__ import annotations

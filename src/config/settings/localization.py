@@ -14,7 +14,6 @@ TIME_ZONE = 'UTC'
 Если True, Django будет использовать переводы для строк.
 """
 USE_I18N = True
-USE_L10N = True
 
 # Флаг, указывающий, используются ли временные зоны (time zones) в приложении.
 USE_TZ = True

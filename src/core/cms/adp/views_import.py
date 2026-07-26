@@ -53,10 +53,6 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
                     format=openapi.FORMAT_BINARY,
                     description='Файл Excel или CSV (multipart, альтернатива file_path)',
                 ),
-                'skip_welcome_emails': openapi.Schema(
-                    type=openapi.TYPE_BOOLEAN,
-                    description='Устарело: используйте send_welcome_emails (инверсия)',
-                ),
                 'send_welcome_emails': openapi.Schema(
                     type=openapi.TYPE_BOOLEAN,
                     description='Отправлять приветственные письма (по умолчанию: false)',
@@ -93,11 +89,6 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
             send_welcome_emails = parse_send_welcome_emails_flag(
                 request.data.get('send_welcome_emails', request.POST.get('send_welcome_emails')),
             )
-        elif 'skip_welcome_emails' in request.data or 'skip_welcome_emails' in request.POST:
-            skip_welcome_emails = parse_send_welcome_emails_flag(
-                request.data.get('skip_welcome_emails', request.POST.get('skip_welcome_emails')),
-            )
-            send_welcome_emails = not skip_welcome_emails
         else:
             send_welcome_emails = False
 

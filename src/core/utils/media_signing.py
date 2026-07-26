@@ -7,6 +7,13 @@ from django.conf import settings
 
 from core.shared.media_hmac import create_upload_token, sign_url
 
+from src.core.utils.media_upload_validation import (
+    cap_max_size,
+    filter_allowed_types,
+    normalize_target_dir,
+)
+
+
 def _get_secret_key() -> str:
     return settings.SECRET_KEY
 
@@ -71,18 +78,11 @@ def generate_upload_token(
     """
     Сгенерировать upload-токен для загрузки файла в media_api.
 
-    Args:
-        user_id: ID пользователя
-        target_dir: целевая директория (например, 'reports/attachments')
-        max_size: максимальный размер файла в байтах
-        allowed_types: список разрешённых расширений (например, ['pdf', 'docx'])
-        expires_in: время жизни токена в секундах
-
-    Returns:
-        Подписанный base64-токен.
+    Параметры валидируются на сервере (нормализация пути, cap размера, whitelist типов).
     """
-    if max_size is None:
-        max_size = getattr(settings, 'MEDIA_UPLOAD_MAX_SIZE', 524288000)
+    target_dir = normalize_target_dir(target_dir)
+    max_size = cap_max_size(max_size)
+    allowed_types = filter_allowed_types(allowed_types)
 
     if expires_in is None:
         expires_in = getattr(settings, 'MEDIA_UPLOAD_TOKEN_EXPIRATION', 300)
@@ -90,9 +90,8 @@ def generate_upload_token(
     payload = {
         'user_id': user_id,
         'target_dir': target_dir,
+        'max_size': max_size,
     }
-    if max_size:
-        payload['max_size'] = max_size
     if allowed_types:
         payload['allowed_types'] = allowed_types
 

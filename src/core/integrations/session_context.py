@@ -9,7 +9,7 @@
         'request_attr': 'my_scope_id', # атрибут на request (по умолчанию = claim)
         'entity_key': 'my_scope',      # имя ленивого request.my_scope
         'resolve': load_my_scope,      # (my_scope_id=..., **kw) -> entity | None
-        'required_guard': True,        # учитывается SessionScopeRequiredMiddleware
+        'required_guard': True,        # RequiresSessionScope / session_scope_required
     })
 
 Ядро выводит из дескрипторов список JWT claims, карту ``entity_key -> resolve``,
@@ -107,7 +107,7 @@ def get_session_entity_claim_keys() -> dict[str, str]:
 
 
 def get_required_guard_claims() -> tuple[str, ...]:
-    """claim с флагом required_guard (для SessionScopeRequiredMiddleware)."""
+    """claim с флагом required_guard (RequiresSessionScope / session_scope_required)."""
     return tuple(
         d['request_attr']
         for d in get_session_claim_descriptors()

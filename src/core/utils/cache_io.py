@@ -9,7 +9,6 @@ import hmac
 import json
 import logging
 import os
-import pickle
 from pathlib import Path
 from typing import Any, Optional
 
@@ -17,7 +16,8 @@ logger = logging.getLogger('utils.cache')
 
 _SIGNATURE_SEPARATOR = b'\n---SIGNATURE---\n'
 _PICKLE_MAGIC = b'\x80'
-_cached_signing_key: Optional[bytes] = None
+_UNSET = object()
+_cached_signing_key: Any = _UNSET
 
 
 def _read_secret_key_from_dotenv() -> Optional[str]:
@@ -40,27 +40,39 @@ def _read_secret_key_from_dotenv() -> Optional[str]:
     return None
 
 
-def _get_signing_key() -> bytes:
-    """Ключ подписи из os.environ / .env (без django.conf — кэш читается до django.setup)."""
+def _get_signing_key() -> Optional[bytes]:
+    """
+    Ключ подписи из os.environ / .env (без django.conf — кэш читается до django.setup).
+
+    Без ключа чтение/запись кэша отключается (None) — нет небезопасного fallback.
+    """
     global _cached_signing_key
-    if _cached_signing_key is not None:
+    if _cached_signing_key is not _UNSET:
         return _cached_signing_key
     key = (
         os.environ.get('API_SECRET_KEY')
         or os.environ.get('CACHE_SIGNING_KEY')
         or _read_secret_key_from_dotenv()
-        or 'ergo-cache-signing-key'
     )
+    if not key or key in ('secret-key', 'django-insecure', 'ergo-cache-signing-key'):
+        logger.warning(
+            'Ключ подписи кэша не задан или небезопасен — файловый кэш отключён'
+        )
+        _cached_signing_key = None
+        return None
     _cached_signing_key = key.encode()
     return _cached_signing_key
 
 
 def write_bin_cache(path: Path, data: Any) -> bool:
     """Записывает данные в JSON-кэш с HMAC-подписью. Возвращает True при успехе."""
+    signing_key = _get_signing_key()
+    if signing_key is None:
+        return False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(data, ensure_ascii=False, default=str).encode('utf-8')
-        signature = hmac.HMAC(_get_signing_key(), payload, hashlib.sha256).digest()
+        signature = hmac.HMAC(signing_key, payload, hashlib.sha256).digest()
         with open(path, 'wb') as f:
             f.write(payload)
             f.write(_SIGNATURE_SEPARATOR)
@@ -71,33 +83,35 @@ def write_bin_cache(path: Path, data: Any) -> bool:
         return False
 
 
-def _read_legacy_pickle(path: Path) -> Optional[Any]:
-    """Читает старый pickle-кэш (до миграции на JSON)."""
-    try:
-        with open(path, 'rb') as f:
-            return pickle.load(f)
-    except (pickle.PickleError, OSError, EOFError):
-        return None
-
-
 def read_bin_cache(path: Path) -> Optional[Any]:
     """Читает данные из JSON-кэша с проверкой HMAC. Возвращает None при ошибке."""
     if not path.exists() or path.stat().st_size == 0:
         return None
+    signing_key = _get_signing_key()
+    if signing_key is None:
+        return None
     try:
         raw = path.read_bytes()
         if raw.startswith(_PICKLE_MAGIC):
-            data = _read_legacy_pickle(path)
-            if data is not None:
-                write_bin_cache(path, data)
-            return data
+            # Legacy pickle больше не читаем (insecure deserialization).
+            logger.warning(
+                'Устаревший pickle-кэш %s проигнорирован — будет пересоздан',
+                path.name,
+            )
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
         if _SIGNATURE_SEPARATOR in raw:
             payload, signature = raw.rsplit(_SIGNATURE_SEPARATOR, 1)
-            expected = hmac.HMAC(_get_signing_key(), payload, hashlib.sha256).digest()
+            expected = hmac.HMAC(signing_key, payload, hashlib.sha256).digest()
             if not hmac.compare_digest(signature, expected):
                 logger.warning('Подпись кэша %s невалидна — будет пересоздан', path.name)
                 return None
             return json.loads(payload)
-        return json.loads(raw)
+        # Подпись обязательна — unsigned JSON не принимаем
+        logger.warning('Кэш %s без подписи — будет пересоздан', path.name)
+        return None
     except (json.JSONDecodeError, OSError, ValueError):
         return None

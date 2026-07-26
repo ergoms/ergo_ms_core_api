@@ -9,11 +9,22 @@ from difflib import get_close_matches
 
 _BOOTSTRAP_COMMANDS = frozenset({
     'install',
+    'update',
     'module-add',
     'module-remove',
     'module-list',
     'warmup_caches',
     'warmup_celery',
+})
+
+# Schema one-shot: без discovery всех команд и без тяжёлого logging bootstrap.
+# Список синхронизирован с src.core.utils.django_cli.LEAN_SCHEMA_COMMANDS.
+_LEAN_SCHEMA_COMMANDS = frozenset({
+    'migrate',
+    'makemigrations',
+    'showmigrations',
+    'sqlmigrate',
+    'squashmigrations',
 })
 
 
@@ -84,12 +95,14 @@ def _run_bootstrap_command() -> None:
     """Установка зависимостей и прогрев кэшей без Django/Celery — для свежего venv и setup-full."""
     from commands.install import InstallCommand
     from commands.module_add import ModuleAddCommand, ModuleListCommand, ModuleRemoveCommand
+    from commands.update import UpdateCommand
     from commands.warmup import WarmupCachesCommand, WarmupCeleryCommand
 
     _configure_stdio_utf8()
 
     command_map = {
         'install': InstallCommand,
+        'update': UpdateCommand,
         'module-add': ModuleAddCommand,
         'module-remove': ModuleRemoveCommand,
         'module-list': ModuleListCommand,
@@ -100,7 +113,8 @@ def _run_bootstrap_command() -> None:
     if len(sys.argv) < 2:
         print(
             'Использование: ergoms api '
-            '<install|module-add|module-remove|module-list|warmup_caches|warmup_celery> '
+            '<install|update|module-add|module-remove|module-list|'
+            'warmup_caches|warmup_celery> '
             '[аргументы...]'
         )
         sys.exit(1)
@@ -119,6 +133,24 @@ def _run_bootstrap_command() -> None:
         sys.exit(1)
 
 
+def _run_lean_schema_command() -> None:
+    """migrate/makemigrations и др. — без discovery и без импорта LOGGING/startup_timing."""
+    from commands.base import PoetryCommand
+    from src.core.utils.django_cli import mark_lean_schema_cli
+
+    mark_lean_schema_cli()
+    _configure_stdio_utf8()
+
+    command_name = sys.argv[1]
+    args = sys.argv[2:]
+    try:
+        exit_code = PoetryCommand.for_django(command_name).run(*args)
+        sys.exit(exit_code if exit_code is not None else 0)
+    except Exception as exc:
+        print(f'Ошибка при выполнении команды {command_name}: {exc}', file=sys.stderr)
+        sys.exit(1)
+
+
 def _run_full_main() -> None:
     import time
     from typing import Dict, Type
@@ -127,6 +159,7 @@ def _run_full_main() -> None:
     from commands.discovery import discovery
     from commands.install import InstallCommand
     from commands.module_add import ModuleAddCommand, ModuleListCommand, ModuleRemoveCommand
+    from commands.update import UpdateCommand
     from commands.warmup import WarmupCachesCommand, WarmupCeleryCommand
     from src.config.settings.logger import LOGGING
     from src.core.utils.startup_timing import set_start_time_if_earlier
@@ -149,6 +182,7 @@ def _run_full_main() -> None:
 
     script_commands: list[Type[PoetryCommand]] = [
         InstallCommand,
+        UpdateCommand,
         ModuleAddCommand,
         ModuleRemoveCommand,
         ModuleListCommand,
@@ -228,6 +262,9 @@ def _run_full_main() -> None:
 def main() -> None:
     if len(sys.argv) >= 2 and sys.argv[1] in _BOOTSTRAP_COMMANDS:
         _run_bootstrap_command()
+        return
+    if len(sys.argv) >= 2 and sys.argv[1] in _LEAN_SCHEMA_COMMANDS:
+        _run_lean_schema_command()
         return
     _run_full_main()
 

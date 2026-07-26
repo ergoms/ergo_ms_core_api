@@ -3,9 +3,9 @@ from django.db import migrations
 
 
 def seed_ai_assistant_themes(apps, schema_editor):
-    Theme = apps.get_model('settings', 'Theme')
-    from src.core.settings.services.theme_seed import ensure_builtin_module_themes
-    ensure_builtin_module_themes(Theme, update_existing=True)
+    # Ранее вызывал ensure_builtin_module_themes (no-op). Модульные темы —
+    # через POST settings/themes/sync-module-defaults / ensure_module_themes_from_manifests.
+    pass
 
 
 class Migration(migrations.Migration):

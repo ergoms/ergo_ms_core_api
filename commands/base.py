@@ -57,6 +57,17 @@ class PoetryCommand:
         if not self.poetry_command_name:
             self.poetry_command_name = self.command_name
 
+    @classmethod
+    def for_django(cls, name: str) -> 'PoetryCommand':
+        """Обёртка builtin Django-команды без discovery по файловой системе."""
+        instance = cls.__new__(cls)
+        instance.django_command_name = name
+        instance.poetry_command_name = name
+        instance.script_command = None
+        instance.command_name = name
+        instance._test_args = []
+        return instance
+
     def run(self, *args) -> int:
         """Выполнение команды."""
         self._test_args = list(args)
@@ -154,6 +165,10 @@ class PoetryCommand:
             else:
                 deploy_type = _get_deploy_type()
                 os.environ['DJANGO_SETTINGS_MODULE'] = deploy_type
+
+            from src.core.utils.django_cli import prepare_lean_schema_django
+
+            prepare_lean_schema_django()
 
             import django
             from django.conf import settings

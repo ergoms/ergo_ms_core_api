@@ -2,6 +2,8 @@
 Модели для управления боковым меню.
 """
 
+import uuid
+
 from django.conf import settings
 from django.db import models
 from django.db.models import Max
@@ -19,6 +21,13 @@ class MenuItem(models.Model):
         ('offcanvas', 'Боковая панель'),
         ('external', 'Внешняя ссылка'),
     ]
+
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,
+        unique=True,
+        verbose_name='public id',
+    )
     
     name = models.CharField(max_length=100, verbose_name='Название')
     route_name = models.CharField(
@@ -143,7 +152,7 @@ class MenuItem(models.Model):
         children = []
         for child in self.children.filter(is_active=True).order_by('order'):
             child_data = {
-                'id': child.id,
+                'id': str(child.public_id),
                 'name': child.name,
                 'route_name': child.route_name,
                 'icon': child.icon,
@@ -161,6 +170,12 @@ class MenuSeparator(models.Model):
     Разделитель в меню.
     Отображается перед элементом меню с указанным порядком.
     """
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,
+        unique=True,
+        verbose_name='public id',
+    )
     name = models.CharField(max_length=100, verbose_name='Название разделителя')
     before_order = models.PositiveIntegerField(
         verbose_name='Перед порядком',

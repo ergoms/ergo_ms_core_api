@@ -13,8 +13,6 @@ from src.core.cms.adp.views_auth import (
 )
 from src.core.cms.adp.views import (
     LogoutView,
-    ProtectedView,
-    UserMenuView,
 )
 from src.core.cms.adp.views_bootstrap import SessionBootstrapView
 from src.core.cms.adp.views_profile import (
@@ -122,7 +120,6 @@ urlpatterns = [
 
     path('token-refresh/', DeviceBoundTokenRefreshView.as_view(), name='token_refresh'),
     path('logout/', LogoutView.as_view(), name='logout'),
-    path('protected/', ProtectedView.as_view(), name='protected'),
     path('session-bootstrap/', SessionBootstrapView.as_view(), name='session_bootstrap'),
     
     # Security endpoints
@@ -132,7 +129,6 @@ urlpatterns = [
     
     # Profile endpoints
     path('profile/', UserProfileView.as_view(), name='user_profile'),
-    path('user-menu-data/', UserMenuView.as_view(), name='user_menu_data'),
     path('security-settings/', UserSecuritySettingsView.as_view(), name='user_security_settings'),
     
     # Role and Policy Management endpoints

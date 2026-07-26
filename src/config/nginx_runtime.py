@@ -145,13 +145,9 @@ def media_api_internal_base_url() -> str:
     """
     Служебный base URL core/api → media_api (MEDIA_ACCESS_MODE=remote).
 
-    Приоритет: MEDIA_API_INTERNAL_URL → MEDIA_API_INTERNAL_BASE_URL (устаревший alias,
-    планируется к удалению — используйте MEDIA_API_INTERNAL_URL)
-    → http://MEDIA_API_BIND_HOST:MEDIA_API_BIND_PORT.
+    Приоритет: MEDIA_API_INTERNAL_URL → http://MEDIA_API_BIND_HOST:MEDIA_API_BIND_PORT.
     """
     explicit = env.str('MEDIA_API_INTERNAL_URL', default='').strip()
-    if not explicit:
-        explicit = env.str('MEDIA_API_INTERNAL_BASE_URL', default='').strip()
     if explicit:
         return explicit.rstrip('/')
 

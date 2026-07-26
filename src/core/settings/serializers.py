@@ -4,7 +4,7 @@ from .models import UserAvatar
 from src.core.utils.mixins import validate_media_path
 from .models import (
     Theme,
-    SecuritySettings, MediaSettings, PermalinkSettings, EmailSettings
+    EmailSettings
 )
 
 class ThemeSerializer(serializers.ModelSerializer):
@@ -57,21 +57,6 @@ class ThemeSerializer(serializers.ModelSerializer):
             })
         return data
 
-
-class SecuritySettingsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SecuritySettings
-        fields = '__all__'
-
-class MediaSettingsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MediaSettings
-        fields = '__all__'
-
-class PermalinkSettingsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PermalinkSettings
-        fields = '__all__'
 
 class EmailSettingsSerializer(serializers.ModelSerializer):
     class Meta:

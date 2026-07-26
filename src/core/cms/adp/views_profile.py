@@ -201,7 +201,6 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
                     type=openapi.TYPE_OBJECT,
                     properties={
                         'two_factor_enabled': openapi.Schema(type=openapi.TYPE_BOOLEAN),
-                        'email_notifications': openapi.Schema(type=openapi.TYPE_BOOLEAN),
                         'push_notifications': openapi.Schema(type=openapi.TYPE_BOOLEAN),
                         'sms_notifications': openapi.Schema(type=openapi.TYPE_BOOLEAN),
                         'profile_visibility': openapi.Schema(type=openapi.TYPE_STRING),
@@ -216,7 +215,6 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
 
         security_data = {
             'two_factor_enabled': profile.two_factor_enabled,
-            'email_notifications': profile.email_notifications,
             'push_notifications': profile.push_notifications,
             'sms_notifications': profile.sms_notifications,
             'profile_visibility': profile.profile_visibility,
@@ -227,8 +225,7 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
     @swagger_auto_schema(
         operation_description=(
             "Обновление настроек безопасности. "
-            "Поле email_notifications устарело: управление каналами уведомлений — "
-            "через PATCH /notifications/preferences/ (панель «Уведомления»)."
+            "Каналы уведомлений — через PATCH /notifications/preferences/."
         ),
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,

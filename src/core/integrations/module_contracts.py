@@ -31,7 +31,6 @@ AUDIT_RECORD = 'audit.record'
 
 CORE_USER_DELETE = 'core.user_delete'
 CORE_BULK_USER_CREATE = 'core.bulk_user_create'
-CORE_AUTH_CLEAR_LEGACY_STORAGE = 'core.auth.clear_legacy_storage'
 
 # Провайдер возвращает dict session-claims для JWT при логине (или None).
 SESSION_RESTORE_CLAIMS = 'session.restore_claims'
