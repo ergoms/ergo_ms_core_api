@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 from src.core.utils.mixins import validate_media_path
@@ -39,13 +40,14 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         if not attrs.get('file') and not attrs.get('file_path'):
-            raise serializers.ValidationError('Необходим file или file_path')
+            raise serializers.ValidationError(_('Необходим file или file_path'))
         return attrs
 
     def validate_file(self, value):
         if value and value.size > MAX_ATTACHMENT_SIZE_BYTES:
             raise serializers.ValidationError(
-                f'Размер файла не должен превышать {MAX_ATTACHMENT_SIZE_MB} МБ'
+                _('Размер файла не должен превышать %(count)d МБ')
+                % {'count': MAX_ATTACHMENT_SIZE_MB}
             )
         return value
 

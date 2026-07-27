@@ -1,5 +1,6 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -28,7 +29,7 @@ class UserRegistrationValidationSerializer(Serializer):
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
-            raise ValidationError("Данный логин уже занят, попробуйте другой.")
+            raise ValidationError(_("Данный логин уже занят, попробуйте другой."))
         return value
 
     def validate_email(self, value):
@@ -46,22 +47,22 @@ class UserRegistrationValidationSerializer(Serializer):
 def _validate_registration_access(attrs):
     mode = RegistrationService.get_mode()
     if mode == RegistrationService.MODE_CLOSED:
-        raise ValidationError({'message': 'Регистрация в системе отключена.'})
+        raise ValidationError({'message': _('Регистрация в системе отключена.')})
 
     if mode != RegistrationService.MODE_INVITATION:
         return
 
     token = (attrs.get('invitation_token') or '').strip()
     if not token:
-        raise ValidationError({'invitation_token': 'Для регистрации требуется приглашение.'})
+        raise ValidationError({'invitation_token': _('Для регистрации требуется приглашение.')})
 
     invitation = RegistrationService.get_valid_invitation(token)
     if not invitation:
-        raise ValidationError({'invitation_token': 'Приглашение недействительно или истекло.'})
+        raise ValidationError({'invitation_token': _('Приглашение недействительно или истекло.')})
 
     email = (attrs.get('email') or '').strip().lower()
     if invitation.email.lower() != email:
-        raise ValidationError({'email': 'Email не совпадает с приглашением.'})
+        raise ValidationError({'email': _('Email не совпадает с приглашением.')})
 
     attrs['_invitation'] = invitation
 
@@ -133,7 +134,7 @@ class ChangePasswordSerializer(Serializer):
     def validate_current_password(self, value):
         user = self.context['request'].user
         if not authenticate(username=user.username, password=value):
-            raise ValidationError("Неверный текущий пароль.")
+            raise ValidationError(_("Неверный текущий пароль."))
         return value
 
 
@@ -159,7 +160,7 @@ class AdminResetUserPasswordSerializer(Serializer):
             return attrs
 
         if not new_password or not confirm_password:
-            raise ValidationError('Укажите новый пароль и подтверждение.')
+            raise ValidationError(_('Укажите новый пароль и подтверждение.'))
 
         attrs['new_password'] = new_password
         attrs['confirm_password'] = confirm_password
@@ -191,9 +192,9 @@ class AdminCreateUserSerializer(Serializer):
     def validate_username(self, value):
         normalized = (value or '').strip()
         if not normalized:
-            raise ValidationError('Логин обязателен.')
+            raise ValidationError(_('Логин обязателен.'))
         if User.objects.filter(username__iexact=normalized).exists():
-            raise ValidationError('Данный логин уже занят, попробуйте другой.')
+            raise ValidationError(_('Данный логин уже занят, попробуйте другой.'))
         return normalized
 
     def validate_email(self, value):
@@ -211,7 +212,7 @@ class AdminCreateUserSerializer(Serializer):
         if not password and not confirm_password:
             return attrs
         if not password or not confirm_password:
-            raise ValidationError('Укажите пароль и подтверждение.')
+            raise ValidationError(_('Укажите пароль и подтверждение.'))
         validate_new_password_pair({
             'new_password': password,
             'confirm_password': confirm_password,

@@ -11,6 +11,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
+from django.utils.translation import gettext as _, gettext_lazy as _lazy
 
 from src.core.cms.adp.models import UserProfile, UserProfileChangeRequest
 from src.core.cms.adp.services.profile_settings import ProfileSettingsService
@@ -20,12 +21,12 @@ _PHONE_PATTERN = re.compile(r'^[\+]?[\d\s().-]{7,20}$')
 
 
 class ProfileChangeRequestService:
-    PENDING_EXISTS_MESSAGE = 'У вас уже есть заявка на рассмотрении.'
-    NOT_ALLOWED_MESSAGE = 'Заявки на изменение данных недоступны: редактирование разрешено.'
-    NO_CHANGES_MESSAGE = 'Новые данные совпадают с текущими.'
-    ALREADY_REVIEWED_MESSAGE = 'Заявка уже обработана.'
-    INVALID_EMAIL_MESSAGE = 'Укажите корректный email.'
-    INVALID_PHONE_MESSAGE = 'Некорректный формат телефона.'
+    PENDING_EXISTS_MESSAGE = _lazy('У вас уже есть заявка на рассмотрении.')
+    NOT_ALLOWED_MESSAGE = _lazy('Заявки на изменение данных недоступны: редактирование разрешено.')
+    NO_CHANGES_MESSAGE = _lazy('Новые данные совпадают с текущими.')
+    ALREADY_REVIEWED_MESSAGE = _lazy('Заявка уже обработана.')
+    INVALID_EMAIL_MESSAGE = _lazy('Укажите корректный email.')
+    INVALID_PHONE_MESSAGE = _lazy('Некорректный формат телефона.')
 
     @staticmethod
     def is_request_flow_enabled() -> bool:
@@ -155,7 +156,7 @@ class ProfileChangeRequestService:
         }
 
         if not normalized['first_name'] and not normalized['last_name']:
-            raise ValueError('Укажите имя или фамилию.')
+            raise ValueError(_('Укажите имя или фамилию.'))
 
         if not ProfileChangeRequestService.profile_data_differs(
             user,

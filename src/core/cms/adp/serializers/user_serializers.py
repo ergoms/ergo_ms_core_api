@@ -171,6 +171,18 @@ class UpdateUserProfileSerializer(ModelSerializer):
 
         return normalized
 
+    def validate_language(self, value):
+        if value is None:
+            return value
+        from django.conf import settings
+        from django.utils.translation import gettext as _
+
+        code = str(value).strip().lower().split('-', 1)[0]
+        supported = getattr(settings, 'SUPPORTED_UI_LANGUAGES', frozenset({'ru', 'en', 'fr'}))
+        if code not in supported:
+            raise ValidationError(_('Неподдерживаемый язык интерфейса.'))
+        return code
+
     def _normalize_blank_profile_value(self, value):
         if value is None:
             return None

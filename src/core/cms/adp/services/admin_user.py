@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from django.db import transaction
@@ -41,10 +42,10 @@ def create_admin_user(
 ) -> tuple[User, dict]:
     normalized_username = (username or '').strip()
     if not normalized_username:
-        raise AdminUserCreateError('Логин обязателен.')
+        raise AdminUserCreateError(_('Логин обязателен.'))
 
     if User.objects.filter(username__iexact=normalized_username).exists():
-        raise AdminUserCreateError('Данный логин уже занят, попробуйте другой.')
+        raise AdminUserCreateError(_('Данный логин уже занят, попробуйте другой.'))
 
     normalized_email = (email or '').strip().lower()
     if normalized_email:
@@ -81,7 +82,7 @@ def create_admin_user(
         try:
             role = Role.objects.get(pk=role_id)
         except Role.DoesNotExist as exc:
-            raise AdminUserCreateError('Роль не найдена.') from exc
+            raise AdminUserCreateError(_('Роль не найдена.')) from exc
 
         if role_group_ids:
             role_groups = list(RoleGroup.objects.filter(id__in=role_group_ids))
@@ -102,7 +103,7 @@ def create_admin_user(
         if normalized_email:
             email_sent, email_error = send_admin_password_reset_notification(normalized_email)
         else:
-            email_error = 'У пользователя не указан email — уведомление не отправлено.'
+            email_error = _('У пользователя не указан email — уведомление не отправлено.')
 
     meta = {
         'password_mode': password_mode,

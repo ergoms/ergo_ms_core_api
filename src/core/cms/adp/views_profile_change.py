@@ -3,6 +3,7 @@ API заявок на изменение ФИО пользователя.
 """
 
 from django.db.models import Q
+from django.utils.translation import gettext as _
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
@@ -189,7 +190,7 @@ class AdminProfileChangeRequestApproveView(BaseAPIViewAuthMixin, BaseAPIView):
             'reviewed_by',
         ).filter(pk=request_id).first()
         if not change_request:
-            return Response({'error': 'Заявка не найдена'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': _('Заявка не найдена')}, status=status.HTTP_404_NOT_FOUND)
 
         try:
             ProfileChangeRequestService.approve_request(change_request, request.user)
@@ -225,7 +226,7 @@ class AdminProfileChangeRequestRejectView(BaseAPIViewAuthMixin, BaseAPIView):
             'reviewed_by',
         ).filter(pk=request_id).first()
         if not change_request:
-            return Response({'error': 'Заявка не найдена'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': _('Заявка не найдена')}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = RejectUserProfileChangeRequestSerializer(data=request.data or {})
         if not serializer.is_valid():

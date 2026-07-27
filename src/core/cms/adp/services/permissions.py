@@ -4,6 +4,7 @@
 import re
 from typing import List, Dict, Optional
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from src.core.cms.adp.middleware.permission_request_cache import get_request_permission_cache
@@ -171,7 +172,7 @@ class PermissionService:
         will_be_admin = PermissionService._is_admin_role(role)
         if was_admin and not will_be_admin:
             if PermissionService.count_global_admins() <= 1:
-                return 'Нельзя снять роль у последнего администратора системы.'
+                return _('Нельзя снять роль у последнего администратора системы.')
         return None
 
     @staticmethod

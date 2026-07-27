@@ -1,6 +1,7 @@
 import logging
 
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from drf_yasg import openapi
@@ -72,7 +73,7 @@ class ChangePasswordView(BaseAPIViewAuthMixin):
                          entity={'type': 'user', 'label': user.get_full_name() or user.username})
 
             return Response(
-                {"message": "Пароль успешно изменён."},
+                {"message": _("Пароль успешно изменён.")},
                 status=status.HTTP_200_OK
             )
 
@@ -124,17 +125,17 @@ class UserDeviceDetailView(BaseAPIViewAuthMixin):
             device = UserDevice.objects.get(id=device_id, user=request.user)
             if is_current_device(request, device):
                 return Response(
-                    {'error': 'Нельзя завершить текущую сессию'},
+                    {'error': _('Нельзя завершить текущую сессию')},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             revoke_user_device_session(device)
             return Response(
-                {"message": "Сессия завершена."},
+                {"message": _("Сессия завершена.")},
                 status=status.HTTP_200_OK
             )
         except UserDevice.DoesNotExist:
             return Response(
-                {"error": "Устройство не найдено."},
+                {"error": _("Устройство не найдено.")},
                 status=status.HTTP_404_NOT_FOUND
             )
 
@@ -252,4 +253,4 @@ class UserSecuritySettingsView(BaseAPIViewAuthMixin):
 
         profile.save()
 
-        return Response({"message": "Настройки безопасности обновлены."}, status=status.HTTP_200_OK)
+        return Response({"message": _("Настройки безопасности обновлены.")}, status=status.HTTP_200_OK)

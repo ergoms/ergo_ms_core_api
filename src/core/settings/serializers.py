@@ -1,3 +1,4 @@
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 from .models import UserAvatar
@@ -104,7 +105,7 @@ class UserAvatarSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         if self.instance is None and not attrs.get('image') and not attrs.get('image_path'):
-            raise serializers.ValidationError('Необходимо указать image или image_path')
+            raise serializers.ValidationError(_('Необходимо указать image или image_path'))
         return attrs
 
     def create(self, validated_data):

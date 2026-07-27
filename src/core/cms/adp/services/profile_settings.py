@@ -3,6 +3,7 @@
 """
 
 from django.conf import settings
+from django.utils.translation import gettext as _
 
 from src.core.cms.adp.services.permissions import PermissionService
 
@@ -36,7 +37,10 @@ class ProfileSettingsService:
 
     @staticmethod
     def get_self_edit_disabled_message() -> str:
-        return ProfileSettingsService.SELF_EDIT_DISABLED_MESSAGE
+        return _(
+            'Изменение email, ФИО и телефона доступно только администратору. '
+            'Отправьте заявку на изменение данных.'
+        )
 
     @staticmethod
     def get_blocked_profile_fields(data, user) -> set[str]:

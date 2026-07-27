@@ -2,6 +2,7 @@ import json
 
 from django.conf import settings
 from django.http import StreamingHttpResponse
+from django.utils.translation import gettext as _
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
@@ -82,7 +83,10 @@ class RealtimeSubscriptionView(BaseAPIViewAuthMixin):
         action = str(request.data.get('action', '')).strip().lower()
         topic = str(request.data.get('topic', '')).strip()
         if action not in ('subscribe', 'unsubscribe') or not topic:
-            return Response({'detail': 'Укажите action (subscribe|unsubscribe) и topic.'}, status=400)
+            return Response(
+                {'detail': _('Укажите action (subscribe|unsubscribe) и topic.')},
+                status=400,
+            )
 
         if action == 'subscribe':
             ok, group = subscribe_topic(request.user, topic)
@@ -90,7 +94,10 @@ class RealtimeSubscriptionView(BaseAPIViewAuthMixin):
             ok, group = unsubscribe_topic(request.user, topic)
 
         if not ok or group is None:
-            return Response({'detail': 'Нет доступа к topic или topic не распознан.'}, status=403)
+            return Response(
+                {'detail': _('Нет доступа к topic или topic не распознан.')},
+                status=403,
+            )
 
         return Response({
             'action': action,

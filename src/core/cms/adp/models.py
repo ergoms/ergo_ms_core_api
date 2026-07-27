@@ -2,6 +2,7 @@ from django.conf import settings
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils.translation import gettext as _
 import json
 
 if getattr(settings, 'AUTH_USER_MODEL', None) == 'cms_adp.ErgoUser':
@@ -17,11 +18,21 @@ class EmailConfirmationCode(models.Model):
         return f"{self.email} - {self.code}"
 
 
+def _default_user_language():
+    """Язык нового профиля = DEFAULT_LANGUAGE из .env (settings.LANGUAGE_CODE)."""
+    code = (getattr(settings, 'LANGUAGE_CODE', None) or 'ru').strip().lower()
+    return code.split('-', 1)[0][:10] or 'ru'
+
+
 class UserProfile(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='adp_profile')
     phone = models.CharField(max_length=20, blank=True, null=True)
     bio = models.TextField(max_length=500, blank=True, null=True)
-    language = models.CharField(max_length=10, default='ru')
+    language = models.CharField(
+        max_length=10,
+        default=_default_user_language,
+        choices=[('ru', 'Русский'), ('en', 'English'), ('fr', 'Français')],
+    )
     timezone = models.CharField(max_length=50, default='Europe/Moscow')
     
     # Настройки уведомлений (каналы email — через notifications preferences)
@@ -147,7 +158,7 @@ class Role(Group):
         if self.pk:
             original = Role.objects.get(pk=self.pk)
             if original.is_system and not self.is_system:
-                raise ValidationError('Нельзя отключить системный статус роли')
+                raise ValidationError(_('Нельзя отключить системный статус роли'))
 
     @property
     def role_type(self) -> str:
@@ -167,10 +178,10 @@ class Role(Group):
         """Возвращает отображаемое название типа роли"""
         role_type = self.role_type
         if role_type == 'admin':
-            return 'Администратор'
+            return _('Администратор')
         elif role_type == 'user':
-            return 'Пользователь'
-        return 'Неизвестная роль'
+            return _('Пользователь')
+        return _('Неизвестная роль')
 
 
 class RoleGroup(models.Model):
@@ -264,9 +275,9 @@ class Policy(models.Model):
     def clean(self):
         # Политика должна быть привязана либо к роли, либо к группе
         if not self.role and not self.role_group:
-            raise ValidationError('Политика должна быть привязана к роли или ролевой группе')
+            raise ValidationError(_('Политика должна быть привязана к роли или ролевой группе'))
         if self.role and self.role_group:
-            raise ValidationError('Политика не может быть одновременно привязана к роли и ролевой группе')
+            raise ValidationError(_('Политика не может быть одновременно привязана к роли и ролевой группе'))
 
 
 class UserRole(models.Model):
@@ -309,7 +320,7 @@ class UserRole(models.Model):
                 is_active=True
             ).exclude(pk=self.pk)
             if existing.exists():
-                raise ValidationError('У пользователя уже есть активная роль')
+                raise ValidationError(_('У пользователя уже есть активная роль'))
 
 
 class ModulePermission(models.Model):

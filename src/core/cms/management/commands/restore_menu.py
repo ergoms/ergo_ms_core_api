@@ -240,10 +240,64 @@ def _module_menu_migration_import_path(module_name, subpath_parts, stem):
     return f'{base}.migrations.{stem}'
 
 
+def _load_module_menu_migration_ops(module_name, subpath_parts, migrations_dir):
+    """
+    Все menu data-миграции каталога в порядке номера.
+
+    Не берём «только последнюю»: после полного clear+create часто идут
+    rename/update (video_analysis 0012, module_template 0006) — без предшествующих
+    populate они ничего не создают.
+
+    Фильтр create+delete из core здесь нельзя: в reverse() почти каждой
+    menu-миграции модуля есть ``.filter(module_source=...).delete()``, и эвристика
+    ошибочно выкидывает сами populate.
+    """
+    raw = []
+    for path in sorted(migrations_dir.glob('*.py')):
+        if path.name == '__init__.py':
+            continue
+        stem = path.stem
+        if not stem[0].isdigit():
+            continue
+        try:
+            content = path.read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not _is_module_menu_migration(content):
+            continue
+
+        try:
+            mod = importlib.import_module(
+                _module_menu_migration_import_path(module_name, subpath_parts, stem)
+            )
+        except (ImportError, ModuleNotFoundError):
+            continue
+
+        migration_class = getattr(mod, 'Migration', None)
+        if not migration_class or not issubclass(migration_class, migrations.Migration):
+            continue
+
+        populate_func = None
+        for op in migration_class.operations:
+            if isinstance(op, migrations.RunPython):
+                populate_func = op.code
+                break
+        if not populate_func:
+            continue
+
+        raw.append((stem, populate_func, migration_class.dependencies))
+
+    subpath_key = subpath_parts[0] if subpath_parts else ''
+    return [
+        (stem, populate_func, deps, subpath_key)
+        for stem, populate_func, deps in raw
+    ]
+
+
 def _discover_module_menu_migrations():
     """
     Сканирует modules/*/api/migrations и modules/*/api/*/migrations на menu data migrations.
-    Для каждого каталога берёт последнюю по номеру миграцию с populate_menu.
+    Для каждого каталога проигрывает цепочку menu-миграций по номеру (populate + rename/update).
     Возвращает список (module_name, migration_stem, populate_func) в порядке зависимостей.
     """
     from src.core.utils.module_registry import is_module_disabled, is_valid_module_dir_name
@@ -262,56 +316,10 @@ def _discover_module_menu_migrations():
             continue
 
         entries = []
-
         for subpath_parts, migrations_dir in _iter_module_migration_dirs(module_dir):
-            menu_migrations = []
-            for path in migrations_dir.glob('*.py'):
-                if path.name == '__init__.py':
-                    continue
-                try:
-                    content = path.read_text(encoding='utf-8')
-                except (OSError, UnicodeDecodeError):
-                    continue
-                if not _is_module_menu_migration(content):
-                    continue
-                stem = path.stem
-                if stem[0].isdigit():
-                    menu_migrations.append(stem)
-
-            if not menu_migrations:
-                continue
-
-            menu_migrations.sort()
-            latest_stem = menu_migrations[-1]
-
-            try:
-                mod = importlib.import_module(
-                    _module_menu_migration_import_path(
-                        module_name, subpath_parts, latest_stem
-                    )
-                )
-            except (ImportError, ModuleNotFoundError):
-                continue
-
-            migration_class = getattr(mod, 'Migration', None)
-            if not migration_class or not issubclass(migration_class, migrations.Migration):
-                continue
-
-            populate_func = None
-            for op in migration_class.operations:
-                if isinstance(op, migrations.RunPython):
-                    populate_func = op.code
-                    break
-            if not populate_func:
-                continue
-
-            subpath_key = subpath_parts[0] if subpath_parts else ''
-            entries.append((
-                latest_stem,
-                populate_func,
-                migration_class.dependencies,
-                subpath_key,
-            ))
+            entries.extend(
+                _load_module_menu_migration_ops(module_name, subpath_parts, migrations_dir)
+            )
 
         if entries:
             module_entries[module_name] = entries

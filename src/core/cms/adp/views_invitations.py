@@ -3,6 +3,7 @@ API для приглашений на регистрацию и публичн�
 """
 
 from django.db.models import Q
+from django.utils.translation import gettext as _
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
@@ -188,7 +189,7 @@ class RegistrationInvitationDetailView(BaseAPIViewAuthMixin, BaseAPIView):
 
         invitation = self._get_invitation(invitation_id)
         if not invitation:
-            return Response({'error': 'Приглашение не найдено'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': _('Приглашение не найдено')}, status=status.HTTP_404_NOT_FOUND)
 
         invitation_email = invitation.email
         success, error = RegistrationService.revoke_invitation(invitation)
@@ -215,7 +216,7 @@ class RegistrationInvitationResendView(BaseAPIViewAuthMixin, BaseAPIView):
         try:
             invitation = RegistrationInvitation.objects.select_related('invited_by').get(pk=invitation_id)
         except RegistrationInvitation.DoesNotExist:
-            return Response({'error': 'Приглашение не найдено'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': _('Приглашение не найдено')}, status=status.HTTP_404_NOT_FOUND)
 
         success, error = RegistrationService.send_invitation_email(invitation)
         if not success:
@@ -284,7 +285,7 @@ class RegistrationInvitationClearView(BaseAPIViewAuthMixin, BaseAPIView):
             return Response({
                 'deleted': 0,
                 'scope': scope,
-                'message': 'Нет приглашений для удаления',
+                'message': _('Нет приглашений для удаления'),
             })
 
         audit_log('invitation.cleared', request=request, severity='security',

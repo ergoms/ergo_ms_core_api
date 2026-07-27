@@ -3,6 +3,7 @@ import re
 import json
 import logging
 from django.utils import timezone
+from django.utils.translation import gettext as _
 from rest_framework.response import Response
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -188,7 +189,7 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
         effective = get_effective_site_theme(user)
         if effective:
             return Response(ThemeSerializer(effective).data)
-        return Response({'detail': 'Активная тема не найдена'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'detail': _('Активная тема не найдена')}, status=status.HTTP_404_NOT_FOUND)
 
     @action(detail=False, methods=['get'], url_path='catalog')
     def catalog(self, request):

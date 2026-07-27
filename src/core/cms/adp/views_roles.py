@@ -8,6 +8,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin, BaseAPIViewGlobalAdminMixin
@@ -76,7 +77,7 @@ class RoleDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             return Response(serializer.data)
         except Role.DoesNotExist:
             return Response(
-                {'error': 'Роль не найдена'},
+                {'error': _('Роль не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
     
@@ -97,7 +98,7 @@ class RoleDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
                 normalized = str(incoming_flag).lower() in ('1', 'true', 'yes')
                 if not normalized:
                     return Response(
-                        {'error': 'Нельзя изменить системный статус роли'},
+                        {'error': _('Нельзя изменить системный статус роли')},
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 payload.pop('is_system')
@@ -111,7 +112,7 @@ class RoleDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Role.DoesNotExist:
             return Response(
-                {'error': 'Роль не найдена'},
+                {'error': _('Роль не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
     
@@ -127,7 +128,7 @@ class RoleDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             # Нельзя удалять системные роли
             if role.is_system:
                 return Response(
-                    {'error': 'Нельзя удалить системную роль'},
+                    {'error': _('Нельзя удалить системную роль')},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -138,7 +139,7 @@ class RoleDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Role.DoesNotExist:
             return Response(
-                {'error': 'Роль не найдена'},
+                {'error': _('Роль не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
 
@@ -197,7 +198,7 @@ class RoleGroupDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         group = self._get_group(group_id)
         if not group:
             return Response(
-                {'error': 'Ролевая группа не найдена'},
+                {'error': _('Ролевая группа не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -213,7 +214,7 @@ class RoleGroupDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         group = self._get_group(group_id)
         if not group:
             return Response(
-                {'error': 'Ролевая группа не найдена'},
+                {'error': _('Ролевая группа не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -233,7 +234,7 @@ class RoleGroupDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         group = self._get_group(group_id)
         if not group:
             return Response(
-                {'error': 'Ролевая группа не найдена'},
+                {'error': _('Ролевая группа не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -296,7 +297,7 @@ class PolicyDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         policy = self._get_policy(policy_id)
         if not policy:
             return Response(
-                {'error': 'Политика не найдена'},
+                {'error': _('Политика не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -312,7 +313,7 @@ class PolicyDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         policy = self._get_policy(policy_id)
         if not policy:
             return Response(
-                {'error': 'Политика не найдена'},
+                {'error': _('Политика не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -332,7 +333,7 @@ class PolicyDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         policy = self._get_policy(policy_id)
         if not policy:
             return Response(
-                {'error': 'Политика не найдена'},
+                {'error': _('Политика не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -411,12 +412,12 @@ class UserRoleAssignView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             )
         except User.DoesNotExist:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND
             )
         except Role.DoesNotExist:
             return Response(
-                {'error': 'Роль не найдена'},
+                {'error': _('Роль не найдена')},
                 status=status.HTTP_404_NOT_FOUND
             )
 
@@ -471,7 +472,7 @@ class CheckURLAccessView(BaseAPIViewAuthMixin, BaseAPIView):
         
         if not url:
             return Response(
-                {'error': 'Параметр url обязателен'},
+                {'error': _('Параметр url обязателен')},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -568,7 +569,7 @@ class ModulePermissionDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         permission = self._get_permission(permission_id)
         if not permission:
             return Response(
-                {'error': 'Право модуля не найдено'},
+                {'error': _('Право модуля не найдено')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -584,7 +585,7 @@ class ModulePermissionDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         permission = self._get_permission(permission_id)
         if not permission:
             return Response(
-                {'error': 'Право модуля не найдено'},
+                {'error': _('Право модуля не найдено')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -604,7 +605,7 @@ class ModulePermissionDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         permission = self._get_permission(permission_id)
         if not permission:
             return Response(
-                {'error': 'Право модуля не найдено'},
+                {'error': _('Право модуля не найдено')},
                 status=status.HTTP_404_NOT_FOUND
             )
         

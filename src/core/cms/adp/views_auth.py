@@ -5,6 +5,7 @@ import re
 from django.contrib.auth import authenticate
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import update_last_login
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from django.utils.crypto import get_random_string
@@ -94,7 +95,7 @@ class UserRegistrationValidationView(BaseAPIView):
 
         if serializer.is_valid():
             successful_response = Response(
-                {"message": "Валидация успешна."}, 
+                {"message": _("Валидация успешна.")},
                 status=status.HTTP_200_OK
             )
             return successful_response
@@ -133,12 +134,12 @@ class SendConfirmationCodeView(BaseAPIView):
 
         email = request.data.get("email")
         if not email:
-            return Response({"error": "Отсутствует Email"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": _("Отсутствует Email")}, status=status.HTTP_400_BAD_REQUEST)
 
         user_exists = User.objects.filter(email=email).exists()
         if not user_exists:
             return Response(
-                {"message": "Если пользователь с таким email существует, код будет отправлен"},
+                {"message": _("Если пользователь с таким email существует, код будет отправлен")},
                 status=status.HTTP_200_OK,
             )
 
@@ -157,15 +158,15 @@ class SendConfirmationCodeView(BaseAPIView):
         if not success:
             return Response(
                 {
-                    "error": "Не удалось отправить письмо с кодом восстановления.",
-                    "detail": error_message or "Проверьте настройки SMTP.",
+                    "error": _("Не удалось отправить письмо с кодом восстановления."),
+                    "detail": error_message or _("Проверьте настройки SMTP."),
                     "email_sent": False,
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         return Response(
-            {"message": "Код подтверждения отправлен", "email_sent": True},
+            {"message": _("Код подтверждения отправлен"), "email_sent": True},
             status=status.HTTP_200_OK,
         )
 
@@ -179,20 +180,20 @@ class VerifyConfirmationCodeView(BaseAPIView):
 
 
         if not email or not code:
-            return Response({"error": "Email и код обязательны"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": _("Email и код обязательны")}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             confirmation_code = EmailConfirmationCode.objects.get(email=email)
         except EmailConfirmationCode.DoesNotExist:
-            return Response({"error": "Неверный Email или код"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": _("Неверный Email или код")}, status=status.HTTP_400_BAD_REQUEST)
 
         if confirmation_code.code == code:
             # Код верен, можно выполнить дальнейшие действия
             # Удаляем запись после успешной проверки
             confirmation_code.delete()
-            return Response({"message": "Код успешно подтвержден"}, status=status.HTTP_200_OK)
+            return Response({"message": _("Код успешно подтвержден")}, status=status.HTTP_200_OK)
         else:
-            return Response({"error": "Неверный код"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": _("Неверный код")}, status=status.HTTP_400_BAD_REQUEST)
 
 class ResetPasswordView(BaseAPIView):
     throttle_classes = [AnonRateThrottle]
@@ -244,7 +245,7 @@ class ResetPasswordView(BaseAPIView):
 
         if not email or not code or not new_password or not confirm_password:
             return Response(
-                {"error": "Все поля обязательны для заполнения"}, 
+                {"error": _("Все поля обязательны для заполнения")},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -272,13 +273,13 @@ class ResetPasswordView(BaseAPIView):
             confirmation_code = EmailConfirmationCode.objects.get(email=email)
         except EmailConfirmationCode.DoesNotExist:
             return Response(
-                {"error": "Неверный Email или код"}, 
+                {"error": _("Неверный Email или код")},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         if confirmation_code.code != code:
             return Response(
-                {"error": "Неверный код"}, 
+                {"error": _("Неверный код")},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -287,7 +288,7 @@ class ResetPasswordView(BaseAPIView):
             user = User.objects.get(email=email)
         except User.DoesNotExist:
             return Response(
-                {"error": "Пользователь с таким email не найден"}, 
+                {"error": _("Пользователь с таким email не найден")},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -302,7 +303,7 @@ class ResetPasswordView(BaseAPIView):
                      entity={'type': 'user', 'label': user.get_full_name() or user.username})
 
         return Response(
-            {"message": "Пароль успешно изменён"}, 
+            {"message": _("Пароль успешно изменён")},
             status=status.HTTP_200_OK
         )
         
@@ -353,10 +354,10 @@ class UserRegistrationView(BaseAPIView):
 
             successful_response = Response(
                 {
-                    "message": "Регистрация успешна.",
+                    "message": _("Регистрация успешна."),
                     "user_id": user.id,
                     "username": user.username
-                }, 
+                },
                 status=status.HTTP_201_CREATED
             )
             return successful_response
@@ -468,7 +469,7 @@ class UserAuthorizationView(BaseAPIView):
                 )
                 return Response(
                     {
-                        'message': 'Аккаунт приостановлен. Обратитесь к администратору.',
+                        'message': _('Аккаунт приостановлен. Обратитесь к администратору.'),
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
@@ -481,7 +482,7 @@ class UserAuthorizationView(BaseAPIView):
             )
             return Response(
                 {
-                    "message": "Неверные учетные данные."
+                    "message": _("Неверные учетные данные.")
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )

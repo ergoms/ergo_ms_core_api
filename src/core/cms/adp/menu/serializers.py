@@ -2,6 +2,7 @@
 Сериализаторы для управления меню.
 """
 
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 from rest_framework.serializers import (
     ModelSerializer,
@@ -159,10 +160,10 @@ class MenuItemCreateSerializer(ModelSerializer):
         item_type = attrs.get('item_type', 'route')
 
         if item_type == 'offcanvas' and not attrs.get('page'):
-            raise ValidationError({'page': 'Страница обязательна для типа "offcanvas"'})
+            raise ValidationError({'page': _('Страница обязательна для типа "offcanvas"')})
 
         if item_type == 'external' and not attrs.get('external_url'):
-            raise ValidationError({'external_url': 'URL обязателен для типа "external"'})
+            raise ValidationError({'external_url': _('URL обязателен для типа "external"')})
 
         return attrs
 
@@ -197,17 +198,20 @@ class MenuItemReorderSerializer(Serializer):
         uuid_field = UUIDField()
         for item in value:
             if 'id' not in item or 'order' not in item:
-                raise ValidationError('Каждый элемент должен содержать id и order')
+                raise ValidationError(_('Каждый элемент должен содержать id и order'))
             try:
                 uuid_field.to_internal_value(item['id'])
             except Exception as exc:
-                raise ValidationError(f'id должен быть UUID: {item.get("id")}') from exc
+                raise ValidationError(
+                    _('id должен быть UUID: %(value)s') % {'value': item.get('id')}
+                ) from exc
             if 'parent_id' in item and item['parent_id'] is not None:
                 try:
                     uuid_field.to_internal_value(item['parent_id'])
                 except Exception as exc:
                     raise ValidationError(
-                        f'parent_id должен быть UUID или null для элемента {item.get("id")}'
+                        _('parent_id должен быть UUID или null для элемента %(value)s')
+                        % {'value': item.get('id')}
                     ) from exc
         return value
 

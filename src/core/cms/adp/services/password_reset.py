@@ -3,6 +3,7 @@
 """
 
 from django.conf import settings
+from django.utils.translation import gettext as _
 
 
 class PasswordResetService:
@@ -26,7 +27,10 @@ class PasswordResetService:
 
     @staticmethod
     def get_disabled_message() -> str:
-        return PasswordResetService.DISABLED_MESSAGE
+        return _(
+            'Восстановление пароля отключено администратором. '
+            'Обратитесь к администратору системы.'
+        )
 
     @staticmethod
     def is_password_reset_purpose(purpose: str) -> bool:

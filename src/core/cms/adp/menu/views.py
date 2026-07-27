@@ -3,6 +3,7 @@ API Views для управления меню.
 Предоставляет CRUD операции для элементов меню и разделителей.
 """
 
+from django.utils.translation import gettext as _
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -96,7 +97,7 @@ class MenuItemListView(BaseMenuAPIView):
     def get(self, request):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -135,7 +136,7 @@ class MenuItemListView(BaseMenuAPIView):
     def post(self, request):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -171,7 +172,7 @@ class MenuItemDetailView(BaseMenuAPIView):
     def get(self, request, item_ref):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -179,7 +180,7 @@ class MenuItemDetailView(BaseMenuAPIView):
             item = MenuItem.objects.get(public_id=item_ref)
         except MenuItem.DoesNotExist:
             return Response(
-                {'error': 'Элемент меню не найден'},
+                {'error': _('Элемент меню не найден')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -201,7 +202,7 @@ class MenuItemDetailView(BaseMenuAPIView):
     def put(self, request, item_ref):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -209,7 +210,7 @@ class MenuItemDetailView(BaseMenuAPIView):
             item = MenuItem.objects.get(public_id=item_ref)
         except MenuItem.DoesNotExist:
             return Response(
-                {'error': 'Элемент меню не найден'},
+                {'error': _('Элемент меню не найден')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -236,7 +237,7 @@ class MenuItemDetailView(BaseMenuAPIView):
     def delete(self, request, item_ref):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -244,7 +245,7 @@ class MenuItemDetailView(BaseMenuAPIView):
             item = MenuItem.objects.get(public_id=item_ref)
         except MenuItem.DoesNotExist:
             return Response(
-                {'error': 'Элемент меню не найден'},
+                {'error': _('Элемент меню не найден')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -275,7 +276,7 @@ class MenuItemReorderView(BaseMenuAPIView):
     def post(self, request):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -308,7 +309,7 @@ class MenuItemReorderView(BaseMenuAPIView):
                     continue
             
             invalidate_user_menu_cache()
-            return Response({'message': 'Порядок обновлён'})
+            return Response({'message': _('Порядок обновлён')})
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -330,7 +331,7 @@ class MenuSeparatorListView(BaseMenuAPIView):
     def get(self, request):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -352,7 +353,7 @@ class MenuSeparatorListView(BaseMenuAPIView):
     def post(self, request):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -388,7 +389,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
     def get(self, request, separator_ref):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -396,7 +397,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
             separator = MenuSeparator.objects.get(public_id=separator_ref)
         except MenuSeparator.DoesNotExist:
             return Response(
-                {'error': 'Разделитель не найден'},
+                {'error': _('Разделитель не найден')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -418,7 +419,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
     def put(self, request, separator_ref):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -426,7 +427,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
             separator = MenuSeparator.objects.get(public_id=separator_ref)
         except MenuSeparator.DoesNotExist:
             return Response(
-                {'error': 'Разделитель не найден'},
+                {'error': _('Разделитель не найден')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -451,7 +452,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
     def delete(self, request, separator_ref):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -459,7 +460,7 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
             separator = MenuSeparator.objects.get(public_id=separator_ref)
         except MenuSeparator.DoesNotExist:
             return Response(
-                {'error': 'Разделитель не найден'},
+                {'error': _('Разделитель не найден')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -502,7 +503,7 @@ class MenuAccessLogView(BaseMenuAPIView):
         
         if not menu_item_id:
             return Response(
-                {'error': 'menu_item_id обязателен'},
+                {'error': _('menu_item_id обязателен')},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -510,7 +511,7 @@ class MenuAccessLogView(BaseMenuAPIView):
             menu_item = MenuItem.objects.get(public_id=menu_item_id)
         except (MenuItem.DoesNotExist, ValueError, TypeError):
             return Response(
-                {'error': 'Элемент меню не найден'},
+                {'error': _('Элемент меню не найден')},
                 status=status.HTTP_404_NOT_FOUND
             )
         
@@ -519,7 +520,7 @@ class MenuAccessLogView(BaseMenuAPIView):
             menu_item=menu_item
         )
         
-        return Response({'message': 'Лог записан'}, status=status.HTTP_201_CREATED)
+        return Response({'message': _('Лог записан')}, status=status.HTTP_201_CREATED)
 
 
 class AvailableIconsView(BaseMenuAPIView):
@@ -545,7 +546,7 @@ class AvailableIconsView(BaseMenuAPIView):
     def get(self, request):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -589,7 +590,7 @@ class MenuRestoreView(BaseMenuAPIView):
     def post(self, request):
         if not self.is_admin(request.user):
             return Response(
-                {'error': 'Доступ запрещён'},
+                {'error': _('Доступ запрещён')},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -600,7 +601,7 @@ class MenuRestoreView(BaseMenuAPIView):
         try:
             call_command('restore_menu', stdout=buffer)
             return Response({
-                'message': 'Меню восстановлено из миграций',
+                'message': _('Меню восстановлено из миграций'),
                 'details': buffer.getvalue(),
             })
         except Exception as exc:

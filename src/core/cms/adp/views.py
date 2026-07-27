@@ -1,4 +1,4 @@
-﻿from rest_framework.response import Response
+from rest_framework.response import Response
 from rest_framework import status
 
 from src.core.utils.base.base_views import BaseAPIView

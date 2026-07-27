@@ -2,6 +2,7 @@ import logging
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
@@ -27,7 +28,7 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
     def validate(self, attrs):
         refresh_value = get_refresh_token_from_request(self.context['request'])
         if not refresh_value:
-            raise ValidationError('Refresh token отсутствует.')
+            raise ValidationError(_('Refresh token отсутствует.'))
         attrs['refresh'] = refresh_value
 
         refresh = RefreshToken(refresh_value)
@@ -35,19 +36,19 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
         user_id = refresh.payload.get('user_id')
 
         if device_id is None:
-            raise ValidationError('Сессия завершена. Войдите снова.')
+            raise ValidationError(_('Сессия завершена. Войдите снова.'))
 
         if user_id is not None:
             user = get_user_model().objects.filter(pk=user_id).first()
             if user is None:
-                raise ValidationError('Сессия завершена. Войдите снова.')
+                raise ValidationError(_('Сессия завершена. Войдите снова.'))
             if not is_device_session_active(user, device_id):
-                raise ValidationError('Сессия завершена. Войдите снова.')
+                raise ValidationError(_('Сессия завершена. Войдите снова.'))
 
         try:
             data = super().validate(attrs)
         except get_user_model().DoesNotExist:
-            raise ValidationError('Сессия завершена. Войдите снова.') from None
+            raise ValidationError(_('Сессия завершена. Войдите снова.')) from None
 
         access = refresh.access_token
         access['device_id'] = device_id

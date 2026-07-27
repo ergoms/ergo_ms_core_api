@@ -14,6 +14,7 @@ from typing import Any, Optional
 import pandas as pd
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from django.utils import timezone
@@ -43,7 +44,7 @@ def _storage_dir() -> Path:
 def _validate_task_id(task_id: str) -> str:
     normalized = (task_id or '').strip()
     if not normalized or not _TASK_ID_PATTERN.match(normalized):
-        raise ImportPasswordsAccessError('Некорректный идентификатор задачи.', status_code=400)
+        raise ImportPasswordsAccessError(_('Некорректный идентификатор задачи.'), status_code=400)
     return normalized
 
 
@@ -135,12 +136,12 @@ def consume_import_passwords(task_id: str, user: User) -> list[dict[str, str]]:
     payload = _read_payload(task_id)
     if not payload:
         raise ImportPasswordsAccessError(
-            'Файл с паролями недоступен или уже был скачан.',
+            _('Файл с паролями недоступен или уже был скачан.'),
             status_code=410,
         )
     if not _user_can_access_payload(user, payload):
         raise ImportPasswordsAccessError(
-            'Недостаточно прав для скачивания паролей.',
+            _('Недостаточно прав для скачивания паролей.'),
             status_code=403,
         )
 
@@ -148,7 +149,7 @@ def consume_import_passwords(task_id: str, user: User) -> list[dict[str, str]]:
     if not entries:
         path.unlink(missing_ok=True)
         raise ImportPasswordsAccessError(
-            'Файл с паролями недоступен или уже был скачан.',
+            _('Файл с паролями недоступен или уже был скачан.'),
             status_code=410,
         )
 

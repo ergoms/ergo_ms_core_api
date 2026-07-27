@@ -1,3 +1,4 @@
+from django.utils.translation import gettext as _
 from rest_framework.serializers import (
     BooleanField,
     CharField,
@@ -56,11 +57,9 @@ class RoleGroupSerializer(ModelSerializer):
 
     def validate_parent_role(self, value):
         if value.is_system:
-            raise ValidationError(
-                'Ролевую группу нельзя привязать к системной роли «Администратор». '
+            raise ValidationError(_('Ролевую группу нельзя привязать к системной роли «Администратор». '
                 'У администраторов полный доступ без ролевых групп. '
-                'Выберите роль «Пользователь» или другую пользовательскую роль.'
-            )
+                'Выберите роль «Пользователь» или другую пользовательскую роль.'))
         return value
 
 
@@ -112,9 +111,9 @@ class PolicySerializer(ModelSerializer):
         role_group = attrs.get('role_group')
 
         if not role and not role_group:
-            raise ValidationError('Политика должна быть привязана к роли или ролевой группе')
+            raise ValidationError(_('Политика должна быть привязана к роли или ролевой группе'))
         if role and role_group:
-            raise ValidationError('Политика не может быть одновременно привязана к роли и ролевой группе')
+            raise ValidationError(_('Политика не может быть одновременно привязана к роли и ролевой группе'))
 
         return attrs
 

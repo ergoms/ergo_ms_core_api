@@ -1,19 +1,44 @@
 """
-Файл содержащий конфигурацию локализации и интернационализации для Django-приложения.
-Он включает настройки языка, часового пояса и использования интернационализации и временных зон.
+Локализация Django (ru / en / fr).
+
+DEFAULT_LANGUAGE в .env — язык API и новых профилей.
+Свой язык пользователь меняет только в настройках (UserProfile.language).
 """
 
-# Код языка по умолчанию для приложения.
-LANGUAGE_CODE = 'ru'
+from src.config.env import env
+from src.config.settings.base import API_DIR
+
+# Поддерживаемые языки UI и API-сообщений.
+LANGUAGES = [
+    ('ru', 'Русский'),
+    ('en', 'English'),
+    ('fr', 'Français'),
+]
+
+# Допустимые коды языка для UserProfile.language.
+SUPPORTED_UI_LANGUAGES = frozenset(code for code, _name in LANGUAGES)
+
+
+def _resolve_default_language() -> str:
+    raw = env.str('DEFAULT_LANGUAGE', default='ru').strip().lower()
+    code = raw.split('-', 1)[0] if raw else 'ru'
+    if code in SUPPORTED_UI_LANGUAGES:
+        return code
+    return 'ru'
+
+
+# Код языка по умолчанию (из .env DEFAULT_LANGUAGE).
+LANGUAGE_CODE = _resolve_default_language()
+
+# Каталоги gettext проекта (ядро API).
+LOCALE_PATHS = [
+    str(API_DIR / 'locale'),
+]
+
+USE_I18N = True
 
 # Часовой пояс по умолчанию для приложения.
 TIME_ZONE = 'UTC'
 
-"""
-Флаг, указывающий, используется ли интернационализация (i18n) в приложении.
-Если True, Django будет использовать переводы для строк.
-"""
-USE_I18N = True
-
-# Флаг, указывающий, используются ли временные зоны (time zones) в приложении.
+# Использование временных зон.
 USE_TZ = True

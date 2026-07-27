@@ -8,6 +8,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from django.db.models import Prefetch
@@ -76,14 +77,14 @@ def _get_user_avatar_url(user):
 def _validate_admin_user_deletion(request, target_user):
     if request.user.id == target_user.id:
         return Response(
-            {'error': 'Нельзя удалить собственную учётную запись.'},
+            {'error': _('Нельзя удалить собственную учётную запись.')},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
     if PermissionService.can_manage_users_as_global_admin(target_user):
         if not PermissionService.can_manage_users_as_global_admin(request.user):
             return Response(
-                {'error': 'Нельзя удалить глобального администратора.'},
+                {'error': _('Нельзя удалить глобального администратора.')},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -93,13 +94,13 @@ def _validate_admin_user_deletion(request, target_user):
 def _validate_admin_user_suspend(request, target_user):
     if request.user.id == target_user.id:
         return Response(
-            {'error': 'Нельзя приостановить собственную учётную запись.'},
+            {'error': _('Нельзя приостановить собственную учётную запись.')},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
     if PermissionService.is_admin(target_user) and PermissionService.count_global_admins() <= 1:
         return Response(
-            {'error': 'Нельзя приостановить последнего администратора системы.'},
+            {'error': _('Нельзя приостановить последнего администратора системы.')},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -120,7 +121,7 @@ def _perform_admin_user_deletion(user):
         delete_admin_user(user)
     except UserDeletionBlockedError as exc:
         payload = {
-            'error': (
+            'error': _(
                 'Невозможно удалить пользователя: '
                 'есть связанные данные, блокирующие удаление.'
             ),
@@ -401,7 +402,7 @@ class AdminUserDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, Ba
         user = self._resolve_target_user(request, ref=ref)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -417,7 +418,7 @@ class AdminUserDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, Ba
         user = self._resolve_target_user(request, ref=ref)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -447,7 +448,7 @@ class AdminUserDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, Ba
         user = self._resolve_target_user(request, ref=ref)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -481,14 +482,14 @@ class AdminUserAvatarView(_AdminUserTargetMixin, MediaApiFileMixin, BaseAPIViewG
         user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         file, file_path = self.get_file_or_path('image')
         if not file and not file_path:
             return Response(
-                {'error': 'Файл изображения не передан'},
+                {'error': _('Файл изображения не передан')},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -513,7 +514,7 @@ class AdminUserAvatarView(_AdminUserTargetMixin, MediaApiFileMixin, BaseAPIViewG
         user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -523,7 +524,7 @@ class AdminUserAvatarView(_AdminUserTargetMixin, MediaApiFileMixin, BaseAPIViewG
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         return Response(
-            {'detail': 'Аватар не найден'},
+            {'detail': _('Аватар не найден')},
             status=status.HTTP_404_NOT_FOUND,
         )
 
@@ -544,13 +545,13 @@ class AdminUserResetPasswordView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMi
         user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         if request.user.pk == user.pk:
             return Response(
-                {'error': 'Нельзя сбросить пароль собственной учётной записи через эту форму.'},
+                {'error': _('Нельзя сбросить пароль собственной учётной записи через эту форму.')},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -569,7 +570,7 @@ class AdminUserResetPasswordView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMi
                    meta={'username': user.username, 'mode': 'manual'})
             return Response(
                 {
-                    'message': 'Пароль установлен.',
+                    'message': _('Пароль установлен.'),
                     'mode': 'manual',
                 },
                 status=status.HTTP_200_OK,
@@ -589,18 +590,20 @@ class AdminUserResetPasswordView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMi
         if email:
             email_sent, email_error = send_admin_password_reset_notification(email)
         else:
-            email_error = 'У пользователя не указан email — уведомление не отправлено.'
+            email_error = _('У пользователя не указан email — уведомление не отправлено.')
 
         response_data = {
-            'message': 'Пароль сброшен.',
+            'message': _('Пароль сброшен.'),
             'mode': 'system',
             'email_sent': email_sent,
         }
         if email_sent:
-            response_data['message'] = 'Пароль сброшен. Пользователю отправлено уведомление.'
+            response_data['message'] = _(
+                'Пароль сброшен. Пользователю отправлено уведомление.'
+            )
         else:
             response_data['warning'] = (
-                email_error or 'Не удалось отправить уведомление на email пользователя.'
+                email_error or _('Не удалось отправить уведомление на email пользователя.')
             )
 
         return Response(response_data, status=status.HTTP_200_OK)
@@ -630,13 +633,13 @@ class AdminUserStatusView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, Ba
         user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         if 'is_active' not in request.data:
             return Response(
-                {'error': 'Поле is_active обязательно.'},
+                {'error': _('Поле is_active обязательно.')},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -647,7 +650,7 @@ class AdminUserStatusView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, Ba
             is_active = raw.strip().lower() in ('true', '1')
         else:
             return Response(
-                {'error': 'Поле is_active должно быть булевым значением.'},
+                {'error': _('Поле is_active должно быть булевым значением.')},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -683,7 +686,7 @@ class AdminUserDevicesView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, B
         user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -711,20 +714,20 @@ class AdminUserDeviceDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMix
         user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         device = UserDevice.objects.filter(id=device_id, user=user).first()
         if device is None:
             return Response(
-                {'error': 'Сессия не найдена.'},
+                {'error': _('Сессия не найдена.')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         if request.user.pk == user.pk and is_current_device(request, device):
             return Response(
-                {'error': 'Нельзя завершить текущую сессию'},
+                {'error': _('Нельзя завершить текущую сессию')},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -736,7 +739,7 @@ class AdminUserDeviceDetailView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMix
             entity={'type': 'user', 'label': user.get_full_name() or user.username},
             meta={'username': user.username, 'device_id': device_id},
         )
-        return Response({'message': 'Сессия завершена.'}, status=status.HTTP_200_OK)
+        return Response({'message': _('Сессия завершена.')}, status=status.HTTP_200_OK)
 
 
 class AdminUserRevokeSessionsView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
@@ -753,7 +756,7 @@ class AdminUserRevokeSessionsView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminM
         user = self._resolve_target_user(request, ref=ref, select_related=False)
         if not user:
             return Response(
-                {'error': 'Пользователь не найден'},
+                {'error': _('Пользователь не найден')},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -782,7 +785,7 @@ class AdminUserRevokeSessionsView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminM
             )
             return Response(
                 {
-                    'message': 'Остальные сессии завершены.',
+                    'message': _('Остальные сессии завершены.'),
                     'revoked_count': revoked,
                 },
                 status=status.HTTP_200_OK,
@@ -799,7 +802,7 @@ class AdminUserRevokeSessionsView(_AdminUserTargetMixin, BaseAPIViewGlobalAdminM
         )
         return Response(
             {
-                'message': 'Все сессии завершены.',
+                'message': _('Все сессии завершены.'),
                 'revoked_count': active_count,
             },
             status=status.HTTP_200_OK,

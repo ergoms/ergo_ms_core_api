@@ -7,6 +7,7 @@ import re
 
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils.translation import gettext as _
 from rest_framework.serializers import ValidationError
 
 
@@ -45,42 +46,42 @@ def _collect_password_errors(password: str) -> list[str]:
     errors = []
 
     if len(password) < _min_length():
-        errors.append(f'Пароль должен содержать минимум {_min_length()} символов.')
+        errors.append(_('Пароль должен содержать минимум %(count)d символов.') % {'count': _min_length()})
 
     max_length = _max_length()
     if max_length > 0 and len(password) > max_length:
-        errors.append(f'Пароль должен содержать не более {max_length} символов.')
+        errors.append(_('Пароль должен содержать не более %(count)d символов.') % {'count': max_length})
 
     if _require_lowercase() and not any(c.islower() for c in password):
-        errors.append('Пароль должен содержать хотя бы одну букву в нижнем регистре.')
+        errors.append(_('Пароль должен содержать хотя бы одну букву в нижнем регистре.'))
 
     if _require_uppercase() and not any(c.isupper() for c in password):
-        errors.append('Пароль должен содержать хотя бы одну букву в верхнем регистре.')
+        errors.append(_('Пароль должен содержать хотя бы одну букву в верхнем регистре.'))
 
     if _require_digit() and not any(c.isdigit() for c in password):
-        errors.append('Пароль должен содержать хотя бы одну цифру.')
+        errors.append(_('Пароль должен содержать хотя бы одну цифру.'))
 
     if _require_special() and not SPECIAL_CHAR_PATTERN.search(password):
-        errors.append('Пароль должен содержать хотя бы один специальный символ.')
+        errors.append(_('Пароль должен содержать хотя бы один специальный символ.'))
 
     return errors
 
 
 def get_password_requirement_hints() -> list[str]:
-    hints = [f'Минимум {_min_length()} символов']
+    hints = [_('Минимум %(count)d символов') % {'count': _min_length()}]
 
     max_length = _max_length()
     if max_length > 0:
-        hints.append(f'Не более {max_length} символов')
+        hints.append(_('Не более %(count)d символов') % {'count': max_length})
 
     if _require_lowercase():
-        hints.append('Хотя бы одна строчная буква')
+        hints.append(_('Хотя бы одна строчная буква'))
     if _require_uppercase():
-        hints.append('Хотя бы одна заглавная буква')
+        hints.append(_('Хотя бы одна заглавная буква'))
     if _require_digit():
-        hints.append('Хотя бы одна цифра')
+        hints.append(_('Хотя бы одна цифра'))
     if _require_special():
-        hints.append('Хотя бы один специальный символ')
+        hints.append(_('Хотя бы один специальный символ'))
 
     return hints
 
@@ -97,7 +98,7 @@ def validate_new_password_pair(attrs):
     confirm_password = attrs.get('confirm_password', '')
 
     if new_password != confirm_password:
-        raise ValidationError('Новый пароль и подтверждение не совпадают.')
+        raise ValidationError(_('Новый пароль и подтверждение не совпадают.'))
 
     try:
         validate_password_value(new_password)
@@ -114,12 +115,12 @@ class MaxLengthValidator:
     def validate(self, password, user=None):
         if self.max_length > 0 and len(password) > self.max_length:
             raise DjangoValidationError(
-                f'Пароль должен содержать не более {self.max_length} символов.',
+                _('Пароль должен содержать не более %(count)d символов.') % {'count': self.max_length},
                 code='password_too_long',
             )
 
     def get_help_text(self):
-        return f'Пароль не должен содержать более {self.max_length} символов.'
+        return _('Пароль не должен содержать более %(count)d символов.') % {'count': self.max_length}
 
 
 class PasswordPolicyValidator:

@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from src.core.utils.plain_mail import normalize_recipient_email, send_plain_email
@@ -74,11 +75,11 @@ def normalize_welcome_templates(
 
     if len(normalized_subject) > MAX_SUBJECT_LENGTH:
         raise ImportWelcomeEmailError(
-            f'Тема письма не должна превышать {MAX_SUBJECT_LENGTH} символов.',
+            _('Тема письма не должна превышать %(count)d символов.') % {'count': MAX_SUBJECT_LENGTH},
         )
     if len(normalized_body) > MAX_BODY_LENGTH:
         raise ImportWelcomeEmailError(
-            f'Текст письма не должен превышать {MAX_BODY_LENGTH} символов.',
+            _('Текст письма не должен превышать %(count)d символов.') % {'count': MAX_BODY_LENGTH},
         )
     return normalized_subject, normalized_body
 

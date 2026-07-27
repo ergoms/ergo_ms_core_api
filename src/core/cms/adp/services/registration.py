@@ -8,6 +8,7 @@ from typing import Optional
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext as _
 
 User = get_user_model()
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -114,7 +115,7 @@ class RegistrationService:
         if not RegistrationService.is_email_existence_check_enabled():
             return None
         if RegistrationService._email_already_registered(email, exclude_user_id=exclude_user_id):
-            return 'Пользователь с таким email уже существует.'
+            return _('Пользователь с таким email уже существует.')
         return None
 
     @staticmethod
@@ -123,7 +124,7 @@ class RegistrationService:
             return None
         normalized = (email or '').strip().lower()
         if RegistrationService._email_already_registered(normalized):
-            return 'Пользователь с таким email уже зарегистрирован'
+            return _('Пользователь с таким email уже зарегистрирован')
         return None
 
     @staticmethod
@@ -143,15 +144,15 @@ class RegistrationService:
     def validate_email_for_invitation(email: str) -> Optional[str]:
         normalized = (email or '').strip().lower()
         if not normalized:
-            return 'Email обязателен'
+            return _('Email обязателен')
         try:
             validate_email(normalized)
         except DjangoValidationError:
-            return 'Некорректный email'
+            return _('Некорректный email')
         if RegistrationService._email_already_registered(normalized):
-            return 'Пользователь с таким email уже зарегистрирован'
+            return _('Пользователь с таким email уже зарегистрирован')
         if RegistrationService.has_active_invitation_for_email(normalized):
-            return 'Для этого email уже есть активное приглашение'
+            return _('Для этого email уже есть активное приглашение')
         return None
 
     @staticmethod
@@ -159,7 +160,7 @@ class RegistrationService:
     def create_invitation(*, email: str, invited_by: User, note: str = '', send_email: bool = False) -> tuple:
         normalized_email = email.strip().lower()
         if RegistrationService.has_active_invitation_for_email(normalized_email):
-            return None, 'Для этого email уже есть активное приглашение'
+            return None, _('Для этого email уже есть активное приглашение')
 
         expires_at = timezone.now() + timedelta(days=RegistrationService.get_invitation_ttl_days())
         invitation = RegistrationInvitation.objects.create(
@@ -181,7 +182,7 @@ class RegistrationService:
     @staticmethod
     def send_invitation_email(invitation: RegistrationInvitation) -> tuple:
         if not RegistrationService.is_invitation_valid(invitation):
-            return False, 'Приглашение недействительно или истекло'
+            return False, _('Приглашение недействительно или истекло')
 
         invite_url = RegistrationService.build_invitation_url(invitation.token)
         ttl_days = RegistrationService.get_invitation_ttl_days()
@@ -202,9 +203,9 @@ class RegistrationService:
     @staticmethod
     def revoke_invitation(invitation: RegistrationInvitation) -> tuple:
         if invitation.used_at:
-            return False, 'Нельзя отозвать уже использованное приглашение'
+            return False, _('Нельзя отозвать уже использованное приглашение')
         if invitation.is_revoked:
-            return False, 'Приглашение уже отозвано'
+            return False, _('Приглашение уже отозвано')
 
         invitation.is_revoked = True
         invitation.save(update_fields=['is_revoked'])
@@ -266,7 +267,7 @@ class RegistrationService:
         elif scope == 'inactive':
             queryset = RegistrationService.get_inactive_invitations_queryset()
         else:
-            return {'deleted': 0, 'scope': scope, 'error': 'Неизвестный режим очистки'}
+            return {'deleted': 0, 'scope': scope, 'error': _('Неизвестный режим очистки')}
 
         deleted_count, _ = queryset.delete()
         return {'deleted': deleted_count, 'scope': scope}
@@ -291,7 +292,7 @@ class RegistrationService:
                 continue
 
             if normalized in seen:
-                skipped.append({'email': normalized, 'reason': 'Дубликат в списке'})
+                skipped.append({'email': normalized, 'reason': _('Дубликат в списке')})
                 continue
             seen.add(normalized)
 
@@ -307,7 +308,7 @@ class RegistrationService:
                 send_email=False,
             )
             if not invitation:
-                skipped.append({'email': normalized, 'reason': error or 'Не удалось создать приглашение'})
+                skipped.append({'email': normalized, 'reason': error or _('Не удалось создать приглашение')})
                 continue
 
             item = {
@@ -340,7 +341,7 @@ class RegistrationService:
             try:
                 invitation = RegistrationInvitation.objects.get(pk=invitation_id)
             except RegistrationInvitation.DoesNotExist:
-                failed.append({'id': invitation_id, 'error': 'Приглашение не найдено'})
+                failed.append({'id': invitation_id, 'error': _('Приглашение не найдено')})
                 continue
 
             success, error = RegistrationService.send_invitation_email(invitation)

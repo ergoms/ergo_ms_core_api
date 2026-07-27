@@ -1,9 +1,10 @@
-﻿"""Импорт пользователей (Celery)."""
+"""Импорт пользователей (Celery)."""
 import logging
 import os
 
 from django.http import HttpResponse
 from django.utils import timezone
+from django.utils.translation import gettext as _
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
@@ -117,7 +118,7 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
         if not file and not file_path:
             logger.warning('Попытка импорта без файла')
             return Response(
-                {'error': 'Файл не найден'},
+                {'error': _('Файл не найден')},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -134,7 +135,7 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
         if not file_name.endswith(('.xlsx', '.xls', '.csv')):
             logger.warning('Неподдерживаемый формат файла: %s', original_name)
             return Response(
-                {'error': 'Поддерживаются только файлы Excel (.xlsx, .xls) и CSV (.csv)'},
+                {'error': _('Поддерживаются только файлы Excel (.xlsx, .xls) и CSV (.csv)')},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -152,13 +153,13 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
             
             return Response({
                 'task_id': task.id,
-                'message': 'Импорт запущен. Используйте task_id для отслеживания прогресса.'
+                'message': _('Импорт запущен. Используйте task_id для отслеживания прогресса.')
             }, status=status.HTTP_200_OK)
             
         except Exception:
             logger.error('Ошибка при запуске задачи импорта', exc_info=True)
             return Response({
-                'error': 'Не удалось запустить импорт пользователей.'
+                'error': _('Не удалось запустить импорт пользователей.')
             }, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -213,7 +214,7 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
                 'skipped': 0,
                 'progress': 0,
                 'new_logs': [],
-                'status': 'Задача в очереди...'
+                'status': _('Задача в очереди...')
             }
         elif task.state == 'PROGRESS':
             all_logs = task.info.get('logs', [])
@@ -235,7 +236,7 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
                 'progress': task.info.get('progress', 0),
                 'new_logs': new_logs,
                 'logs_total': logs_total,
-                'status': 'Обработка...'
+                'status': _('Обработка...')
             }
         elif task.state == 'SUCCESS':
             result = task.result or {}
@@ -246,7 +247,7 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
                 'created': result.get('created', 0),
                 'skipped': result.get('skipped', 0),
                 'progress': 100,
-                'status': 'Завершено',
+                'status': _('Завершено'),
                 'result': result,
                 'passwords_available': is_passwords_download_available(task_id, request.user),
             }
@@ -258,7 +259,7 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
                 'created': 0,
                 'skipped': 0,
                 'progress': 0,
-                'status': 'Ошибка',
+                'status': _('Ошибка'),
                 'error': str(task.info)
             }
         else:

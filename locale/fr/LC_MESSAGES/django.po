@@ -1,0 +1,556 @@
+# ERGO MS API translations.
+# Copyright (C) ERGO MS
+# This file is distributed under the same license as the ERGO MS package.
+msgid ""
+msgstr ""
+"Project-Id-Version: ERGO MS\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-07-27 12:12+0000\n"
+"PO-Revision-Date: 2026-07-27 12:12+0000\n"
+"Last-Translator: \n"
+"Language-Team: fr\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Bootstrap цвета"
+msgstr "Couleurs Bootstrap"
+
+msgid "Default From Email"
+msgstr "Default From Email"
+
+msgid "Email Settings"
+msgstr "Email Settings"
+
+msgid "Email и код обязательны"
+msgstr "L'e-mail et le code sont obligatoires"
+
+msgid "Email не совпадает с приглашением."
+msgstr "L'e-mail ne correspond pas à l'invitation."
+
+msgid "Email обязателен"
+msgstr "L'e-mail est obligatoire"
+
+msgid "id должен быть UUID: %(value)s"
+msgstr "id doit être un UUID : %(value)s"
+
+msgid "Manifest-данные для сброса модульной темы (заполняется при sync-module-defaults)."
+msgstr "Données de manifeste pour la réinitialisation d'un thème de module (renseignées par sync-module-defaults)."
+
+msgid "menu_item_id обязателен"
+msgstr "menu_item_id est obligatoire"
+
+msgid "parent_id должен быть UUID или null для элемента %(value)s"
+msgstr "parent_id doit être un UUID ou null pour l'élément %(value)s"
+
+msgid "Refresh token отсутствует."
+msgstr "Le jeton d'actualisation est manquant."
+
+msgid "SMTP Host"
+msgstr "SMTP Host"
+
+msgid "SMTP Password"
+msgstr "SMTP Password"
+
+msgid "SMTP Port"
+msgstr "SMTP Port"
+
+msgid "SMTP Username"
+msgstr "SMTP Username"
+
+msgid "URL обязателен для типа \"external\""
+msgstr "L'URL est obligatoire pour le type « external »"
+
+msgid "Use TLS"
+msgstr "Use TLS"
+
+msgid "Аватар не найден"
+msgstr "Avatar introuvable"
+
+msgid "Автор"
+msgstr "Auteur"
+
+msgid "Администратор"
+msgstr "Administrateur"
+
+msgid "Аккаунт приостановлен. Обратитесь к администратору."
+msgstr "Compte suspendu. Contactez l'administrateur."
+
+msgid "Активна"
+msgstr "Active"
+
+msgid "Активная тема не найдена"
+msgstr "Thème actif introuvable"
+
+msgid "Базовая тема"
+msgstr "Thème de base"
+
+msgid "Быстрый выбор"
+msgstr "Sélection rapide"
+
+msgid "В быстром выборе"
+msgstr "Dans la sélection rapide"
+
+msgid "Валидация успешна."
+msgstr "Validation réussie."
+
+msgid "Восстановление пароля отключено администратором. Обратитесь к администратору системы."
+msgstr "La récupération de mot de passe est désactivée par l'administrateur. Contactez l'administrateur système."
+
+msgid "Все поля обязательны для заполнения"
+msgstr "Tous les champs sont obligatoires"
+
+msgid "Все сессии завершены."
+msgstr "Toutes les sessions ont été terminées."
+
+msgid "Выбранная тема"
+msgstr "Thème sélectionné"
+
+msgid "Данный логин уже занят, попробуйте другой."
+msgstr "Ce nom d'utilisateur est déjà pris, essayez-en un autre."
+
+msgid "Для регистрации требуется приглашение."
+msgstr "Une invitation est requise pour s'inscrire."
+
+msgid "Для этого email уже есть активное приглашение"
+msgstr "Une invitation active existe déjà pour cet e-mail"
+
+msgid "Дополнительные CSS-переменные модуля (--module-*)"
+msgstr "Variables CSS supplémentaires du module (--module-*)"
+
+msgid "Доступ запрещён"
+msgstr "Accès refusé"
+
+msgid "Дубликат в списке"
+msgstr "Doublon dans la liste"
+
+msgid "Если пользователь с таким email существует, код будет отправлен"
+msgstr "Si un utilisateur avec cet e-mail existe, un code sera envoyé"
+
+msgid "Завершено"
+msgstr "Terminé"
+
+msgid "Задача в очереди..."
+msgstr "Tâche en file d'attente..."
+
+msgid "Заявка не найдена"
+msgstr "Demande introuvable"
+
+msgid "Заявка уже обработана."
+msgstr "La demande a déjà été traitée."
+
+msgid "Заявки на изменение данных недоступны: редактирование разрешено."
+msgstr "Les demandes de modification de données sont indisponibles : la modification est autorisée."
+
+msgid "Изменение email, ФИО и телефона доступно только администратору. Отправьте заявку на изменение данных."
+msgstr "La modification de l'e-mail, du nom complet et du téléphone n'est accessible qu'à l'administrateur. Soumettez une demande de modification des données."
+
+msgid "Импорт запущен. Используйте task_id для отслеживания прогресса."
+msgstr "Import démarré. Utilisez task_id pour suivre la progression."
+
+msgid "Каждый элемент должен содержать id и order"
+msgstr "Chaque élément doit contenir id et order"
+
+msgid "Кастомные CSS переменные --color-*"
+msgstr "Variables CSS personnalisées --color-*"
+
+msgid "Ключ модуля (kebab-case). Пусто — глобальная тема сайта."
+msgstr "Clé du module (kebab-case). Vide — thème global du site."
+
+msgid "Код подтверждения отправлен"
+msgstr "Code de confirmation envoyé"
+
+msgid "Код успешно подтвержден"
+msgstr "Code confirmé avec succès"
+
+msgid "Лог записан"
+msgstr "Journal enregistré"
+
+msgid "Логин обязателен."
+msgstr "Le nom d'utilisateur est obligatoire."
+
+msgid "Меню восстановлено из миграций"
+msgstr "Menu restauré à partir des migrations"
+
+msgid "Минимум %(count)d символов"
+msgstr "Au moins %(count)d caractères"
+
+msgid "Модуль"
+msgstr "Module"
+
+msgid "На какой теме основана (влияет на Bootstrap переменные)"
+msgstr "Thème de base (affecte les variables Bootstrap)"
+
+msgid "Название темы"
+msgstr "Nom du thème"
+
+msgid "Настройки безопасности обновлены."
+msgstr "Paramètres de sécurité mis à jour."
+
+msgid "Не более %(count)d символов"
+msgstr "Pas plus de %(count)d caractères"
+
+msgid "Не удалось запустить импорт пользователей."
+msgstr "Échec du démarrage de l'import des utilisateurs."
+
+msgid "Не удалось отправить письмо с кодом восстановления."
+msgstr "Échec de l'envoi de l'e-mail de récupération de mot de passe."
+
+msgid "Не удалось отправить уведомление на email пользователя."
+msgstr "Échec de l'envoi de la notification à l'e-mail de l'utilisateur."
+
+msgid "Не удалось создать приглашение"
+msgstr "Échec de la création de l'invitation"
+
+msgid "Неверные учетные данные."
+msgstr "Identifiants invalides."
+
+msgid "Неверный Email или код"
+msgstr "E-mail ou code incorrect"
+
+msgid "Неверный код"
+msgstr "Code incorrect"
+
+msgid "Неверный текущий пароль."
+msgstr "Le mot de passe actuel est incorrect."
+
+msgid "Невозможно удалить пользователя: есть связанные данные, блокирующие удаление."
+msgstr "Impossible de supprimer l'utilisateur : des données liées bloquent la suppression."
+
+msgid "Недостаточно прав для скачивания паролей."
+msgstr "Droits insuffisants pour télécharger les mots de passe."
+
+msgid "Неизвестная роль"
+msgstr "Rôle inconnu"
+
+msgid "Неизвестный режим очистки"
+msgstr "Mode de nettoyage inconnu"
+
+msgid "Некорректный email"
+msgstr "E-mail incorrect"
+
+msgid "Некорректный идентификатор задачи."
+msgstr "Identifiant de tâche incorrect."
+
+msgid "Некорректный формат телефона."
+msgstr "Format de téléphone incorrect."
+
+msgid "Нельзя завершить текущую сессию"
+msgstr "Impossible de terminer la session actuelle"
+
+msgid "Нельзя изменить системный статус роли"
+msgstr "Impossible de modifier le statut système d'un rôle"
+
+msgid "Нельзя отключить системный статус роли"
+msgstr "Impossible de désactiver le statut système d'un rôle"
+
+msgid "Нельзя отозвать уже использованное приглашение"
+msgstr "Impossible de révoquer une invitation déjà utilisée"
+
+msgid "Нельзя приостановить последнего администратора системы."
+msgstr "Vous ne pouvez pas suspendre le dernier administrateur système."
+
+msgid "Нельзя приостановить собственную учётную запись."
+msgstr "Vous ne pouvez pas suspendre votre propre compte."
+
+msgid "Нельзя сбросить пароль собственной учётной записи через эту форму."
+msgstr "Vous ne pouvez pas réinitialiser votre propre mot de passe via ce formulaire."
+
+msgid "Нельзя снять роль у последнего администратора системы."
+msgstr "Impossible de retirer le rôle du dernier administrateur système."
+
+msgid "Нельзя удалить глобального администратора."
+msgstr "Vous ne pouvez pas supprimer un administrateur global."
+
+msgid "Нельзя удалить системную роль"
+msgstr "Impossible de supprimer un rôle système"
+
+msgid "Нельзя удалить собственную учётную запись."
+msgstr "Vous ne pouvez pas supprimer votre propre compte."
+
+msgid "Необходим file или file_path"
+msgstr "file ou file_path est obligatoire"
+
+msgid "Необходимо указать image или image_path"
+msgstr "image ou image_path est obligatoire"
+
+msgid "Неподдерживаемый язык интерфейса."
+msgstr "Langue d'interface non prise en charge."
+
+msgid "Нет доступа к topic или topic не распознан."
+msgstr "Pas d'accès au topic ou topic non reconnu."
+
+msgid "Нет приглашений для удаления"
+msgstr "Aucune invitation à supprimer"
+
+msgid "Новые данные совпадают с текущими."
+msgstr "Les nouvelles données correspondent aux valeurs actuelles."
+
+msgid "Новый пароль и подтверждение не совпадают."
+msgstr "Le nouveau mot de passe et la confirmation ne correspondent pas."
+
+msgid "Обновлена"
+msgstr "Mise à jour"
+
+msgid "Обновлено"
+msgstr "Mis à jour"
+
+msgid "Обработка..."
+msgstr "Traitement..."
+
+msgid "Описание"
+msgstr "Description"
+
+msgid "Остальные сессии завершены."
+msgstr "Les autres sessions ont été terminées."
+
+msgid "Отсутствует Email"
+msgstr "L'e-mail est obligatoire"
+
+msgid "Ошибка"
+msgstr "Erreur"
+
+msgid "Пара модульной темы"
+msgstr "Paire de thèmes de module"
+
+msgid "Параметр url обязателен"
+msgstr "Le paramètre url est obligatoire"
+
+msgid "Пароль должен содержать минимум %(count)d символов."
+msgstr "Le mot de passe doit contenir au moins %(count)d caractères."
+
+msgid "Пароль должен содержать не более %(count)d символов."
+msgstr "Le mot de passe ne doit pas contenir plus de %(count)d caractères."
+
+msgid "Пароль должен содержать хотя бы один специальный символ."
+msgstr "Le mot de passe doit contenir au moins un caractère spécial."
+
+msgid "Пароль должен содержать хотя бы одну букву в верхнем регистре."
+msgstr "Le mot de passe doit contenir au moins une lettre majuscule."
+
+msgid "Пароль должен содержать хотя бы одну букву в нижнем регистре."
+msgstr "Le mot de passe doit contenir au moins une lettre minuscule."
+
+msgid "Пароль должен содержать хотя бы одну цифру."
+msgstr "Le mot de passe doit contenir au moins un chiffre."
+
+msgid "Пароль не должен содержать более %(count)d символов."
+msgstr "Le mot de passe ne doit pas contenir plus de %(count)d caractères."
+
+msgid "Пароль сброшен."
+msgstr "Mot de passe réinitialisé."
+
+msgid "Пароль сброшен. Пользователю отправлено уведомление."
+msgstr "Mot de passe réinitialisé. Une notification a été envoyée à l'utilisateur."
+
+msgid "Пароль успешно изменён"
+msgstr "Mot de passe modifié avec succès"
+
+msgid "Пароль успешно изменён."
+msgstr "Mot de passe modifié avec succès."
+
+msgid "Пароль установлен."
+msgstr "Mot de passe défini."
+
+msgid "Переопределение Bootstrap переменных --bs-*"
+msgstr "Remplacement des variables Bootstrap --bs-*"
+
+msgid "По умолчанию"
+msgstr "Par défaut"
+
+msgid "Поддерживаются только файлы Excel (.xlsx, .xls) и CSV (.csv)"
+msgstr "Seuls les fichiers Excel (.xlsx, .xls) et CSV (.csv) sont pris en charge"
+
+msgid "Поле is_active должно быть булевым значением."
+msgstr "Le champ is_active doit être une valeur booléenne."
+
+msgid "Поле is_active обязательно."
+msgstr "Le champ is_active est obligatoire."
+
+msgid "Политика должна быть привязана к роли или ролевой группе"
+msgstr "La politique doit être liée à un rôle ou à un groupe de rôles"
+
+msgid "Политика не может быть одновременно привязана к роли и ролевой группе"
+msgstr "La politique ne peut pas être liée à la fois à un rôle et à un groupe de rôles"
+
+msgid "Политика не найдена"
+msgstr "Politique introuvable"
+
+msgid "Пользователь"
+msgstr "Utilisateur"
+
+msgid "Пользователь не найден"
+msgstr "Utilisateur introuvable"
+
+msgid "Пользователь с таким email не найден"
+msgstr "Aucun utilisateur trouvé avec cet e-mail"
+
+msgid "Пользователь с таким email уже зарегистрирован"
+msgstr "Un utilisateur avec cet e-mail est déjà inscrit"
+
+msgid "Пользователь с таким email уже существует."
+msgstr "Un utilisateur avec cet e-mail existe déjà."
+
+msgid "Порядок обновлён"
+msgstr "Ordre mis à jour"
+
+msgid "Право модуля не найдено"
+msgstr "Permission de module introuvable"
+
+msgid "Предпочтение темы пользователя"
+msgstr "Préférence de thème de l'utilisateur"
+
+msgid "Предпочтения тем пользователей"
+msgstr "Préférences de thème des utilisateurs"
+
+msgid "Приглашение не найдено"
+msgstr "Invitation introuvable"
+
+msgid "Приглашение недействительно или истекло"
+msgstr "L'invitation est invalide ou a expiré"
+
+msgid "Приглашение недействительно или истекло."
+msgstr "L'invitation est invalide ou a expiré."
+
+msgid "Приглашение уже отозвано"
+msgstr "L'invitation est déjà révoquée"
+
+msgid "Проверьте настройки SMTP."
+msgstr "Vérifiez les paramètres SMTP."
+
+msgid "Пусто — стандарт сайта"
+msgstr "Vide — valeur par défaut du site"
+
+msgid "Разделитель не найден"
+msgstr "Séparateur introuvable"
+
+msgid "Размер файла не должен превышать %(count)d МБ"
+msgstr "La taille du fichier ne doit pas dépasser %(count)d Mo"
+
+msgid "Регистрация в системе отключена."
+msgstr "L'inscription est désactivée."
+
+msgid "Регистрация успешна."
+msgstr "Inscription réussie."
+
+msgid "Ролевая группа не найдена"
+msgstr "Groupe de rôles introuvable"
+
+msgid "Ролевую группу нельзя привязать к системной роли «Администратор». У администраторов полный доступ без ролевых групп. Выберите роль «Пользователь» или другую пользовательскую роль."
+msgstr "Un groupe de rôles ne peut pas être lié au rôle système « Administrateur ». Les administrateurs ont un accès complet sans groupes de rôles. Choisissez le rôle « Utilisateur » ou un autre rôle personnalisé."
+
+msgid "Роль не найдена"
+msgstr "Rôle introuvable"
+
+msgid "Роль не найдена."
+msgstr "Rôle introuvable."
+
+msgid "Светлая"
+msgstr "Claire"
+
+msgid "Связка light+dark вариантов модуля. Пусто — тема сайта."
+msgstr "Paire de variantes light+dark du module. Vide — thème du site."
+
+msgid "Сессия завершена."
+msgstr "Session terminée."
+
+msgid "Сессия завершена. Войдите снова."
+msgstr "Session terminée. Veuillez vous reconnecter."
+
+msgid "Сессия не найдена."
+msgstr "Session introuvable."
+
+msgid "Системная"
+msgstr "Système"
+
+msgid "Системные темы нельзя удалить"
+msgstr "Les thèmes système ne peuvent pas être supprimés"
+
+msgid "Снимок начальных значений"
+msgstr "Instantané des valeurs initiales"
+
+msgid "Создана"
+msgstr "Créée"
+
+msgid "Стандарт сайта для пользователей без личного выбора"
+msgstr "Valeur par défaut du site pour les utilisateurs sans choix personnel"
+
+msgid "Страница обязательна для типа \"offcanvas\""
+msgstr "La page est obligatoire pour le type « offcanvas »"
+
+msgid "Текст письма не должен превышать %(count)d символов."
+msgstr "Le corps de l'e-mail ne doit pas dépasser %(count)d caractères."
+
+msgid "Тема"
+msgstr "Thème"
+
+msgid "Тема доступна всем в каталоге быстрого выбора"
+msgstr "Le thème est disponible pour tous dans le catalogue de sélection rapide"
+
+msgid "Тема письма не должна превышать %(count)d символов."
+msgstr "L'objet de l'e-mail ne doit pas dépasser %(count)d caractères."
+
+msgid "Темы"
+msgstr "Thèmes"
+
+msgid "Токены модуля"
+msgstr "Jetons de module"
+
+msgid "Тёмная"
+msgstr "Sombre"
+
+msgid "У вас уже есть заявка на рассмотрении."
+msgstr "Vous avez déjà une demande en attente."
+
+msgid "У пользователя не указан email — уведомление не отправлено."
+msgstr "L'utilisateur n'a pas d'e-mail — la notification n'a pas été envoyée."
+
+msgid "У пользователя уже есть активная роль"
+msgstr "L'utilisateur a déjà un rôle actif"
+
+msgid "Укажите action (subscribe|unsubscribe) и topic."
+msgstr "Indiquez action (subscribe|unsubscribe) et topic."
+
+msgid "Укажите имя или фамилию."
+msgstr "Indiquez un prénom ou un nom."
+
+msgid "Укажите корректный email."
+msgstr "Indiquez un e-mail valide."
+
+msgid "Укажите новый пароль и подтверждение."
+msgstr "Indiquez le nouveau mot de passe et la confirmation."
+
+msgid "Укажите пароль и подтверждение."
+msgstr "Indiquez le mot de passe et la confirmation."
+
+msgid "Устройство не найдено."
+msgstr "Appareil introuvable."
+
+msgid "Файл изображения не передан"
+msgstr "Le fichier image n'a pas été fourni"
+
+msgid "Файл не найден"
+msgstr "Fichier introuvable"
+
+msgid "Файл с паролями недоступен или уже был скачан."
+msgstr "Le fichier des mots de passe est indisponible ou a déjà été téléchargé."
+
+msgid "Хотя бы один специальный символ"
+msgstr "Au moins un caractère spécial"
+
+msgid "Хотя бы одна заглавная буква"
+msgstr "Au moins une lettre majuscule"
+
+msgid "Хотя бы одна строчная буква"
+msgstr "Au moins une lettre minuscule"
+
+msgid "Хотя бы одна цифра"
+msgstr "Au moins un chiffre"
+
+msgid "Цвета темы"
+msgstr "Couleurs du thème"
+
+msgid "Элемент меню не найден"
+msgstr "Élément de menu introuvable"
