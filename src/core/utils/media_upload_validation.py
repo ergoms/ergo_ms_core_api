@@ -17,6 +17,7 @@ _TARGET_DIR_RE = re.compile(
 _DEFAULT_ALLOWED_EXTENSIONS = frozenset({
     'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico',
     'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'txt', 'csv', 'rtf',
+    'parquet',
     'zip', '7z', 'rar', 'tar', 'gz',
     'mp3', 'wav', 'ogg', 'mp4', 'webm', 'mov', 'avi',
     'json', 'xml', 'yaml', 'yml', 'md',
