@@ -8,6 +8,21 @@ def migrate_email_master_switch(apps, schema_editor):
     UserProfile = apps.get_model('cms_adp', 'UserProfile')
     NotificationPreference = apps.get_model('core_notifications', 'NotificationPreference')
 
+    # Старый план мог применить cms_adp.0044 раньше этой миграции — поля уже нет.
+    if not any(f.name == 'email_notifications' for f in UserProfile._meta.get_fields()):
+        return
+
+    table = UserProfile._meta.db_table
+    with schema_editor.connection.cursor() as cursor:
+        columns = {
+            col.name
+            for col in schema_editor.connection.introspection.get_table_description(
+                cursor, table,
+            )
+        }
+    if 'email_notifications' not in columns:
+        return
+
     disabled_user_ids = UserProfile.objects.filter(
         email_notifications=False,
     ).values_list('user_id', flat=True)
@@ -38,7 +53,8 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('core_notifications', '0001_initial'),
-        ('cms_adp', '0003_userprofile'),
+        # Поле email_notifications ещё есть; снятие — в cms_adp.0044 после этой миграции.
+        ('cms_adp', '0043_menuitem_menuseparator_public_id'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
