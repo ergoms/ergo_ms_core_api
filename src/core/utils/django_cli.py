@@ -2,11 +2,13 @@
 Детекция one-shot schema-команд Django для облегчённого старта.
 
 При ``migrate`` / ``makemigrations`` и родственных командах не нужен runtime-
-bootstrap (bridge providers, realtime topics, isolation audit). Модели и
-``post_migrate`` остаются — схема БД должна применяться полностью.
+bootstrap (bridge providers, realtime topics, isolation audit, URL модулей).
+Модели и ``post_migrate`` остаются — схема БД должна применяться полностью.
 
 Для приложений ``modules.*`` ядро центрально пропускает ``AppConfig.ready()``
 (см. ``install_lean_module_ready_guard``) — в каждом модуле гейт писать не нужно.
+Discovery URL модулей тоже пропускается (``ModuleDiscoverer._find_modules_urls``):
+без ``ready()`` мост пуст, импорт urls потребителей был бы ошибкой.
 В ядре ``src.core.*`` тяжёлый ready по-прежнему гейтится точечно через
 ``is_lean_schema_cli()`` (например ADP оставляет ``post_migrate``).
 """

@@ -237,6 +237,13 @@ class ModuleDiscoverer:
             modules_dir (str): Директория модулей.
             urlpatterns (list): Список для добавления найденных URL паттернов.
         """
+        from src.core.utils.django_cli import is_lean_schema_cli
+
+        # migrate/makemigrations: module ready() пропущен, bridge пуст — URL модулей не нужны
+        if is_lean_schema_cli():
+            logger.debug('Lean schema CLI: пропуск discovery URL модулей')
+            return
+
         if not os.path.isdir(modules_dir):
             return
         

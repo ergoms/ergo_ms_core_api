@@ -273,7 +273,7 @@ else:
                     ensure_kombu_redis_resp2,
                     uses_redis_celery_backend,
                 )
-                from src.core.utils.celery.manager import CeleryModuleManager
+                from src.core.utils.celery_config_cache import read_routes_queues_cache
 
                 celery_app.config_from_object(django_settings, namespace='CELERY')
                 broker = celery_app.conf.broker_url
@@ -281,19 +281,37 @@ else:
                 if broker and uses_redis_celery_backend(str(broker), str(result or '')):
                     ensure_kombu_redis_resp2()
 
-                manager = CeleryModuleManager()
-                queues = manager.get_all_task_queues()
+                # HTTP-процесс: только прогретый bin, без скана celery_config модулей.
+                cached = read_routes_queues_cache(validate_fingerprint=False)
+                routes_source = 'cache'
+                if cached is not None:
+                    routes, queues = cached
+                else:
+                    from src.core.utils.celery.manager import CeleryModuleManager
+
+                    manager = CeleryModuleManager(use_config_cache=True)
+                    routes = manager.get_all_task_routes()
+                    queues = manager.get_all_task_queues()
+                    routes_source = 'modules'
+
                 if 'default' not in queues:
+                    queues = dict(queues)
                     queues['default'] = {
                         'exchange': 'default',
                         'routing_key': 'default',
                     }
                 celery_app.conf.update(
-                    task_routes=manager.get_all_task_routes(),
+                    task_routes=routes,
                     task_default_queue='default',
                     task_queues=queues,
                 )
                 _django_celery_configured = True
-                logger.info('Celery (Django): broker=%s', celery_app.conf.broker_url)
+                logger.info(
+                    'Celery (Django): broker=%s routes=%s (%d/%d)',
+                    celery_app.conf.broker_url,
+                    routes_source,
+                    len(routes),
+                    len(queues),
+                )
             except Exception as exc:
                 logger.warning('Celery (Django): не удалось сконфигурировать: %s', exc)

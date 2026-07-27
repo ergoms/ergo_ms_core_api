@@ -125,19 +125,27 @@ def write_routes_queues_cache(
         )
 
 
-def read_routes_queues_cache() -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+def read_routes_queues_cache(
+    *,
+    validate_fingerprint: bool = True,
+) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
     """
     Читает routes и queues из кэша.
-    Возвращает (routes, queues) или None если кэш невалиден.
+    Возвращает (routes, queues) или None если кэш отсутствует/невалиден.
+
+    validate_fingerprint=False — только наличие данных в bin (без обхода
+    celery_config.py модулей). Для HTTP-процесса API после warmup_caches.
     """
-    from src.core.utils.cache_fingerprint import fingerprint_equal
     from src.core.utils.cache_io import read_bin_cache
 
     data = read_bin_cache(CACHE_FILE)
     if data is None:
         return None
-    if not fingerprint_equal(data.get('fingerprint', {}), _get_fingerprint()):
-        return None
+    if validate_fingerprint:
+        from src.core.utils.cache_fingerprint import fingerprint_equal
+
+        if not fingerprint_equal(data.get('fingerprint', {}), _get_fingerprint()):
+            return None
     routes = data.get('routes')
     queues = data.get('queues')
     if routes is not None and queues is not None:

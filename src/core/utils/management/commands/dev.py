@@ -22,10 +22,16 @@ from django.core.management.base import CommandParser
 from django.conf import settings
 
 from src.config.deploy import build_daphne_command, get_api_bind_host, get_api_bind_port, is_production
+from src.config.env import env
 from src.config.paths import API_DIR
 from src.core.utils.startup_timing import get_elapsed, get_elapsed_str
 
 logger = logging.getLogger('core.utils.commands')
+
+
+def _env_autoreload_enabled() -> bool:
+    """API_AUTORELOAD: false — runserver без reloader (быстрее cold start, без hot-reload)."""
+    return env.bool('API_AUTORELOAD', default=True)
 
 
 class _StreamTimingWrapper:
@@ -101,13 +107,37 @@ class Command(RunserverCommand):
             cmd = build_daphne_command(sys.executable)
             raise SystemExit(subprocess.call(cmd, cwd=str(API_DIR)))
 
+        if not _env_autoreload_enabled():
+            options['use_reloader'] = False
+            msg = 'API_AUTORELOAD=false: runserver без autoreload'
+            logger.info(msg)
+            try:
+                self.stdout.write(self.style.WARNING(msg))
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+
+        use_reloader = bool(options.get('use_reloader', True))
+        if use_reloader:
+            from src.core.utils.dev_autoreload import install_dev_autoreload_filters
+
+            install_dev_autoreload_filters()
+
         is_reloader_child = os.environ.get('RUN_MAIN') == 'true'
-        role = 'autoreload child (рабочий процесс)' if is_reloader_child else 'autoreload parent (launcher)'
+        if use_reloader:
+            role = (
+                'autoreload child (рабочий процесс)'
+                if is_reloader_child
+                else 'autoreload parent (launcher)'
+            )
+        else:
+            role = 'без autoreload'
         logger.info('Запуск команды runserver (%s)', role)
-        if is_reloader_child:
+        if is_reloader_child or not use_reloader:
             elapsed_msg = get_elapsed_str()
             try:
-                self.stdout.write(self.style.SUCCESS(f'  API (runserver): Django загружен полностью {elapsed_msg}'))
+                self.stdout.write(
+                    self.style.SUCCESS(f'  API (runserver): Django загружен полностью {elapsed_msg}')
+                )
             except (UnicodeEncodeError, UnicodeDecodeError):
                 logger.info('API (runserver): Django загружен полностью %s', elapsed_msg)
 
@@ -125,7 +155,7 @@ class Command(RunserverCommand):
             options['addrport'] = addrport
         else:
             logger.info(f'Используются пользовательские настройки: {options["addrport"]}')
-        
+
         try:
             orig_stdout = self.stdout
             self.stdout = _StreamTimingWrapper(orig_stdout)

@@ -26,7 +26,12 @@ class Theme(models.Model):
     is_default = models.BooleanField(
         _("По умолчанию"),
         default=False,
-        help_text=_("Использовать как тему по умолчанию")
+        help_text=_("Стандарт сайта для пользователей без личного выбора"),
+    )
+    is_available = models.BooleanField(
+        _("В быстром выборе"),
+        default=False,
+        help_text=_("Тема доступна всем в каталоге быстрого выбора"),
     )
     is_system = models.BooleanField(
         _("Системная"),
@@ -95,6 +100,10 @@ class Theme(models.Model):
                 fields=['module_key', 'is_default'],
                 name='settings_th_module__0d2baf_idx',
             ),
+            models.Index(
+                fields=['module_key', 'is_available'],
+                name='settings_th_module__7988fc_idx',
+            ),
         ]
 
     def __str__(self):
@@ -153,6 +162,42 @@ class Theme(models.Model):
         # Пустой объект - Bootstrap переменные не переопределяются по умолчанию
         # Используются стандартные значения Bootstrap + кастомные из colors
         return {}
+
+class UserThemePreference(models.Model):
+    """Личный выбор палитры и быстрый список тем пользователя."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='theme_preference',
+        verbose_name=_("Пользователь"),
+    )
+    selected_theme = models.ForeignKey(
+        Theme,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='selected_by_users',
+        verbose_name=_("Выбранная тема"),
+        help_text=_("Пусто — стандарт сайта"),
+        limit_choices_to={'module_key__isnull': True},
+    )
+    favorites = models.ManyToManyField(
+        Theme,
+        blank=True,
+        related_name='favorited_by_users',
+        verbose_name=_("Быстрый выбор"),
+        limit_choices_to={'module_key__isnull': True},
+    )
+    updated_at = models.DateTimeField(_("Обновлено"), auto_now=True)
+
+    class Meta:
+        verbose_name = _("Предпочтение темы пользователя")
+        verbose_name_plural = _("Предпочтения тем пользователей")
+
+    def __str__(self):
+        return f"Тема пользователя {self.user_id}"
+
 
 class EmailSettings(models.Model):
     smtp_host = models.CharField(_("SMTP Host"), max_length=255, blank=True)

@@ -4,8 +4,10 @@ from .models import UserAvatar
 from src.core.utils.mixins import validate_media_path
 from .models import (
     Theme,
-    EmailSettings
+    EmailSettings,
 )
+from src.core.settings.services.user_theme_preference import set_theme_available
+
 
 class ThemeSerializer(serializers.ModelSerializer):
     """Сериализатор для тем оформления"""
@@ -15,7 +17,7 @@ class ThemeSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'author', 'base_theme',
             'module_key', 'module_pair', 'module_tokens',
-            'is_active', 'is_default', 'is_system',
+            'is_active', 'is_default', 'is_available', 'is_system',
             'colors', 'bootstrap_colors',
             'created_at', 'updated_at'
         ]
@@ -29,6 +31,7 @@ class ThemeSerializer(serializers.ModelSerializer):
                 allowed_fields = {
                     'is_active',
                     'is_default',
+                    'is_available',
                     'name',
                     'description',
                     'author',
@@ -40,7 +43,7 @@ class ThemeSerializer(serializers.ModelSerializer):
                     'module_pair',
                 }
             else:
-                allowed_fields = {'is_active', 'is_default'}
+                allowed_fields = {'is_active', 'is_default', 'is_available'}
             changed_fields = set(data.keys()) - allowed_fields
             if changed_fields:
                 raise serializers.ValidationError(
@@ -56,6 +59,28 @@ class ThemeSerializer(serializers.ModelSerializer):
                 'base_theme': 'У модульной темы вариант может быть только light или dark.',
             })
         return data
+
+    def update(self, instance, validated_data):
+        available = validated_data.pop('is_available', None)
+        instance = super().update(instance, validated_data)
+        if available is not None:
+            try:
+                instance = set_theme_available(instance, bool(available))
+            except ValueError as exc:
+                raise serializers.ValidationError({'is_available': str(exc)}) from exc
+        return instance
+
+
+class UserThemePreferenceSerializer(serializers.Serializer):
+    selected_theme_id = serializers.IntegerField(allow_null=True, required=False)
+    favorite_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+    )
+    default_theme_id = serializers.IntegerField(allow_null=True, required=False, read_only=True)
+
+    class Meta:
+        ref_name = 'UserThemePreferenceSerializer'
 
 
 class EmailSettingsSerializer(serializers.ModelSerializer):

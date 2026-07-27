@@ -111,8 +111,16 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
     def get_permissions(self):
         if self.action == 'get_active_theme':
             return [AllowAny()]
-        if self.action in ('list', 'retrieve'):
+        if self.action in (
+            'catalog',
+            'my_preference',
+            'select_my_theme',
+            'update_my_favorites',
+        ):
             return [IsAuthenticated()]
+        if self.action in ('list', 'retrieve'):
+            # Полный список — редактор админа; пользователям — catalog/
+            return [IsAuthenticated(), IsGlobalAdmin()]
         return [IsAuthenticated(), IsGlobalAdmin()]
     
     def get_queryset(self):
@@ -136,12 +144,17 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
         return queryset
     
     def destroy(self, request, *args, **kwargs):
-        """Запрет удаления системных тем"""
+        """Запрет удаления системных тем и стандарта сайта"""
         instance = self.get_object()
         if instance.is_system:
             return Response(
                 {'error': 'Нельзя удалить системную тему'},
                 status=status.HTTP_403_FORBIDDEN
+            )
+        if not instance.module_key and instance.is_default:
+            return Response(
+                {'error': 'Нельзя удалить стандарт сайта. Сначала назначьте другой стандарт.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
         return super().destroy(request, *args, **kwargs)
 
@@ -156,7 +169,7 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
     
     @action(detail=False, methods=['get'], url_path='active')
     def get_active_theme(self, request):
-        """Получить активную тему сайта или пару light+dark модуля (?module=)"""
+        """Эффективная тема: личная для авторизованного или стандарт сайта; для модуля — пара."""
         module_key = request.query_params.get('module')
         if module_key and module_key not in ('site', ''):
             from src.core.settings.services.module_theme_sets import build_module_theme_set
@@ -169,18 +182,96 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        scope = Theme.objects.filter(module_key__isnull=True)
-        active_theme = scope.filter(is_active=True).first()
-        if active_theme:
-            return Response(ThemeSerializer(active_theme).data)
-        default_theme = scope.filter(is_default=True).first()
-        if default_theme:
-            return Response(ThemeSerializer(default_theme).data)
+        from src.core.settings.services.user_theme_preference import get_effective_site_theme
+
+        user = request.user if getattr(request.user, 'is_authenticated', False) else None
+        effective = get_effective_site_theme(user)
+        if effective:
+            return Response(ThemeSerializer(effective).data)
         return Response({'detail': 'Активная тема не найдена'}, status=status.HTTP_404_NOT_FOUND)
-    
+
+    @action(detail=False, methods=['get'], url_path='catalog')
+    def catalog(self, request):
+        """Темы сайта, доступные в общем быстром выборе."""
+        qs = Theme.objects.filter(module_key__isnull=True, is_available=True).order_by(
+            '-is_default', '-is_system', 'name',
+        )
+        return Response(ThemeSerializer(qs, many=True).data)
+
+    @action(detail=False, methods=['get', 'patch'], url_path='me')
+    def my_preference(self, request):
+        """Личные предпочтения темы текущего пользователя."""
+        from src.core.settings.services.user_theme_preference import (
+            preference_payload,
+            select_user_theme,
+        )
+
+        if request.method == 'GET':
+            return Response(preference_payload(request.user))
+
+        if 'selected_theme_id' not in request.data:
+            return Response(preference_payload(request.user))
+        try:
+            payload = select_user_theme(request.user, request.data.get('selected_theme_id'))
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload)
+
+    @action(detail=False, methods=['post'], url_path='me/select')
+    def select_my_theme(self, request):
+        """Выбрать личную палитру или сбросить к стандарту сайта (null)."""
+        from src.core.settings.services.user_theme_preference import select_user_theme
+
+        if 'theme_id' not in request.data and 'selected_theme_id' not in request.data:
+            return Response(
+                {'error': 'Укажите theme_id или selected_theme_id'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        theme_id = request.data.get('theme_id', request.data.get('selected_theme_id'))
+        try:
+            payload = select_user_theme(request.user, theme_id)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload)
+
+    @action(detail=False, methods=['post'], url_path='me/favorites')
+    def update_my_favorites(self, request):
+        """Добавить или убрать тему из личного быстрого списка."""
+        from src.core.settings.services.user_theme_preference import update_user_favorites
+
+        add_id = request.data.get('add')
+        remove_id = request.data.get('remove')
+        if add_id is None and remove_id is None:
+            return Response(
+                {'error': 'Укажите add и/или remove'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            payload = update_user_favorites(request.user, add_id=add_id, remove_id=remove_id)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload)
+
+    @action(detail=True, methods=['post'], url_path='set-default')
+    def set_default_theme(self, request, pk=None):
+        """Назначить тему стандартом сайта (is_default + is_active + is_available)."""
+        from src.core.settings.services.user_theme_preference import set_site_default_theme
+
+        theme = self.get_object()
+        if theme.module_key:
+            return Response(
+                {'error': 'Стандарт сайта задаётся только для тем сайта'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            theme = set_site_default_theme(theme)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(ThemeSerializer(theme).data)
+
     @action(detail=True, methods=['post'], url_path='activate')
     def activate_theme(self, request, pk=None):
-        """Активировать тему сайта или пару light+dark модуля целиком"""
+        """Активировать пару модуля; для сайта — синоним set-default."""
         theme = self.get_object()
         if theme.module_key:
             from src.core.settings.services.module_theme_sets import activate_module_pair
@@ -192,9 +283,9 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             return Response(built)
-        Theme.objects.filter(is_active=True, module_key__isnull=True).update(is_active=False)
-        theme.is_active = True
-        theme.save()
+        from src.core.settings.services.user_theme_preference import set_site_default_theme
+
+        theme = set_site_default_theme(theme)
         return Response(ThemeSerializer(theme).data)
     
     @action(detail=True, methods=['post'], url_path='duplicate')

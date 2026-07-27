@@ -56,7 +56,16 @@ def _get_dirs_fingerprint() -> dict:
             result[f'{name}_dir'] = 0
             result[f'{name}_apps'] = 0
     result['disabled_modules'] = os.getenv('DISABLED_MODULES', '')
+    # Инвалидация кэша при смене алгоритма порядка module_requires
+    result['module_load_order'] = 1
     return result
+
+
+def _finalize_discovered_apps(apps: List[str]) -> List[str]:
+    """Топсорт модулей по AppConfig.module_requires."""
+    from src.core.utils.auto_api.module_load_order import sort_discovered_apps
+
+    return sort_discovered_apps(apps)
 
 
 def _run_discovery_fast() -> List[str]:
@@ -66,7 +75,7 @@ def _run_discovery_fast() -> List[str]:
         f_mod = ex.submit(_collect_module_apps_fast)
         core_apps = f_core.result()
         module_apps = f_mod.result()
-    return core_apps + module_apps
+    return _finalize_discovered_apps(core_apps + module_apps)
 
 
 def _collect_core_apps_fast() -> List[str]:
@@ -135,7 +144,7 @@ def _run_discovery() -> List[str]:
     discoverer._recursively_find_apps(str(CORE_DIR), 'src.core', core_apps)
     module_apps: List[str] = []
     discoverer._find_modules_apps(str(MODULES_DIR), module_apps)
-    return core_apps + module_apps
+    return _finalize_discovered_apps(core_apps + module_apps)
 
 
 _in_memory_cache: Optional[tuple] = None
