@@ -76,6 +76,10 @@ class Command(RunserverCommand):
     """
     help = 'Запускает development сервер с необходимыми сервисами'
 
+    def log_action(self, protocol, action, details):
+        """HTTP access — только AccessLogMiddleware (без дубля django.channels.server)."""
+        return
+
     def add_arguments(self, parser: CommandParser) -> None:
         """
         Добавляет аргументы командной строки.

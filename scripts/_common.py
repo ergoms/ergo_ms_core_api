@@ -5,6 +5,8 @@
 чтобы избежать дублирования логики чтения кэша и fingerprint.
 """
 
+import logging
+import logging.config
 import os
 import subprocess
 import sys
@@ -22,6 +24,30 @@ if str(DEPLOYMENT_DIR) not in sys.path:
     sys.path.insert(0, str(DEPLOYMENT_DIR))
 
 from console_tags import format_console  # noqa: E402
+
+_BOOTSTRAP_LOGGER: Optional[logging.Logger] = None
+_LOGGING_CONFIGURED = False
+
+
+def setup_celery_script_logging(service: Optional[str] = None) -> logging.Logger:
+    """dictConfig до Django — единый формат bootstrap-сообщений worker/beat."""
+    global _BOOTSTRAP_LOGGER, _LOGGING_CONFIGURED
+    if not _LOGGING_CONFIGURED:
+        from src.config.log_paths import resolve_logging_service
+        from src.config.logging_config import build_logging_config
+
+        resolved = service or resolve_logging_service(sys.argv)
+        logging.config.dictConfig(build_logging_config(resolved))
+        _LOGGING_CONFIGURED = True
+    if _BOOTSTRAP_LOGGER is None:
+        _BOOTSTRAP_LOGGER = logging.getLogger('celery.bootstrap')
+    return _BOOTSTRAP_LOGGER
+
+
+def get_bootstrap_logger() -> logging.Logger:
+    if _BOOTSTRAP_LOGGER is None:
+        return setup_celery_script_logging()
+    return _BOOTSTRAP_LOGGER
 
 
 def _bootstrap_project_env() -> None:
@@ -196,23 +222,28 @@ def ensure_caches(*, verbose: Optional[bool] = None) -> List[str]:
     """
     from src.core.utils.celery.startup_format import celery_startup_verbose, format_name_list
 
+    log = get_bootstrap_logger()
     show_full = verbose if verbose is not None else celery_startup_verbose()
     queues = read_queues_cache()
     # Если кэш уже валиден (даже с 0 очередями) — не пытаемся заново греть Celery.
     if queues or cache_valid():
         if queues:
             detail = format_name_list(queues, verbose=show_full)
-            print(
-                f'Кэш очередей Celery валиден: {len(queues)} очередей ({detail}), '
-                f'warmup_celery не требуется'
+            log.info(
+                'Кэш очередей Celery валиден: %s очередей (%s), warmup_celery не требуется',
+                len(queues),
+                detail,
             )
         else:
-            print('Кэш очередей Celery валиден, очередей 0 (нет Celery-модулей), warmup_celery не требуется')
+            log.info(
+                'Кэш очередей Celery валиден, очередей 0 (нет Celery-модулей), '
+                'warmup_celery не требуется'
+            )
         return queues
 
     if _acquire_warmup_lock():
         try:
-            print('Кэш очередей Celery пуст или невалиден. Заполняем через warmup_celery...')
+            log.info('Кэш очередей Celery пуст или невалиден. Заполняем через warmup_celery...')
             result = subprocess.run(
                 [sys.executable, '-m', 'commands', 'warmup_celery'],
                 cwd=str(API_DIR),
@@ -221,21 +252,21 @@ def ensure_caches(*, verbose: Optional[bool] = None) -> List[str]:
             if result.returncode == 0:
                 queues = read_queues_cache()
                 if cache_valid():
-                    print(f'Кэш заполнен после warmup_celery: {len(queues)} очередей')
+                    log.info('Кэш заполнен после warmup_celery: %s очередей', len(queues))
                     return queues
-            print(format_console('warning', 'Не удалось заполнить кэш, запуск без -Q (все очереди)'))
+            log.warning('Не удалось заполнить кэш, запуск без -Q (все очереди)')
         except Exception as e:
-            print(format_console('warning', f'Не удалось заполнить кэш ({e}), запуск без -Q (все очереди)'))
+            log.warning('Не удалось заполнить кэш (%s), запуск без -Q (все очереди)', e)
         finally:
             _release_warmup_lock()
         return []
 
-    print('Другой процесс заполняет кэш, ожидание...')
+    log.info('Другой процесс заполняет кэш, ожидание...')
     if _wait_for_warmup():
         queues = read_queues_cache()
-        print(f'Кэш готов: {len(queues)} очередей')
+        log.info('Кэш готов: %s очередей', len(queues))
         return queues
-    print(format_console('warning', 'Истекло время ожидания кэша, запуск без -Q (все очереди)'))
+    log.warning('Истекло время ожидания кэша, запуск без -Q (все очереди)')
     return []
 
 
@@ -246,7 +277,8 @@ def run_celery_with_timing(
     service_name: str,
     start: Optional[float] = None,
 ) -> int:
-    """Запускает celery, выводит лог и печатает время до готовности."""
+    """Запускает celery, пробрасывает stdout дочернего процесса и логирует готовность."""
+    log = get_bootstrap_logger()
     if start is None:
         start = time.perf_counter()
     env = os.environ.copy()
@@ -269,13 +301,14 @@ def run_celery_with_timing(
     try:
         if proc.stdout:
             for line in proc.stdout:
+                # Сырой вывод Celery (уже в своём формате) — без повторного formatter.
                 print(line, end='')
                 if not ready_printed and ready_pattern in line:
                     elapsed = time.perf_counter() - start
                     suffix = 'ms' if elapsed < 1 else 's'
                     val = elapsed * 1000 if elapsed < 1 else elapsed
                     fmt = f'{val:.0f}{suffix}' if elapsed < 1 else f'{val:.2f}{suffix}'
-                    print(f'\n>>> {service_name} готов за {fmt}\n')
+                    log.info('%s готов за %s', service_name, fmt)
                     ready_printed = True
         proc.wait()
     except KeyboardInterrupt:

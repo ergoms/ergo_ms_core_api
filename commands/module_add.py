@@ -1,11 +1,11 @@
 """
 Команды для управления зависимостями модулей.
 
-api module-add <модуль> <пакет>                  — добавить пакет (версия авторазрешается)
-api module-add <модуль> <пакет> "<constraint>"   — добавить с явным ограничением
-api module-add <модуль> <пакет> --install        — добавить и сразу установить
-api module-remove <модуль> <пакет>               — удалить пакет из модуля
-api module-list                                  — список модулей с pyproject.toml
+api module-add <модуль> <пакет> — добавить пакет (версия авторазрешается)
+api module-add <модуль> <пакет> "<constraint>" — добавить с явным ограничением
+api module-add <модуль> <пакет> --install — добавить и сразу установить
+api module-remove <модуль> <пакет> — удалить пакет из модуля
+api module-list — список модулей с pyproject.toml
 
 Зависимость записывается только в modules/<module>/pyproject.toml.
 Корневой pyproject.toml и poetry.lock — только ядро; не используйте poetry add в корне для модулей.
@@ -47,7 +47,7 @@ class ModuleAddCommand(PoetryCommand):
             self._print_usage()
             return 1
 
-        install = "--install" in args
+        install = "--install"in args
         args = [a for a in args if a != "--install"]
 
         if len(args) < 2:
@@ -66,7 +66,7 @@ class ModuleAddCommand(PoetryCommand):
         module_toml = project_root / "modules" / module_name / "pyproject.toml"
         if not module_toml.exists():
             print(f"Ошибка: модуль '{module_name}' не найден или не имеет pyproject.toml.")
-            print(f"  Ожидался файл: {module_toml}")
+            print(f"Ожидался файл: {module_toml}")
             self._list_modules(project_root)
             return 1
 
@@ -75,14 +75,14 @@ class ModuleAddCommand(PoetryCommand):
             if constraint is None:
                 print(f"Не удалось определить версию для '{package}'. Укажите вручную.")
                 return 1
-            print(f"  Разрешена версия: {package} = \"{constraint}\"")
+            print(f"Разрешена версия: {package} = \"{constraint}\"")
 
         rc = self._add_to_toml(module_toml, package, constraint)
         if rc != 0:
             return rc
 
-        print(f"✓ Добавлено в {module_toml.relative_to(project_root)}:")
-        print(f"    {package} = \"{constraint}\"")
+        print(f"Добавлено в {module_toml.relative_to(project_root)}:")
+        print(f" {package} = \"{constraint}\"")
 
         if install:
             print("\nЗапуск установки...")
@@ -125,7 +125,7 @@ class ModuleAddCommand(PoetryCommand):
 
         if pkg_pattern.search(text):
             updated = pkg_pattern.sub(new_line, text)
-            print("  (обновлена существующая запись)")
+            print(" (обновлена существующая запись)")
         else:
             section_pattern = re.compile(
                 r'(\[tool\.poetry\.dependencies\].*?)(?=\n\s*\[|\Z)', re.DOTALL
@@ -161,16 +161,16 @@ class ModuleAddCommand(PoetryCommand):
         ]
         print(f"\nМодули с pyproject.toml ({len(modules)}):")
         for m in modules:
-            print(f"  • {m}")
+            print(f" • {m}")
 
     def _print_usage(self) -> None:
         print("Использование:")
-        print("  api module-add <модуль> <пакет>                 — авторазрешение версии")
-        print('  api module-add <модуль> <пакет> ">=1.0.0"       — явное ограничение')
-        print("  api module-add <модуль> <пакет> --install       — добавить и установить")
-        print("  api module-list                                  — список модулей")
+        print("api module-add <модуль> <пакет> — авторазрешение версии")
+        print('api module-add <модуль> <пакет> ">=1.0.0" — явное ограничение')
+        print("api module-add <модуль> <пакет> --install — добавить и установить")
+        print("api module-list — список модулей")
         print("")
-        print("  Для установки после добавления: ergoms python-install")
+        print("Для установки после добавления: ergoms python-install")
 
 
 class ModuleRemoveCommand(PoetryCommand):
@@ -184,7 +184,7 @@ class ModuleRemoveCommand(PoetryCommand):
 
         if len(args) < 2:
             print("Использование:")
-            print("  api module-remove <модуль> <пакет>")
+            print("api module-remove <модуль> <пакет>")
             return 1
 
         module_name = args[0]
@@ -232,7 +232,7 @@ class ModuleRemoveCommand(PoetryCommand):
             print(f"Ошибка записи {toml_path}: {e}")
             return 1
 
-        print(f"✓ Удалено из {toml_path.relative_to(project_root)}: {package}")
+        print(f"Удалено из {toml_path.relative_to(project_root)}: {package}")
         print("\nДля применения изменений запустите: ergoms python-install")
         return 0
 
@@ -276,7 +276,7 @@ class ModuleListCommand(PoetryCommand):
                             constraint_str = constraint.get("version", str(constraint))
                         else:
                             constraint_str = str(constraint)
-                        print(f"  {pkg:<{max_name}}  {constraint_str}")
+                        print(f" {pkg:<{max_name}} {constraint_str}")
             except Exception:
                 pass
 
@@ -295,9 +295,9 @@ class ModuleListCommand(PoetryCommand):
                     data = tomllib.load(f)
                 deps = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
                 pkg_count = len([k for k in deps if k != "python"])
-                print(f"  {module_dir.name:<35} ({pkg_count} зависимостей)")
+                print(f" {module_dir.name:<35} ({pkg_count} зависимостей)")
             except Exception:
-                print(f"  {module_dir.name:<35} (ошибка чтения)")
+                print(f" {module_dir.name:<35} (ошибка чтения)")
 
         print(f"\nВсего: {found} модулей")
         return 0
@@ -318,12 +318,12 @@ class ModuleListCommand(PoetryCommand):
         deps = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
         pkgs = {k: v for k, v in deps.items() if k != "python"}
 
-        print(f"\n{module_name}  ({len(pkgs)} зависимостей)\n")
+        print(f"\n{module_name} ({len(pkgs)} зависимостей)\n")
         if pkgs:
             max_name = max(len(k) for k in pkgs)
             for pkg, constraint in sorted(pkgs.items()):
-                print(f"  {pkg:<{max_name}}  {constraint}")
+                print(f" {pkg:<{max_name}} {constraint}")
         else:
-            print("  (нет дополнительных зависимостей)")
+            print(" (нет дополнительных зависимостей)")
 
         return 0

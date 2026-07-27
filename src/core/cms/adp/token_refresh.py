@@ -1,20 +1,23 @@
+import logging
+from datetime import timedelta
+
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from django.contrib.auth import get_user_model
-
-from datetime import timedelta
-
 from src.core.cms.adp.auth_cookies import (
     get_refresh_token_from_request,
     refresh_cookie_max_age,
     set_refresh_cookie,
 )
+from src.core.cms.adp.services.session_bootstrap import build_session_bootstrap_payload
 from src.core.cms.adp.services.session_devices import is_device_session_active
 from src.config.settings.auth import REFRESH_TOKEN_LIFETIME
+
+logger = logging.getLogger('core.cms.adp.token_refresh')
 
 
 class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
@@ -64,4 +67,20 @@ class DeviceBoundTokenRefreshView(TokenRefreshView):
                     refresh_value,
                     refresh_cookie_max_age(timedelta(minutes=REFRESH_TOKEN_LIFETIME)),
                 )
+                # F5: один RTT — access + session-bootstrap (GET session-bootstrap остаётся для soft path)
+                self._attach_session_bootstrap(response, refresh_value)
         return response
+
+    @staticmethod
+    def _attach_session_bootstrap(response, refresh_value: str) -> None:
+        try:
+            refresh = RefreshToken(refresh_value)
+            user_id = refresh.payload.get('user_id')
+            if user_id is None:
+                return
+            user = get_user_model().objects.filter(pk=user_id).first()
+            if user is None:
+                return
+            response.data['session_bootstrap'] = build_session_bootstrap_payload(user)
+        except Exception:
+            logger.exception('Не удалось вложить session_bootstrap в token-refresh')

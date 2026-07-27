@@ -23,6 +23,7 @@ from _common import (
     is_celery_process,
     read_queues_cache,
     run_celery_with_timing,
+    setup_celery_script_logging,
 )
 from src.core.utils.celery.startup_format import format_queues_display
 
@@ -125,18 +126,19 @@ def main() -> int:
     if opts.verbose:
         os.environ['ERGO_CELERY_STARTUP_VERBOSE'] = 'true'
 
+    log = setup_celery_script_logging('celery')
     config = load_workers_config()
     workers_config = config.get('workers', {})
     defaults = config.get('defaults', {})
     default_pool = defaults.get('pool', 'threads')
-    print('Подготовка Celery worker: читаем кэш очередей (warmup_celery при необходимости)...')
+    log.info('Подготовка Celery worker: читаем кэш очередей (warmup_celery при необходимости)...')
     all_queues = ensure_caches(verbose=opts.verbose)
 
     if opts.list_workers:
         if not workers_config:
-            print(f'В {WORKERS_CONFIG} нет worker\'ов')
+            log.info('В %s нет worker\'ов', WORKERS_CONFIG)
             return 0
-        print('\nWorker\'ы:')
+        log.info('Worker\'ы:')
         for name, w in workers_config.items():
             q = w.get('queues', [])
             if q == 'all':
@@ -148,7 +150,13 @@ def main() -> int:
             else:
                 qs = 'нет'
             pool = w.get('pool') or default_pool
-            print(f"  {name}: {w.get('description', '')} очереди={qs} пул={pool}")
+            log.info(
+                '  %s: %s очереди=%s пул=%s',
+                name,
+                w.get('description', ''),
+                qs,
+                pool,
+            )
         return 0
 
     worker_name = opts.worker
@@ -161,7 +169,11 @@ def main() -> int:
 
     if worker_name:
         if worker_name not in workers_config:
-            print(f"Worker '{worker_name}' не найден. Доступные: {', '.join(workers_config.keys())}")
+            log.error(
+                "Worker '%s' не найден. Доступные: %s",
+                worker_name,
+                ', '.join(workers_config.keys()),
+            )
             return 1
         w = workers_config[worker_name]
         queues = resolve_queues(w.get('queues'), all_queues)
@@ -169,12 +181,15 @@ def main() -> int:
         concurrency = w.get('concurrency') or concurrency_opt
         loglevel = w.get('loglevel') or loglevel_opt
         pool = w.get('pool') or pool_opt
-        print(f"\nЗапуск worker'а '{worker_name}': {w.get('description', '')}")
+        log.info("Запуск worker'а '%s': %s", worker_name, w.get('description', ''))
         queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
-        print(
-            f"  Режим: worker из конфигурации (--worker), hostname={hostname}, "
-            f"очереди={queues_display}, "
-            f"параллелизм={concurrency or 'по умолчанию'}, пул={pool}"
+        log.info(
+            'Режим: worker из конфигурации (--worker), hostname=%s, '
+            'очереди=%s, параллелизм=%s, пул=%s',
+            hostname,
+            queues_display,
+            concurrency or 'по умолчанию',
+            pool,
         )
     elif queues_opt or hostname_opt:
         if queues_opt:
@@ -185,7 +200,7 @@ def main() -> int:
                     from src.core.utils.celery.startup_format import format_name_list
 
                     available = format_name_list(all_queues, verbose=opts.verbose)
-                    print(f'Неизвестные очереди: {invalid}. Доступные: {available}')
+                    log.error('Неизвестные очереди: %s. Доступные: %s', invalid, available)
                     return 1
             queues = queue_list
         else:
@@ -194,21 +209,24 @@ def main() -> int:
         concurrency = concurrency_opt
         loglevel = loglevel_opt
         pool = pool_opt
-        print('\nЗапуск Celery worker')
+        log.info('Запуск Celery worker')
         queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
-        print(
-            f"  Режим: worker из аргументов командной строки, hostname={hostname}, "
-            f"очереди={queues_display}, "
-            f"параллелизм={concurrency or 'по умолчанию'}, пул={pool}"
+        log.info(
+            'Режим: worker из аргументов командной строки, hostname=%s, '
+            'очереди=%s, параллелизм=%s, пул=%s',
+            hostname,
+            queues_display,
+            concurrency or 'по умолчанию',
+            pool,
         )
     elif workers_config:
         procs = []
-        print('\nЗапуск Celery worker\'ов из celery_workers.yaml (несколько процессов)...')
+        log.info('Запуск Celery worker\'ов из celery_workers.yaml (несколько процессов)...')
         for name, w in workers_config.items():
             queues = resolve_queues(w.get('queues'), all_queues)
             hostname = w.get('hostname', f'worker@{name}')
             if find_celery_worker(hostname=hostname):
-                print(f"  {hostname} уже запущен, пропуск")
+                log.info('%s уже запущен, пропуск', hostname)
                 continue
             queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
             worker_pool = w.get('pool') or default_pool
@@ -219,9 +237,13 @@ def main() -> int:
                 w.get('concurrency'),
                 pool=worker_pool,
             )
-            print(
-                f"  Запуск '{name}' ({hostname}) -> очереди={queues_display}, "
-                f"параллелизм={w.get('concurrency') or 'по умолчанию'}, пул={worker_pool}"
+            log.info(
+                "Запуск '%s' (%s) -> очереди=%s, параллелизм=%s, пул=%s",
+                name,
+                hostname,
+                queues_display,
+                w.get('concurrency') or 'по умолчанию',
+                worker_pool,
             )
             env = os.environ.copy()
             env.setdefault('PYTHONPATH', '')
@@ -234,9 +256,9 @@ def main() -> int:
             procs.append(proc)
             time.sleep(0.3)
         if not procs:
-            print('Нет worker\'ов для запуска')
+            log.info('Нет worker\'ов для запуска')
             return 0
-        print('\nДля остановки нажмите Ctrl+C...')
+        log.info('Для остановки нажмите Ctrl+C...')
         try:
             while any(p.poll() is None for p in procs):
                 time.sleep(1)
@@ -255,14 +277,17 @@ def main() -> int:
         concurrency = concurrency_opt
         loglevel = loglevel_opt
         pool = pool_opt
-        print('Файл celery_workers.yaml не найден. Запуск одного worker\'а со всеми очередями (без -Q, если кэш пуст).')
+        log.info(
+            'Файл celery_workers.yaml не найден. Запуск одного worker\'а со всеми '
+            'очередями (без -Q, если кэш пуст).'
+        )
 
     queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
     if find_celery_worker(hostname=hostname):
-        print(f'Worker {hostname} уже запущен')
+        log.info('Worker %s уже запущен', hostname)
         return 0
 
-    print(f'  Запуск {hostname}, очереди: {queues_display}, пул={pool}')
+    log.info('Запуск %s, очереди: %s, пул=%s', hostname, queues_display, pool)
     cmd = build_cmd(queues, hostname, loglevel, concurrency, pool=pool)
     return run_celery_with_timing(
         cmd, str(API_DIR),

@@ -53,7 +53,7 @@ class SafeDropAppDeletionMixin:
         2. Удаляет записи из django_migrations для сломанных миграций
            (иначе Django будет ругаться на несуществующие зависимости)
         """
-        self.stdout.write('\n🔧 Исправление зависимостей миграций...')
+        self.stdout.write('\nИсправление зависимостей миграций...')
         
         fixed = 0
         migrations_to_reset = []
@@ -69,7 +69,7 @@ class SafeDropAppDeletionMixin:
                 
                 if not migration_file.exists():
                     self.stdout.write(self.style.WARNING(
-                        f'  ⚠️ Файл не найден: {migration_file}'
+                        f'Файл не найден: {migration_file}'
                     ))
                     continue
                 
@@ -89,23 +89,23 @@ class SafeDropAppDeletionMixin:
                     fixed += 1
                     migrations_to_reset.append((dep['app'], dep['migration']))
                     self.stdout.write(self.style.SUCCESS(
-                        f'  ✓ Удалена зависимость из {dep["app"]}.{dep["migration"]}'
+                        f'Удалена зависимость из {dep["app"]}.{dep["migration"]}'
                     ))
                 else:
                     self.stdout.write(self.style.WARNING(
-                        f'  ⚠️ Зависимость не найдена в файле {dep["app"]}.{dep["migration"]}'
+                        f'Зависимость не найдена в файле {dep["app"]}.{dep["migration"]}'
                     ))
                     
             except Exception as e:
                 self.stdout.write(self.style.WARNING(
-                    f'  ⚠️ Ошибка при исправлении {dep["app"]}.{dep["migration"]}: {e}'
+                    f'Ошибка при исправлении {dep["app"]}.{dep["migration"]}: {e}'
                 ))
         
         # ВАЖНО: Удаляем записи из django_migrations для исправленных миграций
         # Это необходимо, потому что Django кеширует зависимости и будет ругаться
         # на несуществующую зависимость settings.XXXX даже после изменения файла
         if migrations_to_reset:
-            self.stdout.write('\n🗑️ Сброс записей миграций в django_migrations...')
+            self.stdout.write('\nСброс записей миграций в django_migrations...')
             for app, migration in migrations_to_reset:
                 try:
                     with connection.cursor() as cursor:
@@ -115,15 +115,15 @@ class SafeDropAppDeletionMixin:
                         )
                         if cursor.rowcount > 0:
                             self.stdout.write(self.style.SUCCESS(
-                                f'  ✓ Удалена запись {app}.{migration}'
+                                f'Удалена запись {app}.{migration}'
                             ))
                         else:
                             self.stdout.write(
-                                f'  ℹ️ Запись {app}.{migration} не найдена в БД'
+                                f' ℹ Запись {app}.{migration} не найдена в БД'
                             )
                 except Exception as e:
                     self.stdout.write(self.style.WARNING(
-                        f'  ⚠️ Ошибка при удалении записи {app}.{migration}: {e}'
+                        f'Ошибка при удалении записи {app}.{migration}: {e}'
                     ))
         
         # Также чистим ВСЕ миграции затронутых приложений от ссылок на удаляемое приложение
@@ -133,7 +133,7 @@ class SafeDropAppDeletionMixin:
             self._clean_all_migrations_from_app_refs(affected_app, app_label)
         
         if fixed > 0:
-            self.stdout.write(self.style.SUCCESS(f'\n  Исправлено миграций: {fixed}'))
+            self.stdout.write(self.style.SUCCESS(f'\nИсправлено миграций: {fixed}'))
         
         return fixed
 
@@ -151,7 +151,7 @@ class SafeDropAppDeletionMixin:
             if not migrations_dir.exists():
                 return
             
-            self.stdout.write(f'\n🧹 Поиск миграций {affected_app} со ссылками на {removed_app}...')
+            self.stdout.write(f'\nПоиск миграций {affected_app} со ссылками на {removed_app}...')
             
             migrations_to_delete = []
             
@@ -165,10 +165,10 @@ class SafeDropAppDeletionMixin:
                     
                     # Проверяем, есть ли ссылки на removed_app
                     has_refs = (
-                        f"'{removed_app}." in content or 
-                        f'"{removed_app}.' in content or
-                        f"'{removed_app}'," in content or
-                        f'"{removed_app}",' in content
+                        f"'{removed_app}."in content or 
+                        f'"{removed_app}.'in content or
+                        f"'{removed_app}',"in content or
+                        f'"{removed_app}",'in content
                     )
                     
                     if has_refs:
@@ -176,14 +176,14 @@ class SafeDropAppDeletionMixin:
                         
                 except Exception as e:
                     self.stdout.write(self.style.WARNING(
-                        f'  ⚠️ Ошибка при проверке {migration_file.name}: {e}'
+                        f'Ошибка при проверке {migration_file.name}: {e}'
                     ))
             
             if not migrations_to_delete:
-                self.stdout.write('  Миграции со ссылками не найдены')
+                self.stdout.write('Миграции со ссылками не найдены')
                 return
             
-            self.stdout.write(f'\n🗑️ Удаление {len(migrations_to_delete)} миграций со ссылками на {removed_app}...')
+            self.stdout.write(f'\nУдаление {len(migrations_to_delete)} миграций со ссылками на {removed_app}...')
             
             for migration_file in migrations_to_delete:
                 migration_name = migration_file.stem
@@ -196,31 +196,31 @@ class SafeDropAppDeletionMixin:
                             [affected_app, migration_name]
                         )
                         if cursor.rowcount > 0:
-                            self.stdout.write(f'  ✓ Удалена запись из БД: {migration_name}')
+                            self.stdout.write(f'Удалена запись из БД: {migration_name}')
                 except Exception:
                     pass
                 
                 # Удаляем файл
                 try:
                     migration_file.unlink()
-                    self.stdout.write(f'  ✓ Удалён файл: {migration_file.name}')
+                    self.stdout.write(f'Удалён файл: {migration_file.name}')
                 except Exception as e:
                     self.stdout.write(self.style.WARNING(
-                        f'  ⚠️ Ошибка при удалении {migration_file.name}: {e}'
+                        f'Ошибка при удалении {migration_file.name}: {e}'
                     ))
             
             self.stdout.write(self.style.SUCCESS(
-                f'  Удалено миграций: {len(migrations_to_delete)}'
+                f'Удалено миграций: {len(migrations_to_delete)}'
             ))
                 
         except Exception as e:
             self.stdout.write(self.style.WARNING(
-                f'  ⚠️ Ошибка при очистке миграций {affected_app}: {e}'
+                f'Ошибка при очистке миграций {affected_app}: {e}'
             ))
 
     def _update_migration_dependencies(self, app_label, dependencies):
         """Обновляет зависимости в миграциях других приложений (при удалении)."""
-        self.stdout.write('\n🔄 Обновление зависимостей миграций...')
+        self.stdout.write('\nОбновление зависимостей миграций...')
         
         updated = 0
         for dep in dependencies:
@@ -246,18 +246,18 @@ class SafeDropAppDeletionMixin:
                     with open(migration_file, 'w', encoding='utf-8') as f:
                         f.write(new_content)
                     updated += 1
-                    self.stdout.write(f'  ✓ {dep["app"]}.{dep["migration"]}')
+                    self.stdout.write(f' {dep["app"]}.{dep["migration"]}')
                     
             except Exception as e:
                 self.stdout.write(self.style.WARNING(
-                    f'  ⚠️ Ошибка при обновлении {dep["app"]}.{dep["migration"]}: {e}'
+                    f'Ошибка при обновлении {dep["app"]}.{dep["migration"]}: {e}'
                 ))
         
-        self.stdout.write(f'  Обновлено миграций: {updated}')
+        self.stdout.write(f'Обновлено миграций: {updated}')
 
     def _drop_tables(self, models_info, cascade):
         """Удаляет таблицы из БД."""
-        self.stdout.write('\n🗑️ Удаление таблиц...')
+        self.stdout.write('\nУдаление таблиц...')
         
         # Сортируем таблицы в порядке, учитывающем зависимости
         # (таблицы с FK на другие таблицы удаляем первыми)
@@ -277,13 +277,13 @@ class SafeDropAppDeletionMixin:
                             f"DROP TABLE IF EXISTS {connection.ops.quote_name(table)}"
                         )
                 dropped += 1
-                self.stdout.write(f'  ✓ {table}')
+                self.stdout.write(f' {table}')
             except Exception as e:
                 self.stdout.write(self.style.WARNING(
-                    f'  ⚠️ Ошибка при удалении {table}: {e}'
+                    f'Ошибка при удалении {table}: {e}'
                 ))
         
-        self.stdout.write(f'  Удалено таблиц: {dropped}')
+        self.stdout.write(f'Удалено таблиц: {dropped}')
 
     def _sort_models_by_dependencies(self, models_info):
         """Сортирует модели по зависимостям (FK) для правильного порядка удаления.
@@ -333,7 +333,7 @@ class SafeDropAppDeletionMixin:
 
     def _delete_migration_records(self, app_label):
         """Удаляет записи из django_migrations."""
-        self.stdout.write('\n🗑️ Удаление записей из django_migrations...')
+        self.stdout.write('\nУдаление записей из django_migrations...')
         
         try:
             with connection.cursor() as cursor:
@@ -342,15 +342,15 @@ class SafeDropAppDeletionMixin:
                     [app_label]
                 )
                 deleted = cursor.rowcount
-            self.stdout.write(f'  ✓ Удалено записей: {deleted}')
+            self.stdout.write(f'Удалено записей: {deleted}')
         except Exception as e:
             self.stdout.write(self.style.WARNING(
-                f'  ⚠️ Ошибка при удалении записей: {e}'
+                f'Ошибка при удалении записей: {e}'
             ))
 
     def _delete_migration_files(self, migrations_dir):
         """Удаляет файлы миграций."""
-        self.stdout.write('\n🗑️ Удаление файлов миграций...')
+        self.stdout.write('\nУдаление файлов миграций...')
         
         deleted = 0
         for migration_file in migrations_dir.glob('*.py'):
@@ -359,13 +359,13 @@ class SafeDropAppDeletionMixin:
             try:
                 migration_file.unlink()
                 deleted += 1
-                self.stdout.write(f'  ✓ {migration_file.name}')
+                self.stdout.write(f' {migration_file.name}')
             except Exception as e:
                 self.stdout.write(self.style.WARNING(
-                    f'  ⚠️ Ошибка при удалении {migration_file.name}: {e}'
+                    f'Ошибка при удалении {migration_file.name}: {e}'
                 ))
         
-        self.stdout.write(f'  Удалено файлов: {deleted}')
+        self.stdout.write(f'Удалено файлов: {deleted}')
 
     def _auto_fix_dependencies(self, app_label, model_dependencies):
         """
@@ -389,7 +389,7 @@ class SafeDropAppDeletionMixin:
                     files_to_fix[models_file].append(dep)
             except Exception as e:
                 self.stdout.write(self.style.WARNING(
-                    f'  ⚠️ Не удалось найти приложение {dep["app"]}: {e}'
+                    f'Не удалось найти приложение {dep["app"]}: {e}'
                 ))
         
         for models_file, deps in files_to_fix.items():
@@ -417,13 +417,13 @@ class SafeDropAppDeletionMixin:
                     
                     for dep in deps:
                         self.stdout.write(self.style.SUCCESS(
-                            f'  ✓ Удалено поле {dep["model"]}.{dep["field"]} '
+                            f'Удалено поле {dep["model"]}.{dep["field"]} '
                             f'из {models_file.name}'
                         ))
                         
             except Exception as e:
                 self.stdout.write(self.style.WARNING(
-                    f'  ⚠️ Ошибка при обработке {models_file}: {e}'
+                    f'Ошибка при обработке {models_file}: {e}'
                 ))
         
         return fixed_apps
@@ -481,29 +481,29 @@ class SafeDropAppDeletionMixin:
         """Создаёт миграции для указанных приложений."""
         from django.core.management import call_command
         
-        self.stdout.write('\n📝 Создание миграций для изменённых приложений...')
+        self.stdout.write('\nСоздание миграций для изменённых приложений...')
         
         for app_label in app_labels:
             try:
-                self.stdout.write(f'  Создание миграций для {app_label}...')
+                self.stdout.write(f'Создание миграций для {app_label}...')
                 call_command('makemigrations', app_label, verbosity=0)
-                self.stdout.write(self.style.SUCCESS(f'  ✓ {app_label}'))
+                self.stdout.write(self.style.SUCCESS(f' {app_label}'))
             except Exception as e:
                 self.stdout.write(self.style.WARNING(
-                    f'  ⚠️ Ошибка при создании миграций для {app_label}: {e}'
+                    f'Ошибка при создании миграций для {app_label}: {e}'
                 ))
 
     def _apply_migrations(self):
         """Применяет все миграции."""
         from django.core.management import call_command
         
-        self.stdout.write('\n📦 Применение миграций...')
+        self.stdout.write('\nПрименение миграций...')
         
         try:
             call_command('migrate', verbosity=0)
-            self.stdout.write(self.style.SUCCESS('  ✓ Миграции применены'))
+            self.stdout.write(self.style.SUCCESS('Миграции применены'))
         except Exception as e:
             self.stdout.write(self.style.WARNING(
-                f'  ⚠️ Ошибка при применении миграций: {e}'
+                f'Ошибка при применении миграций: {e}'
             ))
 

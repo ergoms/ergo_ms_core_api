@@ -52,10 +52,10 @@ if os.path.exists(ENV_FILE_PATH):
                 main_env_vars.add(key)
     # Загружаем переменные из .env файла в os.environ
     env.read_env(ENV_FILE_PATH)
-    logger.info(f"✅ Загружен основной .env файл из корня проекта: {ENV_FILE_PATH}")
-    logger.info(f"   Найдено переменных: {len(main_env_vars)}")
+    logger.info(f"Загружен основной .env файл из корня проекта: {ENV_FILE_PATH}")
+    logger.info(f"Найдено переменных: {len(main_env_vars)}")
 else:
-    logger.warning(f"⚠️  Файл .env не найден по пути: {ENV_FILE_PATH}")
+    logger.warning(f"Файл .env не найден по пути: {ENV_FILE_PATH}")
 
 # Затем добавляем переменные из modules (они имеют приоритет над основным .env)
 if modules_env_vars:
@@ -68,6 +68,6 @@ if modules_env_vars:
     
     # Логируем только если есть переопределения
     if overridden_vars:
-        logger.warning(f"⚠️  Переменные из modules переопределили {len(overridden_vars)} переменных из основного .env:")
+        logger.warning(f"Переменные из modules переопределили {len(overridden_vars)} переменных из основного .env:")
         for var in overridden_vars:
-            logger.warning(f"  - {var}")
+            logger.warning(f" - {var}")

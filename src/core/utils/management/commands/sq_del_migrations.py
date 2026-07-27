@@ -172,8 +172,8 @@ class Command(BaseCommand):
                 f'Найдено миграций для объединения: {len(migrations_to_squash)}'
             )
         )
-        self.stdout.write(f'  От: {migrations_to_squash[0]}')
-        self.stdout.write(f'  До: {migrations_to_squash[-1]}')
+        self.stdout.write(f'От: {migrations_to_squash[0]}')
+        self.stdout.write(f'До: {migrations_to_squash[-1]}')
 
         # Проверяем зависимости других приложений
         self.stdout.write('\nПроверка зависимостей других приложений...')
@@ -213,49 +213,49 @@ class Command(BaseCommand):
         self.stdout.write(self.style.MIGRATE_HEADING('Статистика операции:'))
         self.stdout.write('='*60)
         
-        self.stdout.write(f'\n📁 Файлов миграций для удаления: {stats["migration_files_count"]}')
+        self.stdout.write(f'\nФайлов миграций для удаления: {stats["migration_files_count"]}')
         if stats['migration_files']:
-            for file_name in stats['migration_files'][:10]:  # Показываем первые 10
-                self.stdout.write(f'   - {file_name}')
+            for file_name in stats['migration_files'][:10]: # Показываем первые 10
+                self.stdout.write(f' - {file_name}')
             if len(stats['migration_files']) > 10:
-                self.stdout.write(f'   ... и еще {len(stats["migration_files"]) - 10} файлов')
+                self.stdout.write(f' ... и еще {len(stats["migration_files"]) - 10} файлов')
         
-        self.stdout.write(f'\n📊 Записей в django_migrations для удаления: {stats["db_records_count"]}')
+        self.stdout.write(f'\nЗаписей в django_migrations для удаления: {stats["db_records_count"]}')
         if stats['db_records']:
-            for record in stats['db_records'][:10]:  # Показываем первые 10
-                self.stdout.write(f'   - {record}')
+            for record in stats['db_records'][:10]: # Показываем первые 10
+                self.stdout.write(f' - {record}')
             if len(stats['db_records']) > 10:
-                self.stdout.write(f'   ... и еще {len(stats["db_records"]) - 10} записей')
+                self.stdout.write(f' ... и еще {len(stats["db_records"]) - 10} записей')
         
-        self.stdout.write(f'\n🗄️  Таблиц в БД (не будут удалены): {stats["tables_count"]}')
+        self.stdout.write(f'\nТаблиц в БД (не будут удалены): {stats["tables_count"]}')
         if stats['tables']:
-            for table in stats['tables'][:10]:  # Показываем первые 10
-                self.stdout.write(f'   - {table}')
+            for table in stats['tables'][:10]: # Показываем первые 10
+                self.stdout.write(f' - {table}')
             if len(stats['tables']) > 10:
-                self.stdout.write(f'   ... и еще {len(stats["tables"]) - 10} таблиц')
+                self.stdout.write(f' ... и еще {len(stats["tables"]) - 10} таблиц')
         
         self.stdout.write('='*60)
         
         if dependencies_found:
             self.stdout.write(
                 self.style.WARNING(
-                    f'\n⚠️  Найдено зависимостей от объединяемых миграций: {len(dependencies_found)}'
+                    f'\nНайдено зависимостей от объединяемых миграций: {len(dependencies_found)}'
                 )
             )
             for dep in dependencies_found:
                 self.stdout.write(
-                    f"  {dep['app']}.{dep['migration']} "
+                    f" {dep['app']}.{dep['migration']} "
                     f"({dep['type']}) -> {dep['depends_on'][0]}.{dep['depends_on'][1]}"
                 )
             self.stdout.write(
-                '\n💡 Django автоматически обновит зависимости при применении squash миграции.'
+                '\nDjango автоматически обновит зависимости при применении squash миграции.'
             )
         
         if not check_only:
             if interactive:
                 self.stdout.write(
                     self.style.WARNING(
-                        '\n⚠️  ВНИМАНИЕ: Эта операция удалит файлы миграций и записи из БД!'
+                        '\nВНИМАНИЕ: Эта операция удалит файлы миграций и записи из БД!'
                     )
                 )
                 response = input('\nПродолжить? (yes/no): ')
@@ -300,7 +300,7 @@ class Command(BaseCommand):
         # Получаем список существующих миграций для сравнения
         existing_migrations = set([
             f.stem for f in migrations_dir.glob('*.py')
-            if f.name != '__init__.py' and not f.name.startswith('.')
+            if f.name != '__init__.py'and not f.name.startswith('.')
         ])
         
         squash_files = list(migrations_dir.glob('*_squashed_*.py'))
@@ -309,11 +309,11 @@ class Command(BaseCommand):
             # Ищем файлы, которых не было в исходном списке
             all_files = set([
                 f.stem for f in migrations_dir.glob('*.py')
-                if f.name != '__init__.py' and not f.name.startswith('.')
+                if f.name != '__init__.py'and not f.name.startswith('.')
             ])
             new_files = all_files - existing_migrations
             if new_files:
-                squash_files = [migrations_dir / f'{name}.py' for name in new_files]
+                squash_files = [migrations_dir / f'{name}.py'for name in new_files]
         
         if not squash_files:
             self.stdout.write(
@@ -335,7 +335,7 @@ class Command(BaseCommand):
         )
 
         # Удаляем записи из django_migrations БЕЗОПАСНО
-        self.stdout.write('\n🗑️  Удаление записей из django_migrations...')
+        self.stdout.write('\nУдаление записей из django_migrations...')
         from django.db import connection
         from django.db.migrations.recorder import MigrationRecorder
         
@@ -353,7 +353,7 @@ class Command(BaseCommand):
                 )
                 if cursor.rowcount > 0:
                     deleted_db_records += 1
-                    self.stdout.write(f'  Удалена запись: {app_label}.{migration_name}')
+                    self.stdout.write(f'Удалена запись: {app_label}.{migration_name}')
         
         self.stdout.write(
             self.style.SUCCESS(
@@ -362,14 +362,14 @@ class Command(BaseCommand):
         )
         
         # Удаляем старые файлы миграций
-        self.stdout.write('\n🗑️  Удаление старых файлов миграций...')
+        self.stdout.write('\nУдаление старых файлов миграций...')
         deleted_count = 0
         
         for migration_name in migrations_to_squash:
             # Пропускаем начальную миграцию, если она не в списке для удаления
             if migration_name == start_migration and start_migration.startswith('0001_'):
                 self.stdout.write(
-                    f'  Пропущена начальная миграция: {migration_name}'
+                    f'Пропущена начальная миграция: {migration_name}'
                 )
                 continue
             
@@ -377,7 +377,7 @@ class Command(BaseCommand):
             if migration_file.exists():
                 migration_file.unlink()
                 deleted_count += 1
-                self.stdout.write(f'  Удален файл: {migration_name}.py')
+                self.stdout.write(f'Удален файл: {migration_name}.py')
         
         self.stdout.write(
             self.style.SUCCESS(
@@ -449,7 +449,7 @@ class Command(BaseCommand):
         except Exception as e:
             # Если не удалось получить таблицы, просто пропускаем
             self.stdout.write(
-                self.style.WARNING(f'  Не удалось получить список таблиц: {e}')
+                self.style.WARNING(f'Не удалось получить список таблиц: {e}')
             )
         
         stats['tables_count'] = len(stats['tables'])
@@ -463,7 +463,7 @@ class Command(BaseCommand):
         """
         import re
         
-        self.stdout.write('\n🔄 Обновление зависимостей в других приложениях...')
+        self.stdout.write('\nОбновление зависимостей в других приложениях...')
         
         updated_count = 0
         
@@ -482,7 +482,7 @@ class Command(BaseCommand):
                     new_dependencies.append((app_label, squash_migration_name))
                     needs_update = True
                     self.stdout.write(
-                        f'  Найдена зависимость: {other_app}.{other_migration_name} -> {app_label}.{dep_name}'
+                        f'Найдена зависимость: {other_app}.{other_migration_name} -> {app_label}.{dep_name}'
                     )
                 else:
                     new_dependencies.append((dep_app, dep_name))
@@ -497,7 +497,7 @@ class Command(BaseCommand):
                     if not other_migration_file.exists():
                         self.stdout.write(
                             self.style.WARNING(
-                                f'  Файл миграции не найден: {other_migration_file}'
+                                f'Файл миграции не найден: {other_migration_file}'
                             )
                         )
                         continue
@@ -521,33 +521,33 @@ class Command(BaseCommand):
                         updated_count += 1
                         self.stdout.write(
                             self.style.SUCCESS(
-                                f'  ✓ Обновлена зависимость в {other_app}.{other_migration_name}'
+                                f'Обновлена зависимость в {other_app}.{other_migration_name}'
                             )
                         )
                     else:
                         self.stdout.write(
                             self.style.WARNING(
-                                f'  Не удалось найти зависимость в файле {other_migration_file}'
+                                f'Не удалось найти зависимость в файле {other_migration_file}'
                             )
                         )
                         
                 except Exception as e:
                     self.stdout.write(
                         self.style.WARNING(
-                            f'  Ошибка при обновлении {other_app}.{other_migration_name}: {e}'
+                            f'Ошибка при обновлении {other_app}.{other_migration_name}: {e}'
                         )
                     )
         
         if updated_count > 0:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f'\n✓ Обновлено зависимостей в других приложениях: {updated_count}'
+                    f'\nОбновлено зависимостей в других приложениях: {updated_count}'
                 )
             )
         else:
             self.stdout.write(
                 self.style.SUCCESS(
-                    '\n✓ Зависимости в других приложениях не требуют обновления'
+                    '\nЗависимости в других приложениях не требуют обновления'
                 )
             )
 
@@ -566,7 +566,7 @@ class Command(BaseCommand):
                 content = f.read()
             
             # Проверяем, есть ли упоминания о manual porting
-            if '# Functions from the following migrations need manual copying' not in content:
+            if '# Functions from the following migrations need manual copying'not in content:
                 # Нет функций, требующих копирования
                 return
             
@@ -612,7 +612,7 @@ class Command(BaseCommand):
                 except:
                     self.stdout.write(
                         self.style.WARNING(
-                            f'  Не удалось найти миграцию {migration_name} для функции {function_name}'
+                            f'Не удалось найти миграцию {migration_name} для функции {function_name}'
                         )
                     )
                     continue
@@ -631,18 +631,18 @@ class Command(BaseCommand):
                                     'original_path': match
                                 }
                                 self.stdout.write(
-                                    f'  Найдена функция: {function_name} из {migration_name}'
+                                    f'Найдена функция: {function_name} из {migration_name}'
                                 )
                             except Exception as e:
                                 self.stdout.write(
                                     self.style.WARNING(
-                                        f'  Не удалось получить исходный код функции {function_name}: {e}'
+                                        f'Не удалось получить исходный код функции {function_name}: {e}'
                                     )
                                 )
             
             if not functions_to_copy:
                 self.stdout.write(
-                    self.style.WARNING('  Функции не найдены или не могут быть скопированы автоматически.')
+                    self.style.WARNING('Функции не найдены или не могут быть скопированы автоматически.')
                 )
                 return
             
@@ -692,10 +692,10 @@ class Command(BaseCommand):
                     )
                 )
                 for func_name in functions_to_copy.keys():
-                    self.stdout.write(f'  - {func_name}')
+                    self.stdout.write(f' - {func_name}')
             else:
                 self.stdout.write(
-                    self.style.WARNING('  Не удалось найти место для вставки функций.')
+                    self.style.WARNING('Не удалось найти место для вставки функций.')
                 )
                 
         except Exception as e:

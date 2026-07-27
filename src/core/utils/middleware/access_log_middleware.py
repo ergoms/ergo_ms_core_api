@@ -1,8 +1,9 @@
 """
-Однострочный access-лог в стиле Django runserver — и для daphne, и для runserver.
+Однострочный HTTP access-лог (единый для development и production).
 
 Формат: "GET /api/foo/ HTTP/1.1" 200
-Логгер: django.server (как у runserver), уровень INFO.
+Логгер: django.server, уровень INFO.
+Встроенный access daphne/runserver отключён — источник только этот middleware.
 """
 
 from __future__ import annotations
@@ -12,9 +13,22 @@ import logging
 logger = logging.getLogger('django.server')
 
 
+def _silence_wsgi_runserver_access() -> None:
+    """Отключает встроенный access Django WSGI runserver (fallback --noasgi)."""
+    try:
+        from django.core.servers.basehttp import WSGIRequestHandler
+    except Exception:
+        return
+    if getattr(WSGIRequestHandler, '_ergo_access_silenced', False):
+        return
+    WSGIRequestHandler.log_message = lambda self, format, *args: None  # noqa: ARG005
+    WSGIRequestHandler._ergo_access_silenced = True  # type: ignore[attr-defined]
+
+
 class AccessLogMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
+        _silence_wsgi_runserver_access()
 
     def __call__(self, request):
         response = self.get_response(request)

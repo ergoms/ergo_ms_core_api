@@ -73,6 +73,8 @@ def main() -> int:
             sys.executable, '-m', 'daphne',
             '-b', host,
             '-p', port,
+            # NCSA access в null — единый HTTP-лог через RequestLoggingMiddleware.
+            '--access-log', os.devnull,
             '--log-fmt', DAPHNE_LOG_FMT,
             'media_server.asgi:application',
         ]

@@ -58,18 +58,18 @@ class Command(BaseCommand):
         next_runs.sort(key=lambda x: x[0])
         
         # Выводим информацию
-        self.stdout.write(self.style.SUCCESS(f'\n⏰ Текущее время: {now.strftime("%Y-%m-%d %H:%M:%S")}\n'))
-        self.stdout.write(self.style.SUCCESS(f'📋 Ближайшие {options["count"]} задач:\n'))
+        self.stdout.write(self.style.SUCCESS(f'\nТекущее время: {now.strftime("%Y-%m-%d %H:%M:%S")}\n'))
+        self.stdout.write(self.style.SUCCESS(f'Ближайшие {options["count"]} задач:\n'))
         
         for i, (run_time, task_name, task_path) in enumerate(next_runs[:options['count']], 1):
             time_until = run_time - now
             hours = int(time_until.total_seconds() // 3600)
             minutes = int((time_until.total_seconds() % 3600) // 60)
             
-            self.stdout.write(f'\n{i}. {self.style.SUCCESS("🚀 " + task_name)}')
-            self.stdout.write(f'   ⏱️  Время запуска: {self.style.WARNING(run_time.strftime("%Y-%m-%d %H:%M"))}')
-            self.stdout.write(f'   ⏳ Через: {self.style.WARNING(f"{hours}ч {minutes}мин")}')
-            self.stdout.write(f'   📦 Задача: {task_path}')
+            self.stdout.write(f'\n{i}. {self.style.SUCCESS(task_name)}')
+            self.stdout.write(f'Время запуска: {self.style.WARNING(run_time.strftime("%Y-%m-%d %H:%M"))}')
+            self.stdout.write(f'Через: {self.style.WARNING(f"{hours}ч {minutes}мин")}')
+            self.stdout.write(f'Задача: {task_path}')
 
     def _get_next_run_time(self, schedule: crontab, from_time: datetime) -> datetime:
         """Вычисляет следующее время запуска для crontab расписания."""

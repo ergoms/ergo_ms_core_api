@@ -12,7 +12,13 @@ from typing import List
 
 import psutil
 
-from _common import API_DIR, ensure_caches, is_celery_process, run_celery_with_timing
+from _common import (
+    API_DIR,
+    ensure_caches,
+    is_celery_process,
+    run_celery_with_timing,
+    setup_celery_script_logging,
+)
 
 
 def find_celery_beat() -> bool:
@@ -44,11 +50,15 @@ def main() -> int:
     if opts.verbose:
         os.environ['ERGO_CELERY_STARTUP_VERBOSE'] = 'true'
 
+    log = setup_celery_script_logging('celery_beat')
     if find_celery_beat():
-        print('Celery beat уже запущен')
+        log.info('Celery beat уже запущен')
         return 0
 
-    print('Подготовка Celery beat: подготавливаем кэш очередей и расписаний (warmup_celery при необходимости)...')
+    log.info(
+        'Подготовка Celery beat: подготавливаем кэш очередей и расписаний '
+        '(warmup_celery при необходимости)...'
+    )
     ensure_caches(verbose=opts.verbose)
 
     loglevel = opts.loglevel
@@ -61,7 +71,7 @@ def main() -> int:
         sys.executable, '-m', 'celery', '-A', 'src', 'beat',
         f'--loglevel={loglevel}',
     ]
-    print(f'Запуск Celery beat (уровень логов={loglevel})...')
+    log.info('Запуск Celery beat (уровень логов=%s)...', loglevel)
     return run_celery_with_timing(
         cmd, str(API_DIR),
         ready_pattern='beat: Starting',

@@ -126,6 +126,12 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
             'level': 'INFO',
             'propagate': False,
         },
+        # Daphne runserver access (log_action) — глушим; HTTP пишет AccessLogMiddleware.
+        'django.channels.server': {
+            'handlers': api_loggers_common,
+            'level': 'WARNING',
+            'propagate': False,
+        },
         'daphne': {
             'handlers': api_loggers_common,
             'level': 'INFO',
@@ -193,6 +199,12 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
         'celery.core.audit': {
             'handlers': ['audit_file'] + console,
             'level': 'DEBUG',
+            'propagate': False,
+        },
+        # Bootstrap start_celery_*.py (до Django в дочернем процессе).
+        'celery.bootstrap': {
+            'handlers': [default_file] + console,
+            'level': 'INFO',
             'propagate': False,
         },
         'celery': {

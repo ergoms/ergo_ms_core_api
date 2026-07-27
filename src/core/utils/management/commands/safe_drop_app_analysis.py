@@ -130,7 +130,7 @@ class SafeDropAppAnalysisMixin:
         # Если есть зависимости и включен auto-fix
         if (has_fixable_deps or migration_dependencies) and auto_fix and not check_only:
             self.stdout.write(self.style.WARNING(
-                '\n🔧 Автоматическое исправление зависимостей...'
+                '\nАвтоматическое исправление зависимостей...'
             ))
             
             if interactive:
@@ -139,18 +139,18 @@ class SafeDropAppAnalysisMixin:
                         '\nБудут удалены следующие поля из других приложений:'
                     )
                     for dep in fixable_model_deps['foreign_keys']:
-                        self.stdout.write(f'  - {dep["app"]}.{dep["model"]}.{dep["field"]}')
+                        self.stdout.write(f' - {dep["app"]}.{dep["model"]}.{dep["field"]}')
                     for dep in fixable_model_deps['many_to_many']:
-                        self.stdout.write(f'  - {dep["app"]}.{dep["model"]}.{dep["field"]}')
+                        self.stdout.write(f' - {dep["app"]}.{dep["model"]}.{dep["field"]}')
                     for dep in fixable_model_deps['one_to_one']:
-                        self.stdout.write(f'  - {dep["app"]}.{dep["model"]}.{dep["field"]}')
+                        self.stdout.write(f' - {dep["app"]}.{dep["model"]}.{dep["field"]}')
                 
                 if migration_dependencies:
                     self.stdout.write(
                         '\nБудут исправлены зависимости миграций:'
                     )
                     for dep in migration_dependencies:
-                        self.stdout.write(f'  - {dep["app"]}.{dep["migration"]}')
+                        self.stdout.write(f' - {dep["app"]}.{dep["migration"]}')
                 
                 response = input('\nВыполнить исправления? (yes/no): ')
                 if response.lower() not in ('yes', 'y'):
@@ -172,11 +172,11 @@ class SafeDropAppAnalysisMixin:
             
             if fixed_apps:
                 self.stdout.write(self.style.WARNING(
-                    '\n⚠️ Миграции будут созданы ПОСЛЕ удаления приложения.'
+                    '\nМиграции будут созданы ПОСЛЕ удаления приложения.'
                 ))
                 self.stdout.write(
-                    '   Django кеширует модели в памяти, поэтому миграции\n'
-                    '   нужно создать в отдельном процессе после удаления.\n'
+                    'Django кеширует модели в памяти, поэтому миграции\n'
+                    'нужно создать в отдельном процессе после удаления.\n'
                 )
             
             # Помечаем что auto-fix был выполнен — можем продолжать с --cascade
@@ -189,14 +189,14 @@ class SafeDropAppAnalysisMixin:
 
         if has_blocking_deps and not force:
             self.stdout.write(self.style.ERROR(
-                '\n❌ Обнаружены зависимости, которые блокируют удаление!'
+                '\nОбнаружены зависимости, которые блокируют удаление!'
             ))
             self.stdout.write(
                 '\nВарианты решения:\n'
-                '  1. Удалите зависимости вручную (ForeignKey, ManyToMany)\n'
-                '  2. Используйте --cascade для каскадного удаления данных\n'
-                '  3. Используйте --force для принудительного удаления (опасно!)\n'
-                '  4. Используйте --auto-fix для автоматического удаления ссылок\n'
+                ' 1. Удалите зависимости вручную (ForeignKey, ManyToMany)\n'
+                ' 2. Используйте --cascade для каскадного удаления данных\n'
+                ' 3. Используйте --force для принудительного удаления (опасно!)\n'
+                ' 4. Используйте --auto-fix для автоматического удаления ссылок\n'
             )
             if check_only:
                 return
@@ -204,27 +204,27 @@ class SafeDropAppAnalysisMixin:
 
         if check_only:
             self.stdout.write(self.style.SUCCESS(
-                '\n✓ Проверка завершена. Используйте без --check-only для удаления.'
+                '\nПроверка завершена. Используйте без --check-only для удаления.'
             ))
             return
 
         # Подтверждение
         if interactive:
             self.stdout.write(self.style.WARNING(
-                '\n⚠️  ВНИМАНИЕ: Эта операция необратима!'
+                '\nВНИМАНИЕ: Эта операция необратима!'
             ))
             self.stdout.write(
                 f'\nБудут удалены:\n'
-                f'  - Таблицы: {stats["tables_count"]}\n'
-                f'  - Записи в таблицах: ~{stats["total_records"]}\n'
-                f'  - Записи в django_migrations: {stats["migration_records_count"]}\n'
+                f' - Таблицы: {stats["tables_count"]}\n'
+                f' - Записи в таблицах: ~{stats["total_records"]}\n'
+                f' - Записи в django_migrations: {stats["migration_records_count"]}\n'
             )
             if not keep_migrations:
-                self.stdout.write(f'  - Файлы миграций: {stats["migration_files_count"]}')
+                self.stdout.write(f' - Файлы миграций: {stats["migration_files_count"]}')
             
             if cascade and model_dependencies['foreign_keys']:
                 self.stdout.write(self.style.WARNING(
-                    '\n⚠️  Также будут удалены зависимые записи из других таблиц!'
+                    '\nТакже будут удалены зависимые записи из других таблиц!'
                 ))
             
             response = input('\nПродолжить? (yes/no): ')
@@ -243,7 +243,7 @@ class SafeDropAppAnalysisMixin:
         )
 
         self.stdout.write(self.style.SUCCESS(
-            f'\n✓ Приложение "{app_label}" успешно удалено!'
+            f'\nПриложение "{app_label}" успешно удалено!'
         ))
         
         # Проверяем, нужно ли создать миграции для исправленных приложений
@@ -252,12 +252,12 @@ class SafeDropAppAnalysisMixin:
         if fixed_apps:
             apps_list = ', '.join(fixed_apps)
             self.stdout.write(self.style.WARNING(
-                f'\n⚠️ ВАЖНО: Необходимо создать и применить миграции!'
+                f'\nВАЖНО: Необходимо создать и применить миграции!'
             ))
             self.stdout.write(
                 f'\nВыполните следующие команды:\n'
-                f'  ergoms api makemigrations {apps_list}\n'
-                f'  ergoms api migrate\n'
+                f'ergoms api makemigrations {apps_list}\n'
+                f'ergoms api migrate\n'
             )
         
         self.stdout.write(
@@ -270,7 +270,7 @@ class SafeDropAppAnalysisMixin:
     def _get_models_info(self, app_label):
         """Получает информацию о моделях приложения, включая M2M таблицы."""
         models_info = []
-        m2m_tables = []  # Отдельно храним M2M таблицы
+        m2m_tables = [] # Отдельно храним M2M таблицы
         
         try:
             app_config = apps.get_app_config(app_label)
@@ -419,7 +419,7 @@ class SafeDropAppAnalysisMixin:
                         'related_to': field.related_model.__name__,
                         'on_delete': on_delete_name,
                         'related_count': related_count,
-                        'is_system': is_system_app,  # Пометка системного приложения
+                        'is_system': is_system_app, # Пометка системного приложения
                     }
                     
                     if hasattr(field, 'one_to_one') and field.one_to_one:
@@ -474,7 +474,7 @@ class SafeDropAppAnalysisMixin:
         if migrations_dir.exists():
             stats['migration_files'] = [
                 f.stem for f in migrations_dir.glob('*.py')
-                if f.name != '__init__.py' and not f.name.startswith('.')
+                if f.name != '__init__.py'and not f.name.startswith('.')
             ]
             stats['migration_files_count'] = len(stats['migration_files'])
         
@@ -498,23 +498,23 @@ class SafeDropAppAnalysisMixin:
         regular_models = [m for m in models_info if not m.get('is_m2m')]
         m2m_tables = [m for m in models_info if m.get('is_m2m')]
         
-        self.stdout.write(f'\n📊 Модели и таблицы ({len(regular_models)}):')
+        self.stdout.write(f'\nМодели и таблицы ({len(regular_models)}):')
         for model_info in regular_models:
             self.stdout.write(
-                f'  - {model_info["name"]} -> {model_info["table"]} '
+                f' - {model_info["name"]} -> {model_info["table"]} '
                 f'({model_info["records"]} записей)'
             )
         
         if m2m_tables:
-            self.stdout.write(f'\n🔗 ManyToMany таблицы ({len(m2m_tables)}):')
+            self.stdout.write(f'\nManyToMany таблицы ({len(m2m_tables)}):')
             for m2m in m2m_tables:
                 self.stdout.write(
-                    f'  - {m2m["name"]} -> {m2m["table"]} '
+                    f' - {m2m["name"]} -> {m2m["table"]} '
                     f'({m2m["records"]} связей)'
                 )
         
-        self.stdout.write(f'\n📁 Файлы миграций: {stats["migration_files_count"]}')
-        self.stdout.write(f'📝 Записи в django_migrations: {stats["migration_records_count"]}')
+        self.stdout.write(f'\nФайлы миграций: {stats["migration_files_count"]}')
+        self.stdout.write(f'Записи в django_migrations: {stats["migration_records_count"]}')
 
     def _print_model_dependencies(self, dependencies):
         """Выводит зависимости моделей."""
@@ -533,13 +533,13 @@ class SafeDropAppAnalysisMixin:
         
         if not total:
             self.stdout.write(self.style.SUCCESS(
-                '\n✓ Зависимости моделей из других приложений не найдены'
+                '\nЗависимости моделей из других приложений не найдены'
             ))
             return
         
         if fixable_deps:
             self.stdout.write(self.style.WARNING(
-                f'\n⚠️  Зависимости моделей (исправляемые через --auto-fix): {len(fixable_deps)}'
+                f'\nЗависимости моделей (исправляемые через --auto-fix): {len(fixable_deps)}'
             ))
             
             fk_deps = [d for t, d in fixable_deps if t == 'foreign_keys']
@@ -547,37 +547,37 @@ class SafeDropAppAnalysisMixin:
             o2o_deps = [d for t, d in fixable_deps if t == 'one_to_one']
             
             if fk_deps:
-                self.stdout.write('\n  ForeignKey:')
+                self.stdout.write('\nForeignKey:')
                 for dep in fk_deps:
                     self.stdout.write(
-                        f'    - {dep["app"]}.{dep["model"]}.{dep["field"]} -> '
+                        f' - {dep["app"]}.{dep["model"]}.{dep["field"]} -> '
                         f'{dep["related_to"]} (on_delete={dep["on_delete"]}, '
                         f'{dep["related_count"]} записей)'
                     )
             
             if m2m_deps:
-                self.stdout.write('\n  ManyToMany:')
+                self.stdout.write('\nManyToMany:')
                 for dep in m2m_deps:
                     self.stdout.write(
-                        f'    - {dep["app"]}.{dep["model"]}.{dep["field"]} -> '
+                        f' - {dep["app"]}.{dep["model"]}.{dep["field"]} -> '
                         f'{dep["related_to"]} ({dep["related_count"]} связей)'
                     )
             
             if o2o_deps:
-                self.stdout.write('\n  OneToOne:')
+                self.stdout.write('\nOneToOne:')
                 for dep in o2o_deps:
                     self.stdout.write(
-                        f'    - {dep["app"]}.{dep["model"]}.{dep["field"]} -> '
+                        f' - {dep["app"]}.{dep["model"]}.{dep["field"]} -> '
                         f'{dep["related_to"]} ({dep["related_count"]} записей)'
                     )
         
         if system_deps:
             self.stdout.write(self.style.NOTICE(
-                f'\n📌 Системные зависимости (удалятся каскадно): {len(system_deps)}'
+                f'\nСистемные зависимости (удалятся каскадно): {len(system_deps)}'
             ))
             for dep_type, dep in system_deps:
                 self.stdout.write(
-                    f'    - {dep["app"]}.{dep["model"]}.{dep["field"]} -> '
+                    f' - {dep["app"]}.{dep["model"]}.{dep["field"]} -> '
                     f'{dep["related_to"]} (системное приложение)'
                 )
 
@@ -585,16 +585,16 @@ class SafeDropAppAnalysisMixin:
         """Выводит зависимости миграций."""
         if not dependencies:
             self.stdout.write(self.style.SUCCESS(
-                '\n✓ Зависимости миграций из других приложений не найдены'
+                '\nЗависимости миграций из других приложений не найдены'
             ))
             return
         
         self.stdout.write(self.style.WARNING(
-            f'\n⚠️  Найдено зависимостей миграций: {len(dependencies)}'
+            f'\nНайдено зависимостей миграций: {len(dependencies)}'
         ))
         
         for dep in dependencies:
             self.stdout.write(
-                f'  • {dep["app"]}.{dep["migration"]} -> {dep["depends_on"]}'
+                f' • {dep["app"]}.{dep["migration"]} -> {dep["depends_on"]}'
             )
 
