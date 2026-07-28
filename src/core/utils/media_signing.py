@@ -33,6 +33,8 @@ def _get_media_base_url() -> str:
 def get_signed_media_url(
     file_path: str,
     expires_in: int = None,
+    *,
+    as_attachment: bool = False,
 ) -> str:
     """
     Сгенерировать подписанный URL для доступа к медиафайлу.
@@ -40,6 +42,7 @@ def get_signed_media_url(
     Args:
         file_path: относительный путь к файлу (например, 'avatars/123.jpg')
         expires_in: время жизни URL в секундах (по умолчанию из настроек)
+        as_attachment: если True — media_api отдаёт Content-Disposition: attachment
 
     Returns:
         Полный подписанный URL для media_api.
@@ -49,7 +52,10 @@ def get_signed_media_url(
 
     signature, expires = sign_url(file_path, _get_secret_key(), expires_in)
     base_url = _get_media_base_url()
-    return f"{base_url}/serve/{file_path}?signature={signature}&expires={expires}"
+    url = f"{base_url}/serve/{file_path}?signature={signature}&expires={expires}"
+    if as_attachment:
+        url += '&download=1'
+    return url
 
 
 def get_signed_media_url_from_field(file_field, expires_in: int = None) -> str:
