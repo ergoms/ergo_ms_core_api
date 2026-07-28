@@ -5,12 +5,12 @@ Module Bridge — единый механизм межмодульного вз�
 ('module.operation', 'module.event'), потребители обращаются
 через bridge.call / bridge.emit без прямых импортов другого модуля.
 
-Пример провайдера (modules/my_module/api/integrations.py):
+Пример провайдера (``modules/<name>/api/integrations.py``):
 
     from src.core.integrations import bridge
     from .models import MyEntity
 
-    @bridge.provide_op('my_module.get_user_entity_ids')
+    @bridge.provide_op('<name>.get_user_entity_ids')
     def _get_user_entity_ids(user):
         if not user or not getattr(user, 'is_authenticated', False):
             return []

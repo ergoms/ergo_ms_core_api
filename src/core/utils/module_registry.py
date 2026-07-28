@@ -81,7 +81,7 @@ def reset_cache() -> None:
 
 
 def top_level_module_from_menu_source(module_source: str) -> str | None:
-    """modules/foo/bar → foo; core/cms → None."""
+    """``modules/<name>/…`` → ``<name>``; иначе ``None``."""
     deployment = _deployment_dir()
     if str(deployment) not in sys.path:
         sys.path.insert(0, str(deployment))

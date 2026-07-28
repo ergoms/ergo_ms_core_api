@@ -115,7 +115,7 @@ class MenuItem(models.Model):
         blank=True, 
         null=True, 
         verbose_name='Модуль-источник',
-        help_text='Путь к модулю (например: core/cms, modules/bi)'
+        help_text='Путь к модулю (core/… или modules/<name>)'
     )
     
     created_at = models.DateTimeField(auto_now_add=True)

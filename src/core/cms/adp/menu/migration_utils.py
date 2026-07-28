@@ -6,11 +6,11 @@
     from src.core.cms.adp.menu.migration_utils import MenuMigrationHelper
 
     def populate_menu(apps, schema_editor):
-        helper = MenuMigrationHelper(apps, 'modules/my_module')
-        
+        helper = MenuMigrationHelper(apps, 'modules/<name>')
+
         # Корневой элемент (order вычисляется автоматически)
         root = helper.create_group('Мой модуль', 'MyModule', icon='Folder')
-        
+
         # Дочерние элементы (порядок = порядок создания)
         helper.create_route('Главная', 'MyModuleDashboard', parent=root, icon='Home')
         helper.create_route('Настройки', 'MyModuleSettings', parent=root, icon='Settings')
@@ -33,7 +33,7 @@ class MenuMigrationHelper:
         
         Args:
             apps: apps из миграции (первый аргумент populate функции)
-            module_source: путь к модулю (например: 'modules/module_template', 'core/cms')
+            module_source: путь к модулю (``modules/<name>`` или ``core/…``)
         """
         self.MenuItem = apps.get_model('cms_adp', 'MenuItem')
         self.MenuSeparator = apps.get_model('cms_adp', 'MenuSeparator')
