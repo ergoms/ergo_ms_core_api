@@ -37,7 +37,7 @@ def find_celery_beat() -> bool:
 
 
 def main() -> int:
-    start_time = time.perf_counter()
+    start_time = time.time()
     parser = argparse.ArgumentParser(description='Запуск Celery beat')
     parser.add_argument(
         '--verbose',

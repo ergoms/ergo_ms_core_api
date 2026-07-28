@@ -107,7 +107,7 @@ def build_cmd(
 
 
 def main() -> int:
-    start_time = time.perf_counter()
+    start_time = time.time()
     parser = argparse.ArgumentParser(description='Запуск Celery worker')
     parser.add_argument('--worker', type=str, default=None)
     parser.add_argument('--list-workers', action='store_true')

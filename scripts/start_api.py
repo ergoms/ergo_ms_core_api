@@ -44,6 +44,10 @@ def main() -> int:
         get_settings_module,
         is_production,
     )
+    from src.core.utils.startup_timing import ENV_API_START_WALL, mark_start
+
+    # Wall-clock старт до subprocess/autoreload — child наследует ERGO_API_START_WALL.
+    mark_start(env_key=ENV_API_START_WALL)
 
     run_env = _build_env()
     run_env.setdefault('DJANGO_SETTINGS_MODULE', get_settings_module())

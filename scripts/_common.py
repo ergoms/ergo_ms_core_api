@@ -277,10 +277,11 @@ def run_celery_with_timing(
     service_name: str,
     start: Optional[float] = None,
 ) -> int:
-    """Запускает celery, пробрасывает stdout дочернего процесса и логирует готовность."""
-    log = get_bootstrap_logger()
+    """Запускает celery, пробрасывает stdout и печатает одну строку полного времени запуска."""
+    from src.core.utils.startup_timing import try_print_service_ready
+
     if start is None:
-        start = time.perf_counter()
+        start = time.time()
     env = os.environ.copy()
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUTF8'] = '1'
@@ -297,19 +298,16 @@ def run_celery_with_timing(
         errors='replace',
         env=env,
     )
-    ready_printed = False
     try:
         if proc.stdout:
             for line in proc.stdout:
                 # Сырой вывод Celery (уже в своём формате) — без повторного formatter.
                 print(line, end='')
-                if not ready_printed and ready_pattern in line:
-                    elapsed = time.perf_counter() - start
-                    suffix = 'ms' if elapsed < 1 else 's'
-                    val = elapsed * 1000 if elapsed < 1 else elapsed
-                    fmt = f'{val:.0f}{suffix}' if elapsed < 1 else f'{val:.2f}{suffix}'
-                    log.info('%s готов за %s', service_name, fmt)
-                    ready_printed = True
+                if ready_pattern in line:
+                    try_print_service_ready(
+                        service_name,
+                        elapsed=max(0.0, time.time() - start),
+                    )
         proc.wait()
     except KeyboardInterrupt:
         proc.terminate()

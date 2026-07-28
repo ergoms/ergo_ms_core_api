@@ -1,5 +1,8 @@
 """
-Запуск Media API: development — runserver, production — daphne (ASGI).
+Запуск Media API: development — dev/runserver (Daphne, autoreload), production — daphne.
+
+Точка входа для systemd/NSSM и ergoms start-media.
+Сценарий совпадает с start_api.py.
 """
 
 import os
@@ -13,26 +16,19 @@ PROJECT_ROOT = API_DIR.parent.parent
 MEDIA_SRC = PROJECT_ROOT / 'core' / 'media_api' / 'src'
 
 
-def _read_env_var(name: str, default: str = '') -> str:
-    value = os.environ.get(name)
-    if value is not None and value != '':
-        return value.strip()
-    deployment = PROJECT_ROOT / 'core' / 'deployment'
-    if str(deployment) not in sys.path:
-        sys.path.insert(0, str(deployment))
-    try:
-        from env_file_loader import load_project_env  # noqa: WPS433
-        return load_project_env(PROJECT_ROOT).get(name, default)
-    except Exception:
-        return default
+def _ensure_sys_path() -> None:
+    for path in (MEDIA_SRC, API_DIR, PROJECT_ROOT):
+        entry = str(path)
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
 
 
 def _build_env() -> dict:
     env = os.environ.copy()
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUTF8'] = '1'
+    env['PYTHONUNBUFFERED'] = '1'
     existing = env.get('PYTHONPATH', '')
-    # API_DIR — для общего log_format (src.config.*) из media_server.
     paths = [str(MEDIA_SRC), str(API_DIR), str(PROJECT_ROOT)]
     if existing:
         paths.append(existing)
@@ -41,53 +37,34 @@ def _build_env() -> dict:
 
 
 def main() -> int:
-    sys.path.insert(0, str(MEDIA_SRC))
+    _ensure_sys_path()
 
-    from media_server.deploy import get_deploy_type
+    from media_server.deploy import (
+        build_dev_command,
+        build_daphne_command,
+        get_media_bind_host,
+        get_media_bind_port,
+        get_settings_module,
+        is_production,
+    )
+    from src.core.utils.startup_timing import ENV_MEDIA_START_WALL, mark_start
 
-    deploy_type = get_deploy_type()
-    scripts_dir = PROJECT_ROOT / 'core' / 'deployment' / 'scripts'
-    if str(scripts_dir) not in sys.path:
-        sys.path.insert(0, str(scripts_dir))
-    from deployment_env import is_nginx_enabled  # noqa: WPS433
+    mark_start(env_key=ENV_MEDIA_START_WALL)
 
-    nginx_enabled = is_nginx_enabled()
-    # MEDIA_API_BIND_PORT — порт процесса (8003). MEDIA_API_PORT — порт в публичных URL (80 за nginx).
-    port = _read_env_var('MEDIA_API_BIND_PORT', '') or _read_env_var('MEDIA_API_PORT', '8003')
-    if deploy_type == 'production' and port in ('80', '443'):
-        port = _read_env_var('MEDIA_API_BIND_PORT', '8003')
-    default_host = '127.0.0.1' if deploy_type == 'production' or nginx_enabled else '0.0.0.0'
-    host = _read_env_var('MEDIA_API_BIND_HOST', default_host)
-    env = _build_env()
+    run_env = _build_env()
+    run_env.setdefault('DJANGO_SETTINGS_MODULE', get_settings_module())
 
-    if deploy_type == 'production':
-        from media_server.deploy import get_settings_module
+    host = get_media_bind_host()
+    port = get_media_bind_port()
 
-        # Тот же формат, что у API (core/api/src/config/log_format.py).
-        # В path нужен core/api, иначе `from src.config...` не резолвится.
-        if str(API_DIR) not in sys.path:
-            sys.path.insert(0, str(API_DIR))
-        from src.config.log_format import DAPHNE_LOG_FMT
-
-        env.setdefault('DJANGO_SETTINGS_MODULE', get_settings_module())
-        cmd = [
-            sys.executable, '-m', 'daphne',
-            '-b', host,
-            '-p', port,
-            # NCSA access в null — единый HTTP-лог через RequestLoggingMiddleware.
-            '--access-log', os.devnull,
-            '--log-fmt', DAPHNE_LOG_FMT,
-            'media_server.asgi:application',
-        ]
+    if is_production():
+        cmd = build_daphne_command(sys.executable)
         print(f'Media API (запуск как на сервере): daphne на {host}:{port}')
     else:
-        cmd = [
-            sys.executable, '-m', 'media_server.manage',
-            'runserver', f'{host}:{port}',
-        ]
+        cmd = build_dev_command(sys.executable)
         print(f'Media API (разработка): runserver на {host}:{port}')
 
-    return subprocess.call(cmd, cwd=str(PROJECT_ROOT), env=env)
+    return subprocess.call(cmd, cwd=str(PROJECT_ROOT), env=run_env)
 
 
 if __name__ == '__main__':

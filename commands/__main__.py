@@ -152,7 +152,6 @@ def _run_lean_schema_command() -> None:
 
 
 def _run_full_main() -> None:
-    import time
     from typing import Dict, Type
 
     from commands.base import PoetryCommand
@@ -162,9 +161,9 @@ def _run_full_main() -> None:
     from commands.update import UpdateCommand
     from commands.warmup import WarmupCachesCommand, WarmupCeleryCommand
     from src.config.settings.logger import LOGGING
-    from src.core.utils.startup_timing import set_start_time_if_earlier
+    from src.core.utils.startup_timing import mark_start
 
-    set_start_time_if_earlier(time.perf_counter())
+    mark_start()
 
     logger = logging.getLogger('commands')
     logger.propagate = False

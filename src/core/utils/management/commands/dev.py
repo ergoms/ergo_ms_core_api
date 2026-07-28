@@ -24,47 +24,20 @@ from django.conf import settings
 from src.config.deploy import build_daphne_command, get_api_bind_host, get_api_bind_port, is_production
 from src.config.env import env
 from src.config.paths import API_DIR
-from src.core.utils.startup_timing import get_elapsed, get_elapsed_str
+from src.core.utils.startup_timing import (
+    StreamReadyWrapper,
+    install_listening_ready_handler,
+    remove_listening_ready_handler,
+)
 
 logger = logging.getLogger('core.utils.commands')
+
+SERVICE_NAME = 'API'
 
 
 def _env_autoreload_enabled() -> bool:
     """API_AUTORELOAD: false — runserver без reloader (быстрее cold start, без hot-reload)."""
     return env.bool('API_AUTORELOAD', default=True)
-
-
-class _StreamTimingWrapper:
-    """Обёртка stdout/stderr для вывода времени готовности API при появлении 'Starting'."""
-
-    def __init__(self, stream):
-        self._stream = stream
-        self._ready_printed = False
-
-    def _check_and_print_ready(self, data: str) -> None:
-        if self._ready_printed:
-            return
-        if 'Starting' not in data or ('server' not in data.lower() and 'development' not in data.lower()):
-            return
-        elapsed = get_elapsed()
-        suffix = 'ms' if elapsed < 1 else 's'
-        val = elapsed * 1000 if elapsed < 1 else elapsed
-        fmt = f'{val:.0f}{suffix}' if elapsed < 1 else f'{val:.2f}{suffix}'
-        try:
-            self._stream.write(f'\n>>> API готов (полное время запуска): {fmt}\n')
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            pass
-        self._ready_printed = True
-
-    def write(self, data: str) -> None:
-        self._stream.write(data)
-        self._check_and_print_ready(data)
-
-    def flush(self) -> None:
-        self._stream.flush()
-
-    def __getattr__(self, name):
-        return getattr(self._stream, name)
 
 
 class Command(RunserverCommand):
@@ -102,7 +75,7 @@ class Command(RunserverCommand):
         if is_production():
             host = get_api_bind_host()
             port = get_api_bind_port()
-            msg = f'API (запуск как на сервере): daphne на {host}:{port} (без autoreload)'
+            msg = f'{SERVICE_NAME} (запуск как на сервере): daphne на {host}:{port} (без autoreload)'
             logger.info(msg)
             try:
                 self.stdout.write(self.style.SUCCESS(msg))
@@ -136,14 +109,6 @@ class Command(RunserverCommand):
         else:
             role = 'без autoreload'
         logger.info('Запуск команды runserver (%s)', role)
-        if is_reloader_child or not use_reloader:
-            elapsed_msg = get_elapsed_str()
-            try:
-                self.stdout.write(
-                    self.style.SUCCESS(f'  API (runserver): Django загружен полностью {elapsed_msg}')
-                )
-            except (UnicodeEncodeError, UnicodeDecodeError):
-                logger.info('API (runserver): Django загружен полностью %s', elapsed_msg)
 
         if not options['addrport']:
             server_host = getattr(settings, 'SERVER_HOST', None)
@@ -160,9 +125,19 @@ class Command(RunserverCommand):
         else:
             logger.info(f'Используются пользовательские настройки: {options["addrport"]}')
 
+        listen_handler = None
+        if is_reloader_child or not use_reloader:
+            listen_handler = install_listening_ready_handler(
+                SERVICE_NAME,
+                stream=self.stdout,
+            )
+
         try:
             orig_stdout = self.stdout
-            self.stdout = _StreamTimingWrapper(orig_stdout)
+            self.stdout = StreamReadyWrapper(orig_stdout, SERVICE_NAME)
+            # Stream обёртка — тот же поток, что у Listening handler.
+            if listen_handler is not None:
+                listen_handler._stream = self.stdout
             try:
                 super().handle(*args, **options)
             finally:
@@ -171,3 +146,5 @@ class Command(RunserverCommand):
             msg = f'Ошибка при запуске сервера: {str(e)}'
             logger.error(msg)
             raise
+        finally:
+            remove_listening_ready_handler(listen_handler)
