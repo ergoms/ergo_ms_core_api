@@ -17,20 +17,14 @@ def _read_env_var(name: str, default: str = '') -> str:
     value = os.environ.get(name)
     if value is not None and value != '':
         return value.strip()
-    env_path = PROJECT_ROOT / '.env'
-    if not env_path.is_file():
-        return default
+    deployment = PROJECT_ROOT / 'core' / 'deployment'
+    if str(deployment) not in sys.path:
+        sys.path.insert(0, str(deployment))
     try:
-        for line in env_path.read_text(encoding='utf-8').splitlines():
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            key, _, raw = line.partition('=')
-            if key.strip() == name:
-                return raw.strip().strip('"').strip("'")
-    except OSError:
-        pass
-    return default
+        from env_file_loader import load_project_env  # noqa: WPS433
+        return load_project_env(PROJECT_ROOT).get(name, default)
+    except Exception:
+        return default
 
 
 def _build_env() -> dict:
@@ -49,8 +43,15 @@ def _build_env() -> dict:
 def main() -> int:
     sys.path.insert(0, str(MEDIA_SRC))
 
-    deploy_type = _read_env_var('MEDIA_API_DEPLOY_TYPE', 'development').lower()
-    nginx_enabled = _read_env_var('NGINX_ENABLED', 'false').lower() in ('1', 'true', 'yes')
+    from media_server.deploy import get_deploy_type
+
+    deploy_type = get_deploy_type()
+    scripts_dir = PROJECT_ROOT / 'core' / 'deployment' / 'scripts'
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from deployment_env import is_nginx_enabled  # noqa: WPS433
+
+    nginx_enabled = is_nginx_enabled()
     # MEDIA_API_BIND_PORT — порт процесса (8003). MEDIA_API_PORT — порт в публичных URL (80 за nginx).
     port = _read_env_var('MEDIA_API_BIND_PORT', '') or _read_env_var('MEDIA_API_PORT', '8003')
     if deploy_type == 'production' and port in ('80', '443'):

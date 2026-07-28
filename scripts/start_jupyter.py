@@ -69,6 +69,7 @@ def _ensure_venv_commonjs():
 
 
 def _print_startup_info():
+    from src.config.ergo_runtime import current_ergo_jupyter, jupyter_mode_enabled
     from src.config.jupyter_runtime import (
         effective_jupyter_access_mode,
         effective_jupyter_bind_host,
@@ -76,6 +77,13 @@ def _print_startup_info():
         effective_jupyter_security,
         jupyter_public_lab_url,
     )
+
+    if not jupyter_mode_enabled():
+        print(format_console(
+            'warning',
+            f'ERGO_JUPYTER={current_ergo_jupyter()} — Jupyter выключен в режимах; '
+            'запуск по явной команде. Детали: env/jupyter.env',
+        ))
 
     mode = effective_jupyter_access_mode()
     security = effective_jupyter_security()

@@ -85,6 +85,13 @@ if _audit_retention_days > 0:
         'schedule': crontab(hour=3, minute=30),
     }
 
+_client_monitoring_retention_days = _env.int('CLIENT_MONITORING_RETENTION_DAYS', default=7)
+if _client_monitoring_retention_days > 0:
+    CELERY_BEAT_SCHEDULE['client-monitor-purge-old'] = {
+        'task': 'core.client_monitor.purge_old',
+        'schedule': crontab(hour=3, minute=45),
+    }
+
 # Дополнительные настройки Beat из модулей
 CELERY_BEAT_ADDITIONAL_CONFIG = beat_module_manager.get_additional_beat_configs()
 

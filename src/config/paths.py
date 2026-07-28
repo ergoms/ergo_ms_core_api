@@ -14,8 +14,10 @@ CORE_DIR = API_DIR.parent
 SYSTEM_DIR = CORE_DIR.parent
 
 ENV_FILE_PATH = SYSTEM_DIR / '.env'
+ENV_FRAGMENTS_DIR = SYSTEM_DIR / 'env'
 MODULES_DIR = SYSTEM_DIR / 'modules'
 VIRTUAL_ENV_DIR = SYSTEM_DIR / 'virtual_env'
+DEPLOYMENT_DIR = CORE_DIR / 'deployment'
 
 from src.config.log_paths import resolve_logs_root  # noqa: E402
 

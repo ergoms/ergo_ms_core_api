@@ -94,7 +94,9 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
         backup_count=rotation['broker_backup_count'],
     )
     add_file('CLIENT_BROWSER', 'client_browser_file')
+    add_file('CLIENT_MONITOR', 'client_monitor_file')
     add_file('AUDIT', 'audit_file')
+
 
     if console_enabled:
         handlers['console'] = _console_handler(console_level)
@@ -189,6 +191,20 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
                 env_file,
                 file_level_for_key('CLIENT_BROWSER', SYSTEM_DIR),
             ),
+            'propagate': False,
+        },
+        'client.monitor': {
+            'handlers': ['client_monitor_file'],
+            'level': read_log_level_env(
+                'CLIENT_MONITOR_LOG_FILE_LEVEL',
+                env_file,
+                file_level_for_key('CLIENT_MONITOR', SYSTEM_DIR),
+            ),
+            'propagate': False,
+        },
+        'celery.core.client_monitor': {
+            'handlers': ['client_monitor_file'] + console,
+            'level': 'INFO',
             'propagate': False,
         },
         'core.audit': {

@@ -6,6 +6,7 @@
 import os
 from pathlib import Path
 
+from src.config.ergo_runtime import media_access_mode
 from src.config.nginx_runtime import (
     effective_media_public_host,
     effective_media_public_port,
@@ -90,8 +91,8 @@ MEDIA_URL_EXPIRATION = int(os.getenv('MEDIA_URL_EXPIRATION', '3600'))
 MEDIA_UPLOAD_MAX_SIZE = int(os.getenv('MEDIA_UPLOAD_MAX_SIZE', '524288000'))
 MEDIA_UPLOAD_TOKEN_EXPIRATION = int(os.getenv('MEDIA_UPLOAD_TOKEN_EXPIRATION', '300'))
 
-# Режим доступа core/api к файлам: local (прямая ФС) или remote (HTTP к media_api)
-MEDIA_ACCESS_MODE = os.getenv('MEDIA_ACCESS_MODE', 'local').strip().lower()
+# Режим доступа core/api к файлам: ERGO_MEDIA (или явный MEDIA_ACCESS_MODE)
+MEDIA_ACCESS_MODE = media_access_mode()
 MEDIA_API_INTERNAL_KEY = os.getenv('MEDIA_API_INTERNAL_KEY', '').strip()
 
 # Compute-пайплайн (см. core/utils/media_client/pipeline.py, scratch.py)

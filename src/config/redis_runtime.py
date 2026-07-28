@@ -1,16 +1,23 @@
 """
-Сценарий REDIS_ENABLED: единая сборка URL для кэша, channel layer и Celery.
+Сценарий Redis: URL для кэша, channel layer и Celery.
+
+Параметры подключения — секция redis в databases.yaml (с fallback на REDIS_* в .env).
+Включение — ERGO_BROKER=redis или явный REDIS_ENABLED.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from src.config.env import env
+from src.config.ergo_runtime import redis_mode_enabled
+from src.config.paths import SYSTEM_DIR
 
 _KOMBU_REDIS_RESP2_PATCHED = False
 _HOST_LOOPBACK = '127.0.0.1'
+_REDIS_SECTION_CACHE: dict[str, Any] | None = None
 
 
 def running_in_container() -> bool:
@@ -31,14 +38,40 @@ def _docker_service_redis_names() -> frozenset[str]:
     return frozenset({service, 'redis'})
 
 
+def _load_redis_section() -> dict[str, Any]:
+    global _REDIS_SECTION_CACHE
+    if _REDIS_SECTION_CACHE is not None:
+        return _REDIS_SECTION_CACHE
+
+    from src.core.utils.database.config_manager import _get_cached_yaml
+
+    databases = _get_cached_yaml(SYSTEM_DIR / 'databases.yaml') or {}
+    section = databases.get('redis')
+    if isinstance(section, dict):
+        _REDIS_SECTION_CACHE = dict(section)
+    else:
+        _REDIS_SECTION_CACHE = {}
+    return _REDIS_SECTION_CACHE
+
+
+def _section_int(section: dict[str, Any], key: str, default: int) -> int:
+    raw = section.get(key, default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 def effective_redis_host() -> str:
     """
     Хост Redis для текущего runtime.
 
-    На хосте (ergoms dev, portable Redis) имя сервиса compose ``redis`` не резолвится —
-    подключаемся к 127.0.0.1. Внутри контейнера оставляем REDIS_HOST из .env.
+    На хосте имя сервиса compose ``redis`` не резолвится — 127.0.0.1.
     """
-    host = env.str('REDIS_HOST', default=_HOST_LOOPBACK).strip() or _HOST_LOOPBACK
+    section = _load_redis_section()
+    host = str(section.get('host') or '').strip()
+    if not host:
+        host = env.str('REDIS_HOST', default=_HOST_LOOPBACK).strip() or _HOST_LOOPBACK
     if not running_in_container() and host.strip().lower() in _docker_service_redis_names():
         return _HOST_LOOPBACK
     return host
@@ -56,7 +89,7 @@ def _normalize_redis_url(url: str) -> str:
 
 
 def redis_enabled() -> bool:
-    return env.bool('REDIS_ENABLED', default=False)
+    return redis_mode_enabled()
 
 
 def effective_cache_backend() -> str:
@@ -83,7 +116,7 @@ def effective_celery_broker_backend() -> str:
         return explicit
     if redis_enabled():
         return 'redis'
-    return 'auto'
+    return 'local'
 
 
 def redis_host() -> str:
@@ -91,6 +124,9 @@ def redis_host() -> str:
 
 
 def redis_port() -> int:
+    section = _load_redis_section()
+    if 'port' in section:
+        return _section_int(section, 'port', 6379)
     raw = env.str('REDIS_PORT', default='6379').strip() or '6379'
     try:
         return int(raw)
@@ -99,6 +135,9 @@ def redis_port() -> int:
 
 
 def redis_db_cache() -> int:
+    section = _load_redis_section()
+    if 'db_cache' in section:
+        return _section_int(section, 'db_cache', 1)
     raw = env.str('REDIS_DB_CACHE', default='1').strip() or '1'
     try:
         return int(raw)
@@ -107,6 +146,9 @@ def redis_db_cache() -> int:
 
 
 def redis_db_channel() -> int:
+    section = _load_redis_section()
+    if 'db_channel' in section:
+        return _section_int(section, 'db_channel', 0)
     raw = env.str('REDIS_DB_CHANNEL', default='0').strip() or '0'
     try:
         return int(raw)
@@ -115,6 +157,9 @@ def redis_db_channel() -> int:
 
 
 def redis_db_celery_broker() -> int:
+    section = _load_redis_section()
+    if 'db_celery_broker' in section:
+        return _section_int(section, 'db_celery_broker', 2)
     raw = env.str('REDIS_DB_CELERY_BROKER', default='2').strip() or '2'
     try:
         return int(raw)
@@ -123,6 +168,9 @@ def redis_db_celery_broker() -> int:
 
 
 def redis_db_celery_result() -> int:
+    section = _load_redis_section()
+    if 'db_celery_result' in section:
+        return _section_int(section, 'db_celery_result', 3)
     raw = env.str('REDIS_DB_CELERY_RESULT', default='3').strip() or '3'
     try:
         return int(raw)
@@ -140,7 +188,6 @@ def sanitize_celery_redis_url(url: str) -> str:
 
     ``?protocol=2`` нужен redis-py (Django cache), но kombu передаёт query в
     Connection._init_params() и падает с unexpected keyword argument 'protocol'.
-    RESP2 для Celery задаётся через ensure_kombu_redis_resp2().
     """
     parts = urlsplit(url)
     if not parts.query:
@@ -188,11 +235,7 @@ def uses_redis_celery_backend(broker_url: str, result_backend: str = '') -> bool
 
 
 def ensure_kombu_redis_resp2() -> None:
-    """
-    Старый portable Redis 5.x на Windows не поддерживал RESP3/HELLO; redis-py 8+ по
-    умолчанию шлёт HELLO. Kombu не принимает ``protocol`` в query URL — прокидываем
-    в pool. На Redis 7+ патч безвреден.
-    """
+    """RESP2 для portable Redis 5.x / совместимости с redis-py 8+."""
     global _KOMBU_REDIS_RESP2_PATCHED
     if _KOMBU_REDIS_RESP2_PATCHED:
         return
@@ -211,24 +254,10 @@ def ensure_kombu_redis_resp2() -> None:
 
 
 def redis_connection_options() -> dict[str, int]:
-    """
-    Параметры redis-py для Django cache.
-
-    Portable Redis 5.x на Windows не поддерживал RESP3/HELLO; redis-py 8+ без
-    protocol=2 падал с «unknown command HELLO». На Redis 7+ (ergoms install-redis)
-    protocol=2 остаётся совместимым.
-    """
     return {'protocol': 2}
 
 
 def redis_channel_connection_options() -> dict[str, int | None]:
-    """
-    Параметры redis-py для channels_redis (SSE/WebSocket push).
-
-    socket_timeout=None обязателен: channels_redis ждёт сообщения через BZPOPMIN
-    с brpop_timeout=5 с; дефолтный socket_timeout redis-py (5 с) обрывает чтение
-    раньше и даёт TimeoutError в логах SSE.
-    """
     return {
         'protocol': 2,
         'socket_timeout': None,

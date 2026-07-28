@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from typing import Dict, Any, List, Optional, Tuple
 
+from src.core.utils.celery.module_identity import resolve_celery_app_identity
 from src.core.utils.celery_beat.base import CeleryBeatModuleConfig
 from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
 from src.core.utils.celery_config_cache import read_beat_schedule_cache, write_beat_schedule_cache
@@ -39,22 +40,26 @@ class CeleryBeatModuleManager:
         disabled = get_disabled_modules()
         all_apps = get_discovered_apps()
         module_apps = [app for app in all_apps if app.startswith('modules.')]
-        items: List[Tuple[str, str]] = []
+        items: List[Tuple[str, str, str]] = []
         for app_path in module_apps:
-            module_parts = app_path.split('.')
-            if len(module_parts) >= 3 and module_parts[-1] == 'api':
-                module_name = module_parts[-2]
-            else:
-                module_name = module_parts[-1]
-            if module_name in disabled:
+            identity = resolve_celery_app_identity(app_path)
+            if identity is None:
                 continue
-            if not is_valid_module_name(module_name):
-                self.logger.warning(f"Пропускаем модуль с невалидным именем: {module_name}")
+            config_key, catalog_name, logger_name = identity
+            if catalog_name in disabled:
                 continue
-            items.append((module_name, app_path))
+            if not is_valid_module_name(config_key):
+                self.logger.warning(
+                    f"Пропускаем модуль с невалидным именем: {config_key}"
+                )
+                continue
+            items.append((config_key, logger_name, app_path))
         max_workers = min(4, len(items) or 1)
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
-            futures = {ex.submit(self._load_module_config, name, path): name for name, path in items}
+            futures = {
+                ex.submit(self._load_module_config, key, logger_name, path): key
+                for key, logger_name, path in items
+            }
             for future in as_completed(futures):
                 result = future.result()
                 if result is not None:
@@ -62,26 +67,47 @@ class CeleryBeatModuleManager:
                     self.modules_configs[module_name] = config_instance
         self._save_schedule_to_cache()
 
-    def _load_module_config(self, module_name: str, app_path: Optional[str] = None) -> Optional[Tuple[str, CeleryBeatModuleConfig]]:
+    def _load_module_config(
+        self,
+        config_key: str,
+        logger_module_name: str,
+        app_path: Optional[str] = None,
+    ) -> Optional[Tuple[str, CeleryBeatModuleConfig]]:
         """Загружает конфигурацию Beat конкретного модуля"""
         try:
-            # Пытаемся импортировать конфигурацию Beat модуля
-            config_module_path = f'{app_path}.celery_beat_config' if app_path else f'modules.{module_name}.api.celery_beat_config'
+            config_module_path = (
+                f'{app_path}.celery_beat_config'
+                if app_path
+                else f'modules.{config_key}.api.celery_beat_config'
+            )
             config_module = importlib.import_module(config_module_path)
-            
+
             for attr_name in dir(config_module):
                 attr = getattr(config_module, attr_name)
-                if (isinstance(attr, type) and
-                    issubclass(attr, CeleryBeatModuleConfig) and
-                    attr != CeleryBeatModuleConfig):
-                    config_instance = attr(module_name)
-                    return (module_name, config_instance)
-            return (module_name, self._create_default_config(module_name, app_path))
+                if (
+                    isinstance(attr, type)
+                    and issubclass(attr, CeleryBeatModuleConfig)
+                    and attr != CeleryBeatModuleConfig
+                ):
+                    config_instance = attr(logger_module_name)
+                    return (config_key, config_instance)
+            return (
+                config_key,
+                self._create_default_config(logger_module_name, app_path),
+            )
         except ImportError:
-            return (module_name, self._create_default_config(module_name, app_path))
+            return (
+                config_key,
+                self._create_default_config(logger_module_name, app_path),
+            )
         except Exception as e:
-            self.logger.error(f"Ошибка загрузки конфигурации Beat модуля {module_name}: {e}")
-            return (module_name, self._create_default_config(module_name, app_path))
+            self.logger.error(
+                f"Ошибка загрузки конфигурации Beat модуля {config_key}: {e}"
+            )
+            return (
+                config_key,
+                self._create_default_config(logger_module_name, app_path),
+            )
 
     def _save_schedule_to_cache(self) -> None:
         """Сохраняет актуальное расписание в кэш после загрузки модулей."""

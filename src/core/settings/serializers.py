@@ -49,7 +49,7 @@ class ThemeSerializer(serializers.ModelSerializer):
             if changed_fields:
                 raise serializers.ValidationError(
                     'Нельзя изменять структуру системной темы. '
-                    'Для темы сайта создайте копию; для модуля можно менять палитру и описание.'
+                    'Для темы системы создайте копию; для модуля можно менять палитру и описание.'
                 )
 
         instance = self.instance

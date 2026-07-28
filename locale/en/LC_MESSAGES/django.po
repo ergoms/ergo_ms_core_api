@@ -156,8 +156,8 @@ msgstr "Each item must contain id and order"
 msgid "Кастомные CSS переменные --color-*"
 msgstr "Custom CSS variables --color-*"
 
-msgid "Ключ модуля (kebab-case). Пусто — глобальная тема сайта."
-msgstr "Module key (kebab-case). Empty — global site theme."
+msgid "Ключ модуля (kebab-case). Пусто — глобальная тема системы."
+msgstr "Module key (kebab-case). Empty — global system theme."
 
 msgid "Код подтверждения отправлен"
 msgstr "Confirmation code sent"
@@ -420,8 +420,8 @@ msgstr "Invitation is already revoked"
 msgid "Проверьте настройки SMTP."
 msgstr "Check the SMTP settings."
 
-msgid "Пусто — стандарт сайта"
-msgstr "Empty — site default"
+msgid "Пусто — стандарт системы"
+msgstr "Empty — system default"
 
 msgid "Разделитель не найден"
 msgstr "Separator not found"
@@ -450,8 +450,8 @@ msgstr "Role not found."
 msgid "Светлая"
 msgstr "Light"
 
-msgid "Связка light+dark вариантов модуля. Пусто — тема сайта."
-msgstr "Pair of module light+dark variants. Empty — site theme."
+msgid "Связка light+dark вариантов модуля. Пусто — тема системы."
+msgstr "Pair of module light+dark variants. Empty — system theme."
 
 msgid "Сессия завершена."
 msgstr "Session ended."
@@ -474,8 +474,8 @@ msgstr "Initial values snapshot"
 msgid "Создана"
 msgstr "Created"
 
-msgid "Стандарт сайта для пользователей без личного выбора"
-msgstr "Site default for users without a personal choice"
+msgid "Стандарт системы для пользователей без личного выбора"
+msgstr "System default for users without a personal choice"
 
 msgid "Страница обязательна для типа \"offcanvas\""
 msgstr "Page is required for type \"offcanvas\""

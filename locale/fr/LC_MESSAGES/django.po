@@ -156,8 +156,8 @@ msgstr "Chaque élément doit contenir id et order"
 msgid "Кастомные CSS переменные --color-*"
 msgstr "Variables CSS personnalisées --color-*"
 
-msgid "Ключ модуля (kebab-case). Пусто — глобальная тема сайта."
-msgstr "Clé du module (kebab-case). Vide — thème global du site."
+msgid "Ключ модуля (kebab-case). Пусто — глобальная тема системы."
+msgstr "Clé du module (kebab-case). Vide — thème global du système."
 
 msgid "Код подтверждения отправлен"
 msgstr "Code de confirmation envoyé"
@@ -420,8 +420,8 @@ msgstr "L'invitation est déjà révoquée"
 msgid "Проверьте настройки SMTP."
 msgstr "Vérifiez les paramètres SMTP."
 
-msgid "Пусто — стандарт сайта"
-msgstr "Vide — valeur par défaut du site"
+msgid "Пусто — стандарт системы"
+msgstr "Vide — valeur par défaut du système"
 
 msgid "Разделитель не найден"
 msgstr "Séparateur introuvable"
@@ -450,8 +450,8 @@ msgstr "Rôle introuvable."
 msgid "Светлая"
 msgstr "Claire"
 
-msgid "Связка light+dark вариантов модуля. Пусто — тема сайта."
-msgstr "Paire de variantes light+dark du module. Vide — thème du site."
+msgid "Связка light+dark вариантов модуля. Пусто — тема системы."
+msgstr "Paire de variantes light+dark du module. Vide — thème du système."
 
 msgid "Сессия завершена."
 msgstr "Session terminée."
@@ -474,8 +474,8 @@ msgstr "Instantané des valeurs initiales"
 msgid "Создана"
 msgstr "Créée"
 
-msgid "Стандарт сайта для пользователей без личного выбора"
-msgstr "Valeur par défaut du site pour les utilisateurs sans choix personnel"
+msgid "Стандарт системы для пользователей без личного выбора"
+msgstr "Valeur par défaut du système pour les utilisateurs sans choix personnel"
 
 msgid "Страница обязательна для типа \"offcanvas\""
 msgstr "La page est obligatoire pour le type « offcanvas »"

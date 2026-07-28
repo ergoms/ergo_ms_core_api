@@ -1,12 +1,13 @@
 """
 Транспорт realtime: websocket, sse или http_polling (REST + short polling на клиенте).
+
+Режим: ERGO_REALTIME; явный REALTIME_TRANSPORT перекрывает.
 """
 
 from src.config.env import env
+from src.config.ergo_runtime import realtime_transport
 
-REALTIME_TRANSPORT = env.str('REALTIME_TRANSPORT', default='websocket').strip().lower()
-if REALTIME_TRANSPORT not in ('websocket', 'sse', 'http_polling'):
-    REALTIME_TRANSPORT = 'websocket'
+REALTIME_TRANSPORT = realtime_transport()
 
 REALTIME_SSE_KEEPALIVE_INTERVAL = env.int('REALTIME_SSE_KEEPALIVE_INTERVAL', default=25)
 

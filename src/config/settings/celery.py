@@ -15,10 +15,10 @@
     CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: Флаг повторного подключения к брокеру при запуске
 
 Режимы работы:
-    - CELERY_BROKER_BACKEND=redis — брокер и results в Redis (.env / REDIS_DB_CELERY_*)
-    - CELERY_BROKER_BACKEND=auto (по умолчанию): секции databases.yaml → REDIS_ENABLED → SQLite
+    - ERGO_BROKER=redis / CELERY_BROKER_BACKEND=redis — брокер и results в Redis (секция redis в databases.yaml)
+    - CELERY_BROKER_BACKEND=auto (по умолчанию): ERGO_BROKER=redis → Redis; иначе celery* в yaml → SQLite
     - CELERY_BROKER_BACKEND=database — только секции databases.yaml
-    - CELERY_BROKER_BACKEND=local или CELERY_USE_LOCAL=true — локальный SQLite
+    - CELERY_BROKER_BACKEND=local / ERGO_BROKER=local — локальный SQLite
     - Секции databases.yaml: celery_worker / celery / celery_beat (SQL-брокер)
 """
 

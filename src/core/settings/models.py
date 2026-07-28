@@ -26,7 +26,7 @@ class Theme(models.Model):
     is_default = models.BooleanField(
         _("По умолчанию"),
         default=False,
-        help_text=_("Стандарт сайта для пользователей без личного выбора"),
+        help_text=_("Стандарт системы для пользователей без личного выбора"),
     )
     is_available = models.BooleanField(
         _("В быстром выборе"),
@@ -59,7 +59,7 @@ class Theme(models.Model):
         max_length=100,
         blank=True,
         null=True,
-        help_text=_("Ключ модуля (kebab-case). Пусто — глобальная тема сайта."),
+        help_text=_("Ключ модуля (kebab-case). Пусто — глобальная тема системы."),
     )
 
     module_tokens = models.JSONField(
@@ -74,7 +74,7 @@ class Theme(models.Model):
         max_length=64,
         blank=True,
         default='',
-        help_text=_("Связка light+dark вариантов модуля. Пусто — тема сайта."),
+        help_text=_("Связка light+dark вариантов модуля. Пусто — тема системы."),
     )
 
     defaults_snapshot = models.JSONField(
@@ -179,7 +179,7 @@ class UserThemePreference(models.Model):
         blank=True,
         related_name='selected_by_users',
         verbose_name=_("Выбранная тема"),
-        help_text=_("Пусто — стандарт сайта"),
+        help_text=_("Пусто — стандарт системы"),
         limit_choices_to={'module_key__isnull': True},
     )
     favorites = models.ManyToManyField(

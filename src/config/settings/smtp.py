@@ -7,10 +7,11 @@ from django.core.exceptions import ImproperlyConfigured
 import logging
 
 from src.config.env import env
+from src.config.ergo_runtime import email_mode_enabled
 
 logger = logging.getLogger(__name__)
 
-EMAIL_ENABLED = env.bool('EMAIL_ENABLED', default=False)
+EMAIL_ENABLED = email_mode_enabled()
 
 if not EMAIL_ENABLED:
     EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'
@@ -21,7 +22,7 @@ if not EMAIL_ENABLED:
     EMAIL_HOST_USER = ''
     EMAIL_HOST_PASSWORD = ''
     DEFAULT_FROM_EMAIL = None
-    logger.info('Исходящая почта отключена (EMAIL_ENABLED=false)')
+    logger.info('Исходящая почта отключена (ERGO_EMAIL≠smtp / EMAIL_ENABLED=false)')
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 

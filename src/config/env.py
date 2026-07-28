@@ -1,73 +1,60 @@
 """
-Файл для загрузки переменных окружения из .env файлов для Django-приложения.
+Загрузка переменных окружения для Django.
 
-Функциональность:
-    - Загрузка переменных окружения из основного .env файла в корне проекта (SYSTEM_DIR)
-    - Загрузка переменных окружения из .env файлов в папке modules (имеют приоритет)
-    - Предоставление доступа к переменным окружения через объект env
-    - Автоматическое преобразование типов данных переменных окружения
-
-Приоритет загрузки:
-    1. Основной .env файл из корня проекта (SYSTEM_DIR/.env)
-    2. .env файлы из папки modules и её подпапок (переопределяют основной .env)
-
-Структура:
-    ENV_FILE_PATH: Путь к основному .env файлу в корне проекта (SYSTEM_DIR)
-    env: Объект environ.Env для доступа к переменным окружения
-
-Использование:
-    from src.config.env import env
-    
-    DEBUG = env.bool('DEBUG', default=False)
-    SECRET_KEY = env.str('SECRET_KEY')
-    DATABASE_URL = env.db('DATABASE_URL')
+Порядок:
+1. Корневой .env
+2. Фрагменты env/*.env (nginx.env, docker.env, …)
+3. modules/**/.env (перекрывают корень и фрагменты)
 """
 
-import environ
-import os
 import logging
+import os
+import sys
 
-from src.config.paths import ENV_FILE_PATH
+import environ
+
+from src.config.paths import DEPLOYMENT_DIR, ENV_FILE_PATH, SYSTEM_DIR
 from src.core.utils.environment.methods import collect_env_files_from_all_sources
 
 logger = logging.getLogger(__name__)
 
-# Собираем переменные из всех .env файлов в папке modules
-modules_env_vars = collect_env_files_from_all_sources()
+if str(DEPLOYMENT_DIR) not in sys.path:
+    sys.path.insert(0, str(DEPLOYMENT_DIR))
 
-# Инициализация объекта для работы с переменными окружения
+from env_file_loader import apply_project_env_to_environ, list_fragment_env_files  # noqa: E402
+
 env = environ.Env()
 
-# Отслеживаем переменные, загруженные из основного .env файла
 main_env_vars = set()
+loaded = apply_project_env_to_environ(SYSTEM_DIR, override_existing=False)
+main_env_vars.update(loaded.keys())
 
-# Сначала загружаем основной .env файл из корня проекта (SYSTEM_DIR)
-if os.path.exists(ENV_FILE_PATH):
-    # Читаем основной .env файл и отслеживаем его переменные
-    with open(ENV_FILE_PATH, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key = line.split('=', 1)[0].strip()
-                main_env_vars.add(key)
-    # Загружаем переменные из .env файла в os.environ
-    env.read_env(ENV_FILE_PATH)
-    logger.info(f"Загружен основной .env файл из корня проекта: {ENV_FILE_PATH}")
-    logger.info(f"Найдено переменных: {len(main_env_vars)}")
+if ENV_FILE_PATH.exists():
+    logger.info('Загружен основной .env: %s', ENV_FILE_PATH)
 else:
-    logger.warning(f"Файл .env не найден по пути: {ENV_FILE_PATH}")
+    logger.warning('Файл .env не найден: %s', ENV_FILE_PATH)
 
-# Затем добавляем переменные из modules (они имеют приоритет над основным .env)
+fragments = list_fragment_env_files(SYSTEM_DIR)
+if fragments:
+    logger.info(
+        'Загружены фрагменты env/: %s',
+        ', '.join(path.name for path in fragments),
+    )
+logger.info('Найдено переменных (корень + env/): %d', len(main_env_vars))
+
+modules_env_vars = collect_env_files_from_all_sources()
+
 if modules_env_vars:
     overridden_vars = []
     for key, value in modules_env_vars.items():
-        # Проверяем, была ли переменная определена в основном .env файле
         if key in main_env_vars:
             overridden_vars.append(key)
         os.environ[key] = value
-    
-    # Логируем только если есть переопределения
+
     if overridden_vars:
-        logger.warning(f"Переменные из modules переопределили {len(overridden_vars)} переменных из основного .env:")
+        logger.warning(
+            'Переменные из modules переопределили %d переменных из корня/env/:',
+            len(overridden_vars),
+        )
         for var in overridden_vars:
-            logger.warning(f" - {var}")
+            logger.warning(' - %s', var)

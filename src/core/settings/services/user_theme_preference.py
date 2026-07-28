@@ -64,7 +64,7 @@ def preference_payload(user) -> dict:
 @transaction.atomic
 def set_site_default_theme(theme: Theme) -> Theme:
     if theme.module_key:
-        raise ValueError('Стандарт сайта задаётся только для тем сайта')
+        raise ValueError('Стандарт системы задаётся только для тем системы')
     Theme.objects.filter(module_key__isnull=True, is_default=True).exclude(pk=theme.pk).update(
         is_default=False,
     )
@@ -81,9 +81,9 @@ def set_site_default_theme(theme: Theme) -> Theme:
 @transaction.atomic
 def set_theme_available(theme: Theme, available: bool) -> Theme:
     if theme.module_key:
-        raise ValueError('Каталог быстрого выбора — только для тем сайта')
+        raise ValueError('Каталог быстрого выбора — только для тем системы')
     if not available and theme.is_default:
-        raise ValueError('Нельзя убрать из каталога стандарт сайта. Сначала назначьте другой стандарт.')
+        raise ValueError('Нельзя убрать из каталога стандарт системы. Сначала назначьте другой стандарт.')
     theme.is_available = available
     theme.save(update_fields=['is_available', 'updated_at'])
     if not available:

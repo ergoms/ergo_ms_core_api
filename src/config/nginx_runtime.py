@@ -8,6 +8,7 @@ NGINX_SERVER_NAME — fallback и server_name в конфиге nginx.
 from __future__ import annotations
 
 from src.config.env import env
+from src.config.ergo_runtime import nginx_mode_enabled
 
 
 def detect_lan_ip() -> str:
@@ -34,7 +35,7 @@ def detect_lan_ip() -> str:
 
 
 def nginx_enabled() -> bool:
-    return env.bool('NGINX_ENABLED', default=False)
+    return nginx_mode_enabled()
 
 
 def nginx_public_host() -> str:

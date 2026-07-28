@@ -7,10 +7,13 @@ from src.core.cms.views import (
 )
 from src.core.cms.disabled_modules_view import DisabledModulesView
 from src.core.cms.client_browser_log import ClientBrowserLogView
+from src.core.client_monitor.views import ClientMonitorIngestView
 
 urlpatterns = [
     path('disabled-modules/', DisabledModulesView.as_view(), name='disabled-modules'),
     path('client-log/', ClientBrowserLogView.as_view(), name='client-browser-log'),
+    path('client-monitor/events/', ClientMonitorIngestView.as_view(), name='cms-client-monitor-ingest'),
+
 
     path('users/by-ref/<uuid:ref>/public-info/', UserPublicInfoView.as_view(), name='user public info by ref'),
 

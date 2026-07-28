@@ -34,9 +34,17 @@ def jupyter_allow_remote() -> bool:
 
 
 def effective_jupyter_access_mode() -> str:
-    explicit = env.str('API_JUPYTER_ACCESS_MODE', default=ACCESS_AUTO).strip().lower()
+    explicit = env.str('API_JUPYTER_ACCESS_MODE', default='').strip().lower()
     if explicit in (ACCESS_LOCAL, ACCESS_LAN, ACCESS_NGINX):
         return explicit
+
+    from src.config.ergo_runtime import jupyter_access_mode_from_ergo
+
+    from_ergo = jupyter_access_mode_from_ergo()
+    if from_ergo in (ACCESS_LOCAL, ACCESS_LAN, ACCESS_NGINX):
+        return from_ergo
+
+    # ERGO_JUPYTER=auto|none или API_JUPYTER_ACCESS_MODE=auto — эвристика
     if jupyter_behind_nginx():
         return ACCESS_NGINX
     if jupyter_allow_remote():

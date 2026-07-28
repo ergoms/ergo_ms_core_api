@@ -2,7 +2,7 @@
 Запуск API: development — dev/runserver (autoreload), production — daphne (ASGI).
 
 Точка входа для systemd/NSSM и ergoms start-api.
-Режим определяется API_DEPLOY_TYPE в .env (см. src.config.deploy).
+Режим определяется ERGO_ENV (или API_DEPLOY_TYPE) в .env — см. src.config.deploy.
 """
 
 import os

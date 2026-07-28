@@ -154,7 +154,7 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
             )
         if not instance.module_key and instance.is_default:
             return Response(
-                {'error': 'Нельзя удалить стандарт сайта. Сначала назначьте другой стандарт.'},
+                {'error': 'Нельзя удалить стандарт системы. Сначала назначьте другой стандарт.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
         return super().destroy(request, *args, **kwargs)
@@ -261,7 +261,7 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
         theme = self.get_object()
         if theme.module_key:
             return Response(
-                {'error': 'Стандарт сайта задаётся только для тем сайта'},
+                {'error': 'Стандарт системы задаётся только для тем системы'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:

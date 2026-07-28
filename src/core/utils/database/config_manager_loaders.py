@@ -151,34 +151,50 @@ class DjangoDatabaseConfigLoader(BaseDatabaseConfigLoader):
         databases = {}
         
         for db_name, db_config in raw_config.items():
+            # redis — не Django DATABASES; параметры читает redis_runtime
+            if db_name == 'redis' or str(db_config.get('engine', '')).lower() == 'redis':
+                continue
             try:
-                django_config = self._build_django_config(db_name, db_config)
-                
-                # Тестируем подключение
+                effective_config = dict(db_config)
+                if db_name == 'default':
+                    from src.config.ergo_runtime import apply_default_db_engine
+
+                    effective_config = apply_default_db_engine(effective_config)
+                    if effective_config.get('engine', '').lower() == 'sqlite':
+                        name = str(effective_config.get('name') or '').strip()
+                        if not name or name == 'ergo_ms':
+                            effective_config['name'] = str(
+                                self.resources_dir / 'db.sqlite3'
+                            )
+
+                django_config = self._build_django_config(db_name, effective_config)
+
                 if self.test_connections:
-                    engine = db_config.get('engine', 'postgresql').lower()
-                    if self.connection_tester.test_connection(engine, db_config):
-                        logger.debug(f"Успешное подключение к БД '{db_name}' (тип: {DB_ENGINES[engine]})")
+                    engine = effective_config.get('engine', 'postgresql').lower()
+                    if self.connection_tester.test_connection(engine, effective_config):
+                        logger.debug(
+                            "Успешное подключение к БД '%s' (тип: %s)",
+                            db_name,
+                            DB_ENGINES[engine],
+                        )
                         databases[db_name] = django_config
                     else:
-                        logger.error(f"Не удалось подключиться к БД '{db_name}'")
-                        # Для default используем fallback
+                        logger.error("Не удалось подключиться к БД '%s'", db_name)
                         if db_name == 'default':
                             databases[db_name] = self._get_fallback_sqlite_config()
-                            logger.warning(f"БД '{db_name}' переключена на SQLite")
+                            logger.warning("БД '%s' переключена на SQLite", db_name)
                 else:
                     databases[db_name] = django_config
-                    
+
             except Exception as e:
-                logger.error(f"Ошибка при обработке БД '{db_name}': {str(e)}")
+                logger.error("Ошибка при обработке БД '%s': %s", db_name, e)
                 if db_name == 'default':
                     databases[db_name] = self._get_fallback_sqlite_config()
-        
-        # Гарантируем наличие default
+
         if 'default' not in databases:
-            logger.warning("Создано подключение SQLite по умолчанию")
+            logger.warning('Создано подключение SQLite по умолчанию')
             databases['default'] = self._get_fallback_sqlite_config()
-        
+
         return databases
 
 
@@ -207,20 +223,28 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
         self.active_config: Optional[Dict] = None
     
     def _celery_broker_backend(self) -> str:
-        return os.environ.get('CELERY_BROKER_BACKEND', 'auto').strip().lower() or 'auto'
+        explicit = os.environ.get('CELERY_BROKER_BACKEND', '').strip().lower()
+        if explicit:
+            return explicit
+        from src.config.redis_runtime import effective_celery_broker_backend
+
+        return effective_celery_broker_backend()
 
     def _check_use_local_mode(self) -> bool:
-        """Проверяет, нужно ли использовать локальный режим"""
+        """Локальный SQLite: CELERY_BROKER_BACKEND=local или ERGO_BROKER=local без database."""
         if self._celery_broker_backend() == 'local':
-            logger.info(f"{self.component_name}: локальный SQLite по CELERY_BROKER_BACKEND=local")
+            logger.info(
+                '%s: локальный SQLite по CELERY_BROKER_BACKEND/ERGO_BROKER=local',
+                self.component_name,
+            )
             return True
         use_local = os.environ.get('CELERY_USE_LOCAL', 'false').lower() == 'true'
         if use_local:
-            logger.info(f"{self.component_name}: Используется локальный режим по CELERY_USE_LOCAL")
+            logger.info('%s: локальный режим по CELERY_USE_LOCAL', self.component_name)
         return use_local
 
     def _check_use_redis_mode(self) -> bool:
-        """Redis-брокер: CELERY_BROKER_BACKEND=redis или REDIS_ENABLED при auto без секций celery в YAML."""
+        """Redis-брокер: CELERY_BROKER_BACKEND=redis или ERGO_BROKER/REDIS_ENABLED."""
         backend = self._celery_broker_backend()
         if backend == 'redis':
             return True
@@ -228,17 +252,18 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
             return False
         if backend != 'auto':
             logger.warning(
-                "%s: неизвестный CELERY_BROKER_BACKEND=%r, используется auto",
+                '%s: неизвестный CELERY_BROKER_BACKEND=%r, используется auto',
                 self.component_name,
                 backend,
             )
-        use_redis = os.environ.get('REDIS_ENABLED', 'false').lower() == 'true'
-        if use_redis:
+        from src.config.redis_runtime import redis_enabled
+
+        if redis_enabled():
             logger.info(
-                "%s: Redis-брокер по REDIS_ENABLED=true (CELERY_BROKER_BACKEND=auto)",
+                '%s: Redis-брокер по ERGO_BROKER/REDIS_ENABLED (CELERY_BROKER_BACKEND=auto)',
                 self.component_name,
             )
-        return use_redis
+        return redis_enabled()
 
     def _get_redis_urls(self) -> Tuple[str, str]:
         from src.config.redis_runtime import celery_broker_redis_url, celery_result_redis_url
@@ -358,14 +383,26 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
         force_database = backend == 'database'
         force_redis = backend == 'redis'
 
-        # Секции databases.yaml (приоритет над REDIS_ENABLED в режиме auto)
+        # ERGO_BROKER/REDIS / CELERY_BROKER_BACKEND=redis — выше секций celery в yaml
+        if force_redis or (backend == 'auto' and self._check_use_redis_mode()):
+            broker_url, result_backend = self._get_redis_urls()
+            return {
+                'broker_url': broker_url,
+                'result_backend': result_backend,
+                'mode': 'redis',
+                'section': None,
+            }
+
+        # SQL-брокер из databases.yaml (celery* секции)
         if raw_config is not None and not force_redis:
             self.active_section = self._find_active_section()
             if self.active_section is not None or force_database:
                 if self.active_section is None:
                     priorities = self.section_priorities
                     broker_url, result_backend = self._get_local_sqlite_urls(
-                        log_reason=f"CELERY_BROKER_BACKEND=database, но секции {priorities} не найдены"
+                        log_reason=(
+                            f'CELERY_BROKER_BACKEND=database, но секции {priorities} не найдены'
+                        ),
                     )
                     return {
                         'broker_url': broker_url,
@@ -392,16 +429,6 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
                     'section': self.active_section,
                     'engine': self.active_config.get('engine', 'postgresql'),
                 }
-
-        # Redis-брокер
-        if force_redis or self._check_use_redis_mode():
-            broker_url, result_backend = self._get_redis_urls()
-            return {
-                'broker_url': broker_url,
-                'result_backend': result_backend,
-                'mode': 'redis',
-                'section': None,
-            }
         
         # Проверяем доступность конфигурации
         if raw_config is None:

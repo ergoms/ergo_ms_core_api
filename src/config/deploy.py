@@ -22,7 +22,10 @@ SETTINGS_PRODUCTION = 'src.config.patterns.production'
 
 
 def get_deploy_type() -> str:
-    return env.str('API_DEPLOY_TYPE', default=DEVELOPMENT).strip().lower()
+    """ERGO_ENV; явный API_DEPLOY_TYPE перекрывает."""
+    from src.config.ergo_runtime import api_deploy_type
+
+    return api_deploy_type()
 
 
 def is_production() -> bool:

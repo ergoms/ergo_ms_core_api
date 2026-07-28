@@ -23,6 +23,26 @@ def mtime_valid(stored: float, current: float) -> bool:
     return mtime_equal(stored, current)
 
 
+def _iter_module_celery_config_files(module_dir: Path):
+    """celery_config / celery_beat_config на корне модуля, в api/ и во вложенных api/*/."""
+    for cfg_name in ('celery_config.py', 'celery_beat_config.py'):
+        cfg = module_dir / cfg_name
+        if cfg.exists():
+            yield cfg
+        api_dir = module_dir / 'api'
+        if not api_dir.is_dir():
+            continue
+        api_cfg = api_dir / cfg_name
+        if api_cfg.exists():
+            yield api_cfg
+        for sub in api_dir.iterdir():
+            if not sub.is_dir() or sub.name.startswith(('_', '.')):
+                continue
+            nested = sub / cfg_name
+            if nested.exists():
+                yield nested
+
+
 def get_celery_config_fingerprint(
     project_root: Path,
     modules_dir: Path,
@@ -38,15 +58,9 @@ def get_celery_config_fingerprint(
             if module_env.exists():
                 key = str(module_env.relative_to(project_root))
                 result[key] = module_env.stat().st_mtime
-            for cfg_name in ('celery_config.py', 'celery_beat_config.py'):
-                cfg = module_dir / cfg_name
-                if cfg.exists():
-                    key = str(cfg.relative_to(project_root))
-                    result[key] = cfg.stat().st_mtime
-            api_cfg = module_dir / 'api' / 'celery_config.py'
-            if api_cfg.exists():
-                key = str(api_cfg.relative_to(project_root))
-                result[key] = api_cfg.stat().st_mtime
+            for cfg in _iter_module_celery_config_files(module_dir):
+                key = str(cfg.relative_to(project_root))
+                result[key] = cfg.stat().st_mtime
     core_path = project_root / 'core'
     if core_path.exists():
         result['core'] = core_path.stat().st_mtime
@@ -62,13 +76,8 @@ def get_modules_config_max_mtime(modules_dir: Path) -> float:
     for module_dir in modules_dir.iterdir():
         if not module_dir.is_dir():
             continue
-        for cfg_name in ('celery_config.py', 'celery_beat_config.py'):
-            cfg = module_dir / cfg_name
-            if cfg.exists():
-                max_mtime = max(max_mtime, cfg.stat().st_mtime)
-        api_cfg = module_dir / 'api' / 'celery_config.py'
-        if api_cfg.exists():
-            max_mtime = max(max_mtime, api_cfg.stat().st_mtime)
+        for cfg in _iter_module_celery_config_files(module_dir):
+            max_mtime = max(max_mtime, cfg.stat().st_mtime)
     return max_mtime
 
 
