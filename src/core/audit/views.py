@@ -192,7 +192,16 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             return AuditEvent.objects.none()
         qs = AuditEvent.objects.select_related('actor').all()
         if self.action == 'list':
-            qs = qs.defer('changes', 'meta', 'user_agent', 'request_id')
+            # Поля для JSON-списка не нужны; source_module/action оставляем для каталога.
+            qs = qs.defer(
+                'changes',
+                'meta',
+                'user_agent',
+                'request_id',
+                'scope',
+                'entity_type',
+                'entity_ref',
+            )
         qs = self._apply_read_scope(qs)
         return self._apply_filters(qs)
 
@@ -211,7 +220,11 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='catalog')
     def catalog(self, request):
-        """Справочник для UI: модули-источники и действия с подписями/иконками."""
+        """Лёгкий справочник для UI: модули, действия, важность (без инициаторов).
+
+        Список инициаторов — отдельно в ``actors``: на 3G он тяжёлый (до 500
+        записей) и не нужен для первого экрана таблицы.
+        """
         return Response({
             'modules': catalog.get_modules(),
             'actions': catalog.get_flat_actions(),
@@ -219,6 +232,12 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
                 {'value': value, 'label': label}
                 for value, label in AuditEvent.SEVERITY_CHOICES
             ],
+        })
+
+    @action(detail=False, methods=['get'], url_path='actors')
+    def actors(self, request):
+        """Уникальные инициаторы для фильтра журнала (можно грузить после таблицы)."""
+        return Response({
             'actors': catalog.get_distinct_actors(scope=self._resolve_actor_scope()),
         })
 

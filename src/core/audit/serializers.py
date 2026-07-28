@@ -70,7 +70,10 @@ class _AuditCatalogMixin(serializers.Serializer):
 
 
 class AuditEventListSerializer(_AuditCatalogMixin, serializers.ModelSerializer):
-    """Облегчённая запись для таблицы журнала (без changes/meta/user_agent)."""
+    """Облегчённая запись для таблицы журнала (без changes/meta/user_agent/scope).
+
+    Поля урезаны под колонки списка: меньше JSON на медленной сети.
+    """
 
     ip_location = serializers.SerializerMethodField()
 
@@ -80,13 +83,45 @@ class AuditEventListSerializer(_AuditCatalogMixin, serializers.ModelSerializer):
         fields = (
             'id',
             'created_at',
-            'actor',
-            'actor_username',
             'actor_ref',
             'actor_first_name',
             'actor_last_name',
             'actor_middle_name',
             'actor_label',
+            'module_label',
+            'action_label',
+            'icon',
+            'severity',
+            'entity_label',
+            'ip_address',
+            'ip_location',
+        )
+        read_only_fields = fields
+
+    def get_ip_location(self, obj):
+        from src.core.utils.geoip import format_ip_location
+
+        return format_ip_location(obj.ip_address)
+
+
+
+class AuditEventDetailSerializer(_AuditCatalogMixin, serializers.ModelSerializer):
+    """Полная запись для модалки деталей."""
+
+    ip_location = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AuditEvent
+        ref_name = 'CoreAuditEvent'
+        fields = (
+            'id',
+            'created_at',
+            'actor_ref',
+            'actor_first_name',
+            'actor_last_name',
+            'actor_middle_name',
+            'actor_label',
+            'actor_username',
             'source_module',
             'module_label',
             'action',
@@ -100,29 +135,10 @@ class AuditEventListSerializer(_AuditCatalogMixin, serializers.ModelSerializer):
             'scope',
             'ip_address',
             'ip_location',
-        )
-        read_only_fields = fields
-
-    def get_ip_location(self, obj):
-        from src.core.utils.geoip import format_ip_location
-
-        return format_ip_location(obj.ip_address)
-
-
-class AuditEventDetailSerializer(_AuditCatalogMixin, serializers.ModelSerializer):
-    """Полная запись для модалки деталей."""
-
-    ip_location = serializers.SerializerMethodField()
-
-    class Meta:
-        model = AuditEvent
-        ref_name = 'CoreAuditEvent'
-        fields = AuditEventListSerializer.Meta.fields + (
             'changes',
             'meta',
             'user_agent',
             'request_id',
-            'ip_location',
         )
         read_only_fields = fields
 

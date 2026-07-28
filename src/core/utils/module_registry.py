@@ -65,8 +65,9 @@ def is_valid_module_name(module_name: str) -> bool:
 
 def get_installed_module_names(*, include_disabled: bool = False) -> List[str]:
     """
-    Имена модулей из каталога modules/ (любая подпапка верхнего уровня).
+    Имена установленных модулей из ``modules/`` (есть ``api/`` и/или ``client/``).
 
+    Пустые placeholder-каталоги (неинициализированные submodule) не включаются.
     Не импортирует приложения — только обход файловой системы.
     """
     if not MODULES_DIR.exists() or not MODULES_DIR.is_dir():

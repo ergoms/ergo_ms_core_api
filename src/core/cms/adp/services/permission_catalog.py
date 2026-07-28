@@ -148,8 +148,9 @@ def get_modules_catalog(*, include_disabled: bool = False) -> List[Dict[str, Any
     """
     Централизованный каталог модулей для UI и ADP.
 
-    Список модулей — из папки modules/. Права подсказываются из
-    permission_catalog.py модуля (если есть) и из уже сохранённых
+    Список — только установленные модули из ``modules/`` (есть ``api/``
+    и/или ``client/``; пустые placeholder-папки не включаются). Права
+    подсказываются из permission_catalog.py и из уже сохранённых
     записей ModulePermission в БД.
     """
     from src.core.utils.module_registry import get_disabled_modules, get_installed_module_names
