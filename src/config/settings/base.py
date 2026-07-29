@@ -43,7 +43,7 @@ VIRTUAL_ENV_DIR = SYSTEM_DIR / 'virtual_env'
 # Корневая директория для ресурсов.
 RESOURCES_DIR = VIRTUAL_ENV_DIR / 'resources'
 
-# Корневая директория для обученных моделей (модули: video_analysis, porosity_analysis, …).
+# Корневая директория для обученных моделей (модули кладут артефакты сюда).
 TRAINED_MODELS_PATH = VIRTUAL_ENV_DIR / 'trained_models'
 
 # Корневая директория для сторонних программ.

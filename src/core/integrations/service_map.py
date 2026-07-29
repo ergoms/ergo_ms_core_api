@@ -21,7 +21,7 @@ logger = logging.getLogger('integrations.bridge')
 
 
 def parse_service_urls(raw: str = '') -> dict[str, str]:
-    """``module_template=http://host:port,foo=http://…`` → dict."""
+    """``<name>=http://host:port,<other>=http://…`` → dict."""
     result: dict[str, str] = {}
     for part in (raw or '').split(','):
         part = part.strip()

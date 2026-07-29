@@ -245,7 +245,7 @@ def _load_module_menu_migration_ops(module_name, subpath_parts, migrations_dir):
     Все menu data-миграции каталога в порядке номера.
 
     Не берём «только последнюю»: после полного clear+create часто идут
-    rename/update (video_analysis 0012, module_template 0006) — без предшествующих
+    rename/update (поздние data-миграции модуля) — без предшествующих
     populate они ничего не создают.
 
     Фильтр create+delete из core здесь нельзя: в reverse() почти каждой

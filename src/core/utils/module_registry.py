@@ -67,7 +67,7 @@ def get_module_runtime() -> str:
 
 
 def get_process_role() -> str:
-    """``ERGO_PROCESS_ROLE`` (например ``api``, ``module:module_template``)."""
+    """``ERGO_PROCESS_ROLE`` (например ``api``, ``module:<name>``)."""
     return _get_catalog().process_role
 
 
