@@ -25,8 +25,8 @@ ModuleBridge — фасад единого механизма межмодуль
     def handler(**payload): ...
 
 Все методы делегируются Transport (для операций) и EventBus (для событий).
-Используются LocalTransport / LocalEventBus (монолитный режим).
-``BRIDGE_TRANSPORT`` / ``BRIDGE_EVENT_BUS`` допускают только ``local``.
+По умолчанию LocalTransport / LocalEventBus (монолит).
+``BRIDGE_TRANSPORT=http`` и ``BRIDGE_EVENT_BUS=redis`` — режим microservice.
 """
 
 from __future__ import annotations
@@ -37,6 +37,33 @@ from typing import Any, Callable
 from .transports import EventBus, LocalEventBus, LocalTransport, Transport
 
 logger = logging.getLogger('integrations.bridge')
+
+
+def _migrate_transport_registry(old: Any, new: Any) -> None:
+    old_providers = getattr(old, '_providers', None)
+    new_providers = getattr(new, '_providers', None)
+    if isinstance(old_providers, dict) and isinstance(new_providers, dict):
+        for name, handler in old_providers.items():
+            new_providers.setdefault(name, handler)
+    old_groups = getattr(old, '_groups', None)
+    new_groups = getattr(new, '_groups', None)
+    if isinstance(old_groups, dict) and isinstance(new_groups, dict):
+        for group, providers in old_groups.items():
+            target = new_groups.setdefault(group, {})
+            for key, obj in providers.items():
+                target.setdefault(key, obj)
+
+
+def _migrate_event_bus_registry(old: Any, new: Any) -> None:
+    old_subs = getattr(old, '_subscribers', None)
+    new_subs = getattr(new, '_subscribers', None)
+    if not isinstance(old_subs, dict) or not isinstance(new_subs, dict):
+        return
+    for event, handlers in old_subs.items():
+        bucket = new_subs.setdefault(event, [])
+        for handler in handlers:
+            if handler not in bucket:
+                bucket.append(handler)
 
 
 class ModuleBridge:
@@ -50,13 +77,18 @@ class ModuleBridge:
                   event_bus: EventBus | None = None) -> None:
         """
         Подменить транспорт/шину (например, при старте Django через settings
-        или в тестах). Все ранее зарегистрированные провайдеры теряются.
+        или в тестах). Провайдеры/подписки с предыдущей in-memory реализации
+        переносятся на новую, если обе стороны поддерживают реестр.
         """
         if transport is not None:
+            old_transport = cls._transport
             cls._transport = transport
+            _migrate_transport_registry(old_transport, transport)
             logger.info("ModuleBridge transport set to %s", type(transport).__name__)
         if event_bus is not None:
+            old_bus = cls._event_bus
             cls._event_bus = event_bus
+            _migrate_event_bus_registry(old_bus, event_bus)
             logger.info("ModuleBridge event bus set to %s", type(event_bus).__name__)
 
     # --- single-provider operations ---------------------------------------

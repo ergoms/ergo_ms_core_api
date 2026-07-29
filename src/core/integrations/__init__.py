@@ -45,14 +45,22 @@ Module Bridge — единый механизм межмодульного вз�
 """
 
 from .bridge import ModuleBridge, bridge
-from .exceptions import BridgeError, DuplicateProvider
+from .exceptions import BridgeContractError, BridgeError, DuplicateProvider
 from .isolation import BridgeIsolationError, BridgeIsolationWarning
-from .transports import EventBus, LocalEventBus, LocalTransport, Transport
+from .transports import (
+    EventBus,
+    HttpTransport,
+    LocalEventBus,
+    LocalTransport,
+    RedisEventBus,
+    Transport,
+)
 
 __all__ = [
     'ModuleBridge',
     'bridge',
     'BridgeError',
+    'BridgeContractError',
     'DuplicateProvider',
     'BridgeIsolationError',
     'BridgeIsolationWarning',
@@ -60,4 +68,6 @@ __all__ = [
     'EventBus',
     'LocalTransport',
     'LocalEventBus',
+    'HttpTransport',
+    'RedisEventBus',
 ]

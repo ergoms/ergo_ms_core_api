@@ -1,7 +1,8 @@
 """
 Реестр модулей: список установленных модулей и флаг отключения.
 
-Единая точка чтения DISABLED_MODULES. Реализация каталога — lifecycle.modules.catalog.
+Единая точка чтения DISABLED_MODULES и фильтра процесса (MODULE_RUNTIME).
+Реализация каталога — lifecycle.modules.catalog.
 """
 
 from __future__ import annotations
@@ -43,6 +44,41 @@ def get_disabled_modules() -> FrozenSet[str]:
 def is_module_disabled(module_name: str) -> bool:
     """Проверяет, отключён ли модуль по имени."""
     return _get_catalog().is_disabled(module_name)
+
+
+def is_module_loadable_in_process(module_name: str) -> bool:
+    """Модуль загружается в текущем процессе (disabled + MODULE_RUNTIME / role)."""
+    return _get_catalog().is_loadable_in_process(module_name)
+
+
+def get_microservice_modules() -> FrozenSet[str]:
+    """Модули, вынесенные в отдельные HTTP-процессы при MODULE_RUNTIME=microservice."""
+    return _get_catalog().microservice_modules
+
+
+def get_split_modules() -> FrozenSet[str]:
+    """Устаревший алиас ``get_microservice_modules``."""
+    return get_microservice_modules()
+
+
+def get_module_runtime() -> str:
+    """``monolith`` или ``microservice``."""
+    return _get_catalog().module_runtime
+
+
+def get_process_role() -> str:
+    """``ERGO_PROCESS_ROLE`` (например ``api``, ``module:module_template``)."""
+    return _get_catalog().process_role
+
+
+def get_process_filter_fingerprint() -> str:
+    """Отпечаток фильтра процесса для кэша discovered_apps."""
+    return _get_catalog().process_filter_fingerprint()
+
+
+def get_discovered_apps_cache_suffix() -> str:
+    """Суффикс имени файла кэша discovered_apps."""
+    return _get_catalog().cache_key_suffix()
 
 
 def is_valid_module_dir_name(name: str) -> bool:

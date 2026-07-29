@@ -51,6 +51,8 @@ def main() -> int:
 
     run_env = _build_env()
     run_env.setdefault('DJANGO_SETTINGS_MODULE', get_settings_module())
+    # Фильтр INSTALLED_APPS в MODULE_RUNTIME=microservice (исключает MICROSERVICE_MODULES).
+    run_env.setdefault('ERGO_PROCESS_ROLE', 'api')
 
     host = get_api_bind_host()
     port = get_api_bind_port()

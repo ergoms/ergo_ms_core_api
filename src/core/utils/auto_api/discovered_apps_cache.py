@@ -16,6 +16,20 @@ from src.config.settings.base import CORE_DIR, MODULES_DIR, VIRTUAL_ENV_DIR
 logger = logging.getLogger('utils')
 
 CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
+
+
+def _cache_file() -> Path:
+    """Отдельный файл кэша на роль процесса (api vs module:…)."""
+    try:
+        from src.core.utils.module_registry import get_discovered_apps_cache_suffix
+
+        suffix = get_discovered_apps_cache_suffix()
+    except Exception:
+        suffix = 'api'
+    return CACHE_DIR / f'discovered_apps_{suffix}.bin'
+
+
+# Обратная совместимость для импортов, ожидающих CACHE_FILE
 CACHE_FILE = CACHE_DIR / 'discovered_apps.bin'
 
 
@@ -56,6 +70,12 @@ def _get_dirs_fingerprint() -> dict:
             result[f'{name}_dir'] = 0
             result[f'{name}_apps'] = 0
     result['disabled_modules'] = os.getenv('DISABLED_MODULES', '')
+    try:
+        from src.core.utils.module_registry import get_process_filter_fingerprint
+
+        result['process_filter'] = get_process_filter_fingerprint()
+    except Exception:
+        result['process_filter'] = ''
     # Инвалидация кэша при смене алгоритма порядка module_requires
     result['module_load_order'] = 1
     return result
@@ -109,10 +129,14 @@ def _find_modules_apps_fast(modules_dir: str, installed_apps: list) -> None:
     """Поиск приложений модулей по структуре (без импорта)."""
     if not os.path.isdir(modules_dir):
         return
-    from src.core.utils.module_registry import get_disabled_modules
-    disabled = get_disabled_modules()
+    from src.core.utils.module_registry import (
+        is_module_loadable_in_process,
+        is_valid_module_dir_name,
+    )
     for module_name in os.listdir(modules_dir):
-        if module_name in disabled:
+        if not is_valid_module_dir_name(module_name):
+            continue
+        if not is_module_loadable_in_process(module_name):
             continue
         module_path = os.path.join(modules_dir, module_name)
         if os.path.isdir(module_path):
@@ -159,10 +183,11 @@ def clear_discovered_apps_memory_cache() -> None:
 def invalidate_discovered_apps_cache() -> None:
     """Сбрасывает файловый и in-process кэш discovered_apps."""
     clear_discovered_apps_memory_cache()
-    try:
-        CACHE_FILE.unlink(missing_ok=True)
-    except OSError:
-        logger.warning('Не удалось удалить %s', CACHE_FILE, exc_info=True)
+    for path in (_cache_file(), CACHE_FILE):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning('Не удалось удалить %s', path, exc_info=True)
 
 
 def get_discovered_apps(use_cache: Optional[bool] = None, fast_discovery: Optional[bool] = None) -> List[str]:
@@ -192,7 +217,8 @@ def get_discovered_apps(use_cache: Optional[bool] = None, fast_discovery: Option
     from src.core.utils.cache_fingerprint import fingerprint_equal
     from src.core.utils.cache_io import read_bin_cache
 
-    data = read_bin_cache(CACHE_FILE)
+    cache_path = _cache_file()
+    data = read_bin_cache(cache_path)
     if data is not None:
         cached_fingerprint = data.get('fingerprint', {})
         if fingerprint_equal(cached_fingerprint, current_fingerprint):
@@ -205,7 +231,7 @@ def get_discovered_apps(use_cache: Optional[bool] = None, fast_discovery: Option
     apps = _run_discovery_fast() if fast_discovery else _run_discovery()
     from src.core.utils.cache_io import write_bin_cache
 
-    if write_bin_cache(CACHE_FILE, {'fingerprint': current_fingerprint, 'apps': apps}):
+    if write_bin_cache(cache_path, {'fingerprint': current_fingerprint, 'apps': apps}):
         logger.info('Discovered apps: сохранено в кэш (%d приложений)', len(apps))
 
     _in_memory_cache = (current_fingerprint, apps)

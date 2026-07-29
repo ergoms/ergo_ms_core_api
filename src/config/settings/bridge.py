@@ -4,16 +4,25 @@
 В монолитном режиме используются in-process реализации
 ``LocalTransport`` / ``LocalEventBus`` — никаких внешних зависимостей.
 
-Поддерживается только ``local``. Значения ``BRIDGE_TRANSPORT`` /
-``BRIDGE_EVENT_BUS`` отличны от ``local`` приводят к ``ImproperlyConfigured``
-на старте (удалённые транспорты не реализованы).
+``MODULE_RUNTIME`` (корневой ``.env``):
 
-``BRIDGE_ISOLATION`` управляет runtime-стражем изоляции модулей
-(см. ``src/core/integrations/isolation.py``):
+    monolith      — все модули в одном API-процессе
+    microservice  — модули из MICROSERVICE_MODULES — отдельные процессы
+    split         — устаревший алиас microservice
 
-    BRIDGE_ISOLATION=off     # хук не устанавливается
-    BRIDGE_ISOLATION=warn    # warnings.warn + лог (по умолчанию)
-    BRIDGE_ISOLATION=raise   # BridgeIsolationError при нарушении (для CI/тестов)
+Детали microservice и bridge — ``env/modules.env`` (см. ``env/modules.env.example``).
+
+``BRIDGE_TRANSPORT``:
+
+    local  — in-process (по умолчанию)
+    http   — hybrid: local provide + HTTP RPC на владельца op
+
+``BRIDGE_EVENT_BUS``:
+
+    local  — in-process (по умолчанию)
+    redis  — локальные handlers + Redis pub/sub для других процессов
+
+``BRIDGE_ISOLATION`` / ``BRIDGE_CONTRACTS`` — см. isolation.py / contract_validation.py.
 """
 
 from src.config.env import env
@@ -22,3 +31,27 @@ BRIDGE_TRANSPORT = env.str('BRIDGE_TRANSPORT', default='local').strip().lower()
 BRIDGE_EVENT_BUS = env.str('BRIDGE_EVENT_BUS', default='local').strip().lower()
 
 BRIDGE_ISOLATION = env.str('BRIDGE_ISOLATION', default='warn').strip().lower()
+BRIDGE_CONTRACTS = env.str('BRIDGE_CONTRACTS', default='warn').strip().lower()
+
+BRIDGE_INTERNAL_TOKEN = env.str('BRIDGE_INTERNAL_TOKEN', default='').strip()
+BRIDGE_SERVICE_URLS = env.str('BRIDGE_SERVICE_URLS', default='').strip()
+BRIDGE_CORE_URL = env.str('BRIDGE_CORE_URL', default='').strip()
+BRIDGE_HTTP_TIMEOUT = env.float('BRIDGE_HTTP_TIMEOUT', default=10.0)
+BRIDGE_REDIS_DB = env.int('BRIDGE_REDIS_DB', default=4)
+
+_raw_runtime = env.str('MODULE_RUNTIME', default='monolith').strip().lower()
+if _raw_runtime in ('microservice', 'split'):
+    MODULE_RUNTIME = 'microservice'
+else:
+    MODULE_RUNTIME = 'monolith'
+
+# Каноническое имя; SPLIT_MODULES — запасной ключ.
+MICROSERVICE_MODULES = (
+    env.str('MICROSERVICE_MODULES', default='').strip()
+    or env.str('SPLIT_MODULES', default='').strip()
+)
+# Обратная совместимость для кода, читающего SPLIT_MODULES из settings.
+SPLIT_MODULES = MICROSERVICE_MODULES
+
+ERGO_PROCESS_ROLE = env.str('ERGO_PROCESS_ROLE', default='').strip()
+PROCESS_MODULES = env.str('PROCESS_MODULES', default='').strip()

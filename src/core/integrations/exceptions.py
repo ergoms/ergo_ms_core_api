@@ -12,3 +12,7 @@ class DuplicateProvider(BridgeError):
     Чтобы заменить регистрацию — вызывайте provide(..., override=True)
     или предварительно bridge.unregister(name).
     """
+
+
+class BridgeContractError(BridgeError):
+    """Дескриптор platform-контракта не соответствует схеме (BRIDGE_CONTRACTS=raise)."""

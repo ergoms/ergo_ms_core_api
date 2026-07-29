@@ -17,6 +17,7 @@ from src.config.yasg import urlpatterns as yasg_pattern
 
 urlpatterns = [
     path("api/", include("src.config.urls")),
+    path("internal/", include("src.core.integrations.internal_urls")),
 ]
 
 urlpatterns += yasg_pattern
