@@ -152,6 +152,10 @@ def _discover_core_menu_migrations():
         except (ImportError, ModuleNotFoundError):
             continue
 
+        # Оркестраторы (call restore_menu) не входят в цепочку — иначе рекурсия.
+        if getattr(mod, 'MENU_RESTORE_ORCHESTRATOR', False):
+            continue
+
         migration_class = getattr(mod, 'Migration', None)
         if not migration_class or not issubclass(migration_class, migrations.Migration):
             continue
