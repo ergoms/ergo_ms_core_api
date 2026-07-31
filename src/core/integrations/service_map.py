@@ -81,7 +81,7 @@ def build_service_map() -> dict[str, Any]:
 
     split_raw = (
         getattr(settings, 'MICROSERVICE_MODULES', None)
-        or getattr(settings, 'SPLIT_MODULES', '')
+        or ''
         or ''
     )
     if not isinstance(split_raw, str):

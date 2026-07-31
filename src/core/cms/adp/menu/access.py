@@ -3,12 +3,16 @@
 
 from src.core.cms.adp.services.permissions import PermissionService
 from src.core.integrations import bridge
+from src.core.integrations.module_contracts import (
+    MENU_CAN_SEE_ITEM,
+    MENU_PREPARE_VISIBILITY,
+)
 
 
 def _collect_route_overrides(user) -> dict[str, bool]:
     """Один проход bridge.prepare_visibility вместо emit_first на каждый пункт."""
     overrides: dict[str, bool] = {}
-    for result in bridge.emit('menu.prepare_visibility', user=user):
+    for result in bridge.emit(MENU_PREPARE_VISIBILITY, user=user):
         if not isinstance(result, dict):
             continue
         for route_name, visible in result.items():
@@ -43,7 +47,7 @@ class MenuAccessChecker:
         if route_name and route_name in self._route_overrides:
             return self._route_overrides[route_name]
 
-        menu_override = bridge.emit_first('menu.can_see_item', item=item, user=self.user)
+        menu_override = bridge.emit_first(MENU_CAN_SEE_ITEM, item=item, user=self.user)
         if menu_override is not None:
             return bool(menu_override)
 

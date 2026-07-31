@@ -10,6 +10,7 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 from src.core.integrations import bridge
+from src.core.integrations.module_contracts import CORE_BULK_USER_CREATE
 from src.core.cms.adp.services.import_users_passwords import store_import_passwords
 from src.core.cms.adp.services.import_users_welcome import (
     normalize_welcome_templates,
@@ -191,7 +192,7 @@ def import_users_task(
             meta=_import_meta(0, total_rows, 0, 0, 0, accumulated_logs, start_log),
         )
 
-        bridge.emit('core.bulk_user_create', phase='start')
+        bridge.emit(CORE_BULK_USER_CREATE, phase='start')
         try:
             for index, row in df.iterrows():
                 log_entry = None
@@ -321,7 +322,7 @@ def import_users_task(
                         ),
                     )
         finally:
-            bridge.emit('core.bulk_user_create', phase='end')
+            bridge.emit(CORE_BULK_USER_CREATE, phase='end')
 
         if send_welcome_emails and pending_welcome_emails:
             for email_payload in pending_welcome_emails:

@@ -1,17 +1,21 @@
 """Регистрация публичного API аудита в ModuleBridge.
 
-Модули пишут в журнал только через `bridge.call('audit.record', ...)` и
-описывают свои действия через `bridge.provide_many('audit.action_definitions', ...)`,
+Модули пишут в журнал только через `bridge.call(AUDIT_RECORD, ...)` и
+описывают свои действия через `bridge.provide_many(AUDIT_ACTION_DEFINITIONS_GROUP, ...)`,
 без прямого импорта моделей/сервиса этого приложения.
 """
 
 from src.core.integrations import bridge
+from src.core.integrations.module_contracts import (
+    AUDIT_ACTION_DEFINITIONS_GROUP,
+    AUDIT_RECORD,
+)
 
 from .core_actions import CORE_AUDIT_SECTION, CORE_SETTINGS_SECTION
 from .service import AuditService
 
 
-@bridge.provide_op('audit.record')
+@bridge.provide_op(AUDIT_RECORD)
 def _record(
     *,
     action,
@@ -50,5 +54,9 @@ def _record(
 
 
 # Каталог действий самого ядра.
-bridge.provide_many('audit.action_definitions', key=CORE_AUDIT_SECTION['module'], obj=CORE_AUDIT_SECTION)
-bridge.provide_many('audit.action_definitions', key=CORE_SETTINGS_SECTION['module'], obj=CORE_SETTINGS_SECTION)
+bridge.provide_many(
+    AUDIT_ACTION_DEFINITIONS_GROUP, key=CORE_AUDIT_SECTION['module'], obj=CORE_AUDIT_SECTION,
+)
+bridge.provide_many(
+    AUDIT_ACTION_DEFINITIONS_GROUP, key=CORE_SETTINGS_SECTION['module'], obj=CORE_SETTINGS_SECTION,
+)

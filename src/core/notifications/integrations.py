@@ -1,15 +1,16 @@
 """Регистрация публичного API уведомлений в ModuleBridge.
 
-Модули создают уведомления только через `bridge.call('notifications.create', ...)`,
+Модули создают уведомления только через `bridge.call(NOTIFICATIONS_CREATE, ...)`,
 без прямого импорта моделей/сервиса этого приложения.
 """
 
 from src.core.integrations import bridge
+from src.core.integrations.module_contracts import NOTIFICATIONS_CREATE
 
 from .services import NotificationService
 
 
-@bridge.provide_op('notifications.create')
+@bridge.provide_op(NOTIFICATIONS_CREATE)
 def _create_notification(
     *,
     recipient,

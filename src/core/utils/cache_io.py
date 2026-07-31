@@ -22,22 +22,8 @@ _cached_signing_key: Any = _UNSET
 
 def _read_secret_key_from_dotenv() -> Optional[str]:
     """Читает API_SECRET_KEY из корневого .env без django.setup."""
-    for parent in Path(__file__).resolve().parents:
-        env_file = parent / '.env'
-        if env_file.is_file():
-            try:
-                for line in env_file.read_text(encoding='utf-8').splitlines():
-                    line = line.strip()
-                    if not line or line.startswith('#') or '=' not in line:
-                        continue
-                    key, _, value = line.partition('=')
-                    if key.strip() == 'API_SECRET_KEY':
-                        return value.strip().strip('"').strip("'")
-            except OSError:
-                pass
-        if (parent / 'modules').is_dir() and (parent / 'core').is_dir():
-            break
-    return None
+    from src.core.utils.env_secret import read_env_value
+    return read_env_value('API_SECRET_KEY', start=Path(__file__))
 
 
 def _get_signing_key() -> Optional[bytes]:

@@ -38,10 +38,11 @@
 import logging
 
 from src.core.integrations import bridge
+from src.core.integrations.module_contracts import NOTIFICATIONS_EVENT_DEFINITIONS_GROUP
 
 logger = logging.getLogger('core.notifications')
 
-EVENT_DEFINITIONS_GROUP = 'notifications.event_definitions'
+EVENT_DEFINITIONS_GROUP = NOTIFICATIONS_EVENT_DEFINITIONS_GROUP
 
 CHANNEL_IN_APP = 'in_app'
 CHANNEL_EMAIL = 'email'

@@ -19,12 +19,12 @@ class UserPresenceBatchView(BaseAPIViewAuthMixin, BaseAPIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        operation_description='Получить онлайн-статус пользователей по списку ID.',
+        operation_description='Получить онлайн-статус пользователей по списку public_id (UUID).',
         manual_parameters=[
             openapi.Parameter(
-                'user_ids',
+                'public_ids',
                 openapi.IN_QUERY,
-                description='ID пользователей через запятую (максимум 100)',
+                description='public_id пользователей через запятую (максимум 100)',
                 type=openapi.TYPE_STRING,
                 required=True,
             ),
@@ -32,11 +32,13 @@ class UserPresenceBatchView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: UserPresenceBatchResponseSerializer()},
     )
     def get(self, request):
-        user_ids = presence_service.parse_user_ids_param(request.query_params.get('user_ids'))
-        if not user_ids:
+        public_ids = presence_service.parse_public_ids_param(
+            request.query_params.get('public_ids'),
+        )
+        if not public_ids:
             return Response({'presence': {}})
 
-        presence_map = presence_service.get_presence_map(user_ids)
+        presence_map = presence_service.get_presence_map_by_public_ids(public_ids)
         return Response({
             'presence': presence_service.serialize_presence_map(presence_map),
         })

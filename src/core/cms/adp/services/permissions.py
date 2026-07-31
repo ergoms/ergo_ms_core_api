@@ -10,9 +10,7 @@ User = get_user_model()
 from src.core.cms.adp.middleware.permission_request_cache import get_request_permission_cache
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
 from src.core.integrations import bridge
-
-
-PERMISSION_CHECK_EVENT = 'adp.permission_check'
+from src.core.integrations.module_contracts import ADP_PERMISSION_CHECK
 
 
 class RoleAssignmentError(Exception):
@@ -511,7 +509,7 @@ class PermissionService:
         # Подписчики модулей добавляют контекстную логику.
         # Первый non-None результат побеждает.
         contextual = bridge.emit_first(
-            PERMISSION_CHECK_EVENT,
+            ADP_PERMISSION_CHECK,
             user=user,
             module_name=module_name,
             permission_key=permission_key,

@@ -204,7 +204,8 @@ class EmailSettings(models.Model):
     smtp_port = models.PositiveIntegerField(_("SMTP Port"), default=25)
     use_tls = models.BooleanField(_("Use TLS"), default=True)
     username = models.CharField(_("SMTP Username"), max_length=255, blank=True)
-    password = models.CharField(_("SMTP Password"), max_length=255, blank=True)
+    # Fernet ciphertext (enc:v1:…); длина с запасом относительно plaintext.
+    password = models.CharField(_("SMTP Password"), max_length=512, blank=True)
     default_from = models.EmailField(_("Default From Email"), blank=True)
 
     class Meta:
@@ -213,6 +214,25 @@ class EmailSettings(models.Model):
 
     def __str__(self):
         return _("Email Settings")
+
+    def get_password_plain(self) -> str:
+        """Пароль SMTP в открытом виде (только для отправки почты)."""
+        from src.core.utils.secret_box import decrypt_str
+
+        return decrypt_str(self.password)
+
+    def set_password_plain(self, plaintext: str | None) -> None:
+        """Записать пароль в зашифрованном виде."""
+        from src.core.utils.secret_box import encrypt_str
+
+        self.password = encrypt_str(plaintext or '')
+
+    def save(self, *args, **kwargs):
+        from src.core.utils.secret_box import encrypt_str, is_encrypted
+
+        if self.password and not is_encrypted(self.password):
+            self.password = encrypt_str(self.password)
+        super().save(*args, **kwargs)
 
 class UserAvatar(models.Model):
     user = models.OneToOneField(

@@ -121,9 +121,11 @@ class PreferencePanelService:
         """Опциональный per-module фильтр видимости строк каталога.
 
         Модуль может зарегистрировать операцию
-        'notifications.filter_events_for_user.<module>' (user, event_keys) -> list[str].
+        NOTIFICATIONS_FILTER_EVENTS_PREFIX + module (user, event_keys) -> list[str].
         """
-        op = f'notifications.filter_events_for_user.{module}'
+        from src.core.integrations.module_contracts import NOTIFICATIONS_FILTER_EVENTS_PREFIX
+
+        op = f'{NOTIFICATIONS_FILTER_EVENTS_PREFIX}{module}'
         if not bridge.has(op):
             return events
         try:

@@ -20,8 +20,10 @@ User = get_user_model()
 from django.utils import timezone
 
 from src.core.cms.adp.services.permissions import PermissionService
+from src.core.utils.secret_box import decrypt_bytes, encrypt_bytes
 
-STORAGE_TTL_SECONDS = 24 * 60 * 60
+# TTL кэша паролей импорта (после истечения файл удаляется).
+STORAGE_TTL_SECONDS = 6 * 60 * 60
 _TASK_ID_PATTERN = re.compile(r'^[a-f0-9\-]{8,128}$', re.IGNORECASE)
 
 
@@ -49,23 +51,45 @@ def _validate_task_id(task_id: str) -> str:
 
 
 def _payload_path(task_id: str) -> Path:
+    """Зашифрованный payload (Fernet)."""
+    return _storage_dir() / f'{_validate_task_id(task_id)}.enc'
+
+
+def _legacy_payload_path(task_id: str) -> Path:
+    """Устаревший plaintext JSON (dual-read / cleanup)."""
     return _storage_dir() / f'{_validate_task_id(task_id)}.json'
 
 
 def _read_payload(task_id: str) -> Optional[dict[str, Any]]:
-    path = _payload_path(task_id)
-    if not path.is_file():
-        return None
+    enc_path = _payload_path(task_id)
+    legacy_path = _legacy_payload_path(task_id)
 
-    try:
-        with path.open('r', encoding='utf-8') as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        path.unlink(missing_ok=True)
-        return None
+    payload: dict[str, Any] | None = None
+    path: Path | None = None
 
-    if not isinstance(payload, dict):
-        path.unlink(missing_ok=True)
+    if enc_path.is_file():
+        path = enc_path
+        try:
+            raw = decrypt_bytes(enc_path.read_bytes())
+            if raw is None:
+                enc_path.unlink(missing_ok=True)
+                return None
+            payload = json.loads(raw.decode('utf-8'))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            enc_path.unlink(missing_ok=True)
+            return None
+    elif legacy_path.is_file():
+        path = legacy_path
+        try:
+            with legacy_path.open('r', encoding='utf-8') as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            legacy_path.unlink(missing_ok=True)
+            return None
+
+    if path is None or not isinstance(payload, dict):
+        if path is not None:
+            path.unlink(missing_ok=True)
         return None
 
     created_at = payload.get('created_at')
@@ -97,13 +121,16 @@ def store_import_passwords(
         'entries': entries,
         'created_at': timezone.now().isoformat(),
     }
+    blob = encrypt_bytes(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
 
     directory = _storage_dir()
     tmp_fd, tmp_name = tempfile.mkstemp(dir=directory, suffix='.tmp')
     try:
-        with os.fdopen(tmp_fd, 'w', encoding='utf-8') as handle:
-            json.dump(payload, handle, ensure_ascii=False)
+        with os.fdopen(tmp_fd, 'wb') as handle:
+            handle.write(blob)
         os.replace(tmp_name, path)
+        # Убрать plaintext-legacy, если остался от старой версии.
+        _legacy_payload_path(task_id).unlink(missing_ok=True)
     except Exception:
         try:
             os.unlink(tmp_name)
@@ -132,7 +159,8 @@ def is_passwords_download_available(task_id: str, user: User) -> bool:
 
 
 def consume_import_passwords(task_id: str, user: User) -> list[dict[str, str]]:
-    path = _payload_path(task_id)
+    enc_path = _payload_path(task_id)
+    legacy_path = _legacy_payload_path(task_id)
     payload = _read_payload(task_id)
     if not payload:
         raise ImportPasswordsAccessError(
@@ -147,13 +175,15 @@ def consume_import_passwords(task_id: str, user: User) -> list[dict[str, str]]:
 
     entries = payload.get('entries') or []
     if not entries:
-        path.unlink(missing_ok=True)
+        enc_path.unlink(missing_ok=True)
+        legacy_path.unlink(missing_ok=True)
         raise ImportPasswordsAccessError(
             _('Файл с паролями недоступен или уже был скачан.'),
             status_code=410,
         )
 
-    path.unlink(missing_ok=True)
+    enc_path.unlink(missing_ok=True)
+    legacy_path.unlink(missing_ok=True)
     return entries
 
 

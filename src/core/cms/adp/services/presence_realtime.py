@@ -14,7 +14,12 @@ _last_publish: dict[int, float] = {}
 _lock = threading.Lock()
 
 
-def publish_presence_delta(user_id: int, entry: dict) -> None:
+def publish_presence_delta(
+    user_id: int,
+    entry: dict,
+    *,
+    public_id: str | None = None,
+) -> None:
     """Push изменения presence админам (SSE / WS), с throttle по user_id."""
     now = time.monotonic()
     with _lock:
@@ -24,9 +29,10 @@ def publish_presence_delta(user_id: int, entry: dict) -> None:
         _last_publish[user_id] = now
 
     payload = {
-        'user_id': user_id,
         **entry,
     }
+    if public_id:
+        payload['public_id'] = public_id
     try:
         RealtimeHub.publish(
             group=PRESENCE_ADMIN_GROUP,

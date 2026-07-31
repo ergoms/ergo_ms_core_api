@@ -98,6 +98,10 @@ MIDDLEWARE = [
     'whitenoise.middleware.WhiteNoiseMiddleware'
 ]
 
+# В тестах нарушения изоляции и контрактов моста — ошибка, не warn.
+BRIDGE_CONTRACTS = 'raise'
+BRIDGE_ISOLATION = 'raise'
+
 if _isolation_mode:
     print(f"[TEST] Изолированный режим: модуль '{target_module}'")
     print(f"[TEST] Загружено приложений: {len(ALL_MODULES)}")

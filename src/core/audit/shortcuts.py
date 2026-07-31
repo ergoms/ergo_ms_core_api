@@ -14,8 +14,9 @@ def audit_log(action, *, source_module='core.cms.adp', request=None, actor=None,
     """Записать действие в единый журнал. Никогда не бросает исключение наружу."""
     try:
         from src.core.integrations import bridge
+        from src.core.integrations.module_contracts import AUDIT_RECORD
         bridge.call(
-            'audit.record',
+            AUDIT_RECORD,
             action=action,
             source_module=source_module,
             request=request,

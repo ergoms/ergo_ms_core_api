@@ -22,6 +22,14 @@ AUDIT_ACTION_DEFINITIONS_GROUP = 'audit.action_definitions'
 AUDIT_SCOPE_DIMENSIONS_GROUP = 'audit.scope_dimensions'
 NOTIFICATIONS_EVENT_DEFINITIONS_GROUP = 'notifications.event_definitions'
 NOTIFICATIONS_EMAIL_CONTEXT_GROUP = 'notifications.email_context'
+NOTIFICATIONS_EMAIL_TEMPLATES_GROUP = 'notifications.email_templates'
+
+# --- Ops (bridge.provide_op / call) ---
+
+NOTIFICATIONS_CREATE = 'notifications.create'
+# Динамические ops: f'{PREFIX}{module}'
+NOTIFICATIONS_RENDER_EMAIL_PREFIX = 'notifications.render_email.'
+NOTIFICATIONS_FILTER_EVENTS_PREFIX = 'notifications.filter_events_for_user.'
 
 # --- Events (bridge.subscribe_to / emit / emit_first) ---
 
@@ -40,4 +48,11 @@ MENU_CAN_SEE_ITEM = 'menu.can_see_item'
 
 # --- Core bridge op prefixes (validate_module_isolation whitelist) ---
 
-CORE_BRIDGE_PREFIXES = ('audit.', 'notifications.', 'core.')
+CORE_BRIDGE_PREFIXES = (
+    'audit.',
+    'notifications.',
+    'core.',
+    'session.',
+    'menu.',
+    'adp.',
+)

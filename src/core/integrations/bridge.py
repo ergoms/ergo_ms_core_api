@@ -152,6 +152,26 @@ class ModuleBridge:
     def unregister_many(cls, group: str, key: str) -> None:
         cls._transport.unregister_many(group, key)
 
+    @classmethod
+    def local_providers(cls) -> dict[str, Any]:
+        """
+        Read-only снимок локально зарегистрированных single-op handlers.
+
+        Для internal RPC и валидации контрактов — без обхода remote HTTP.
+        """
+        getter = getattr(cls._transport, 'local_providers', None)
+        if callable(getter):
+            return getter()
+        return {}
+
+    @classmethod
+    def local_group(cls, group: str) -> dict[str, Any]:
+        """Read-only снимок локальных провайдеров группы (без remote merge)."""
+        getter = getattr(cls._transport, 'local_group', None)
+        if callable(getter):
+            return getter(group)
+        return {}
+
     # --- events ----------------------------------------------------------
 
     @classmethod

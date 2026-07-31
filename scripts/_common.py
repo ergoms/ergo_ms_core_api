@@ -52,22 +52,8 @@ def get_bootstrap_logger() -> logging.Logger:
 
 def _bootstrap_project_env() -> None:
     """Подгружает API_SECRET_KEY из .env до django.setup (для подписи кэша)."""
-    if os.environ.get('API_SECRET_KEY'):
-        return
-    env_path = PROJECT_ROOT / '.env'
-    if not env_path.is_file():
-        return
-    try:
-        for line in env_path.read_text(encoding='utf-8').splitlines():
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            key, _, value = line.partition('=')
-            if key.strip() == 'API_SECRET_KEY':
-                os.environ['API_SECRET_KEY'] = value.strip().strip('"').strip("'")
-                return
-    except OSError:
-        pass
+    from src.core.utils.env_secret import bootstrap_api_secret_key
+    bootstrap_api_secret_key(start=SCRIPT_DIR)
 
 
 _bootstrap_project_env()

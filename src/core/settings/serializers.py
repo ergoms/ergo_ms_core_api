@@ -83,9 +83,47 @@ class UserThemePreferenceSerializer(serializers.Serializer):
 
 
 class EmailSettingsSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        style={'input_type': 'password'},
+    )
+    password_set = serializers.SerializerMethodField()
+
     class Meta:
         model = EmailSettings
-        fields = '__all__'
+        fields = (
+            'id',
+            'smtp_host',
+            'smtp_port',
+            'use_tls',
+            'username',
+            'password',
+            'default_from',
+            'password_set',
+        )
+        read_only_fields = ('password_set',)
+
+    def get_password_set(self, obj) -> bool:
+        return bool(obj.password)
+
+    def create(self, validated_data):
+        password = validated_data.pop('password', None)
+        instance = EmailSettings(**validated_data)
+        if password is not None:
+            instance.set_password_plain(password)
+        instance.save()
+        return instance
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password is not None and password != '':
+            instance.set_password_plain(password)
+        instance.save()
+        return instance
 
 class UserAvatarSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(read_only=True)

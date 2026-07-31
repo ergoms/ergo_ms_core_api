@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 from typing import Any
@@ -22,11 +23,22 @@ logger = logging.getLogger('integrations.bridge.internal')
 _TOKEN_HEADER = 'HTTP_X_BRIDGE_TOKEN'
 
 
+def _is_loopback(request: HttpRequest) -> bool:
+    """True, если клиентский адрес — loopback (127.0.0.1 / ::1)."""
+    addr = (request.META.get('REMOTE_ADDR') or '').strip()
+    if not addr:
+        return False
+    try:
+        return ipaddress.ip_address(addr).is_loopback
+    except ValueError:
+        return addr.lower() in ('localhost',)
+
+
 def _token_ok(request: HttpRequest) -> bool:
     expected = (getattr(settings, 'BRIDGE_INTERNAL_TOKEN', '') or '').strip()
     if not expected:
-        # В development без токена — только loopback; в prod обязателен токен.
-        if getattr(settings, 'DEBUG', False):
+        # Без токена: только DEBUG + loopback. В prod токен обязателен.
+        if getattr(settings, 'DEBUG', False) and _is_loopback(request):
             return True
         return False
     got = request.META.get(_TOKEN_HEADER, '') or request.headers.get('X-Bridge-Token', '')
@@ -82,11 +94,7 @@ def bridge_call(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'detail': 'args must be list, kwargs must be object'}, status=400)
 
     # Только локальный провайдер — иначе цикл remote→remote.
-    transport = getattr(bridge, '_transport', None)
-    handler = None
-    providers = getattr(transport, '_providers', None)
-    if isinstance(providers, dict):
-        handler = providers.get(op)
+    handler = bridge.local_providers().get(op)
 
     if handler is None:
         return JsonResponse({'detail': f'Provider {op!r} not found locally'}, status=404)
@@ -114,9 +122,7 @@ def bridge_has(request: HttpRequest) -> JsonResponse:
     if not op:
         return JsonResponse({'detail': 'op is required'}, status=400)
 
-    transport = getattr(bridge, '_transport', None)
-    providers = getattr(transport, '_providers', None)
-    has_local = isinstance(providers, dict) and op in providers
+    has_local = op in bridge.local_providers()
     return JsonResponse({'has': bool(has_local)})
 
 
@@ -129,10 +135,5 @@ def bridge_all(request: HttpRequest) -> JsonResponse:
     if not group:
         return JsonResponse({'detail': 'group is required'}, status=400)
 
-    transport = getattr(bridge, '_transport', None)
-    groups = getattr(transport, '_groups', None)
-    local: dict[str, Any] = {}
-    if isinstance(groups, dict):
-        local = dict(groups.get(group, {}))
-
+    local = bridge.local_group(group)
     return JsonResponse({'providers': _json_safe_providers(local)})

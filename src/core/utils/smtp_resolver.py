@@ -54,11 +54,16 @@ def _load_db_record():
 
 def _config_from_db(record) -> SmtpConfig:
     use_tls, use_ssl = _infer_ssl_flags(port=record.smtp_port, use_tls=record.use_tls)
+    password = ''
+    if hasattr(record, 'get_password_plain'):
+        password = record.get_password_plain() or ''
+    else:
+        password = record.password or ''
     return SmtpConfig(
         host=record.smtp_host,
         port=record.smtp_port,
         username=record.username,
-        password=record.password or '',
+        password=password,
         use_tls=use_tls,
         use_ssl=use_ssl,
         from_email=record.default_from or record.username,

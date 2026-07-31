@@ -13,6 +13,7 @@ from django.db.utils import IntegrityError, ProgrammingError
 from src.core.cms.adp.models import UserDevice, UserPresence, UserProfile, UserRole
 from src.core.cms.adp.services import presence as presence_service
 from src.core.integrations import bridge
+from src.core.integrations.module_contracts import CORE_USER_DELETE
 from src.core.settings.models import UserAvatar
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ def delete_admin_user(user: User) -> None:
     )
     revoke_user_auth(user)
 
-    bridge.emit('core.user_delete', user=user)
+    bridge.emit(CORE_USER_DELETE, user=user)
 
     _cleanup_core_user_relations(user)
     _delete_user_record(user)

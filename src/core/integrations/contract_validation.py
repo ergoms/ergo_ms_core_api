@@ -313,12 +313,8 @@ def _validate_session_restore_op(errors: list[str]) -> None:
 
 
 def _resolve_single_provider(name: str) -> Any | None:
-    """Достаёт handler single-op, если транспорт это позволяет (LocalTransport)."""
-    transport = getattr(bridge, '_transport', None)
-    providers = getattr(transport, '_providers', None)
-    if isinstance(providers, dict):
-        return providers.get(name)
-    return None
+    """Достаёт handler single-op из локального реестра транспорта."""
+    return bridge.local_providers().get(name)
 
 
 def collect_contract_violations() -> list[str]:

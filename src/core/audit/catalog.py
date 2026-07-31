@@ -8,10 +8,11 @@ from django.core.cache import cache
 from django.db.models import Max
 
 from src.core.integrations import bridge
+from src.core.integrations.module_contracts import AUDIT_ACTION_DEFINITIONS_GROUP
 
 logger = logging.getLogger('core.audit')
 
-ACTION_DEFINITIONS_GROUP = 'audit.action_definitions'
+ACTION_DEFINITIONS_GROUP = AUDIT_ACTION_DEFINITIONS_GROUP
 
 CATALOG_CACHE_KEY = 'audit:catalog:v1'
 ACTORS_CACHE_KEY = 'audit:actors:v1'

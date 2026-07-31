@@ -93,6 +93,16 @@ class LocalTransport:
             self._providers.clear()
             self._groups.clear()
 
+    def local_providers(self) -> dict[str, Callable[..., Any]]:
+        """Копия локального реестра single-op (без remote)."""
+        with self._lock:
+            return dict(self._providers)
+
+    def local_group(self, group: str) -> dict[str, Any]:
+        """Копия локальных провайдеров группы (без remote merge)."""
+        with self._lock:
+            return dict(self._groups.get(group, {}))
+
 
 class LocalEventBus:
     """Хранит подписчиков в памяти, вызывает их синхронно."""

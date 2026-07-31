@@ -91,7 +91,11 @@ def unregister_connection(user_id: int) -> PresenceEntry:
 def _broadcast_presence_delta(user_id: int, entry: PresenceEntry) -> None:
     from src.core.cms.adp.services.presence_realtime import publish_presence_delta
 
-    publish_presence_delta(user_id, serialize_presence_entry(entry))
+    publish_presence_delta(
+        user_id,
+        serialize_presence_entry(entry),
+        public_id=resolve_public_id(user_id),
+    )
 
 
 def touch(user_id: int) -> PresenceEntry:
@@ -157,6 +161,33 @@ def get_presence_map(user_ids: list[int] | None = None) -> dict[int, PresenceEnt
     }
 
 
+def get_presence_map_by_public_ids(
+    public_ids: list[str],
+) -> dict[str, PresenceEntry]:
+    """Карта presence, keyed по строковому public_id (UUID)."""
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    normalized = list(dict.fromkeys(pid for pid in public_ids if pid))
+    if not normalized:
+        return {}
+
+    id_pairs = list(
+        User.objects.filter(public_id__in=normalized).values_list('id', 'public_id')
+    )
+    pk_by_public = {str(public_id): pk for pk, public_id in id_pairs}
+    presence_by_pk = get_presence_map(list(pk_by_public.values())) if pk_by_public else {}
+
+    result: dict[str, PresenceEntry] = {}
+    for public_id in normalized:
+        pk = pk_by_public.get(public_id)
+        if pk is None:
+            result[public_id] = _offline_entry()
+        else:
+            result[public_id] = presence_by_pk.get(pk, _offline_entry())
+    return result
+
+
 def serialize_presence_entry(entry: PresenceEntry) -> dict:
     return {
         'is_online': entry.is_online,
@@ -164,27 +195,67 @@ def serialize_presence_entry(entry: PresenceEntry) -> dict:
     }
 
 
-def serialize_presence_map(presence_map: dict[int, PresenceEntry]) -> dict[str, dict]:
+def serialize_presence_map(presence_map: dict) -> dict[str, dict]:
+    """Сериализация карты; ключи — str(user_id) или public_id."""
     return {
-        str(user_id): serialize_presence_entry(entry)
-        for user_id, entry in presence_map.items()
+        str(key): serialize_presence_entry(entry)
+        for key, entry in presence_map.items()
     }
+
+
+def _public_ids_for_user_pks(user_ids: list[int]) -> dict[int, str]:
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    if not user_ids:
+        return {}
+    return {
+        pk: str(public_id)
+        for pk, public_id in User.objects.filter(pk__in=user_ids).values_list('id', 'public_id')
+        if public_id
+    }
+
+
+def resolve_public_id(user_id: int) -> str | None:
+    mapping = _public_ids_for_user_pks([user_id])
+    return mapping.get(user_id)
 
 
 def build_presence_snapshot(presence_map: dict[int, PresenceEntry] | None = None) -> list[dict]:
     if presence_map is None:
         presence_map = get_presence_map()
 
+    public_map = _public_ids_for_user_pks(list(presence_map.keys()))
     return [
         {
-            'user_id': user_id,
+            'public_id': public_map.get(user_id),
             **serialize_presence_entry(entry),
         }
         for user_id, entry in presence_map.items()
+        if public_map.get(user_id)
     ]
 
 
+def parse_public_ids_param(raw: str | None, *, limit: int = PRESENCE_BATCH_LIMIT) -> list[str]:
+    if not raw:
+        return []
+
+    result: list[str] = []
+    for part in raw.split(','):
+        part = part.strip()
+        if not part or part in result:
+            continue
+        # UUID / opaque public_id — не числовой pk
+        if part.isdigit():
+            continue
+        result.append(part)
+        if len(result) >= limit:
+            break
+    return result
+
+
 def parse_user_ids_param(raw: str | None, *, limit: int = PRESENCE_BATCH_LIMIT) -> list[int]:
+    """Устаревший alias: числовые pk. Предпочтите parse_public_ids_param."""
     if not raw:
         return []
 
