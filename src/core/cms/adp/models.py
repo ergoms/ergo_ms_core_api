@@ -445,3 +445,12 @@ class UserProfileChangeRequest(models.Model):
 
     def __str__(self):
         return f'{self.user_id}: {self.last_name} {self.first_name} ({self.status})'
+
+
+# Модели меню живут в подпакете; без импорта Django не видит их в cms_adp
+# и makemigrations ошибочно предлагает DeleteModel (см. 0051).
+from src.core.cms.adp.menu.models import (  # noqa: E402, F401
+    MenuAccessLog,
+    MenuItem,
+    MenuSeparator,
+)

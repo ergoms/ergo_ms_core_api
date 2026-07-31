@@ -86,12 +86,12 @@ def _discover_commands_fast() -> Dict[str, str]:
     """Discovery без Django: статический список + сканирование файлов."""
     _ensure_path()
     try:
-        from src.config.settings.base import CORE_DIR, MODULES_DIR
+        from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR
     except ImportError:
         return dict.fromkeys(DJANGO_BUILTIN_COMMANDS, 'builtin')
 
     result = dict.fromkeys(DJANGO_BUILTIN_COMMANDS, 'builtin')
-    for name in _get_app_commands_from_fs(Path(CORE_DIR), Path(MODULES_DIR)):
+    for name in _get_app_commands_from_fs(Path(DJANGO_CORE_DIR), Path(MODULES_DIR)):
         if name not in result:
             result[name] = 'custom'
     return result
