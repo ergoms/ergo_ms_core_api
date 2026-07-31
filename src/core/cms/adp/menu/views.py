@@ -14,7 +14,14 @@ from drf_yasg import openapi
 from src.core.cms.adp.services.permissions import PermissionService
 from src.core.audit.shortcuts import audit_log
 from .access import user_can_see_menu_item
-from .models import MenuItem, MenuSeparator, MenuAccessLog
+from .layout_service import (
+    ensure_item_catalog_key,
+    ensure_separator_catalog_key,
+    resolve_before_catalog_key_from_order,
+    sync_layout_from_separator,
+    sync_placement_from_item,
+)
+from .models import MenuItem, MenuSeparator, MenuAccessLog, MenuLayoutPlacement, MenuSeparatorLayout
 from .menu_cache import get_user_menu_payload, invalidate_user_menu_cache
 from .serializers import (
     MenuItemSerializer, MenuItemTreeSerializer, MenuSeparatorSerializer,
@@ -143,6 +150,8 @@ class MenuItemListView(BaseMenuAPIView):
         serializer = MenuItemCreateSerializer(data=request.data)
         if serializer.is_valid():
             item = serializer.save()
+            ensure_item_catalog_key(item)
+            sync_placement_from_item(item)
             invalidate_user_menu_cache()
             audit_log('menu.item_created', request=request,
                    entity={'type': 'menu_item', 'label': getattr(item, 'title', '') or str(item)})
@@ -217,6 +226,8 @@ class MenuItemDetailView(BaseMenuAPIView):
         serializer = MenuItemUpdateSerializer(item, data=request.data, partial=True)
         if serializer.is_valid():
             item = serializer.save()
+            ensure_item_catalog_key(item)
+            sync_placement_from_item(item)
             invalidate_user_menu_cache()
             audit_log('menu.item_updated', request=request,
                    entity={'type': 'menu_item', 'label': getattr(item, 'title', '') or str(item)})
@@ -250,7 +261,10 @@ class MenuItemDetailView(BaseMenuAPIView):
             )
         
         item_label = getattr(item, 'title', '') or str(item)
+        catalog_key = item.catalog_key
         item.delete()
+        if catalog_key:
+            MenuLayoutPlacement.objects.filter(catalog_key=catalog_key).delete()
         invalidate_user_menu_cache()
         audit_log('menu.item_deleted', request=request,
                entity={'type': 'menu_item', 'label': item_label})
@@ -305,6 +319,8 @@ class MenuItemReorderView(BaseMenuAPIView):
                         update_fields.append('parent')
 
                     item.save(update_fields=update_fields)
+                    ensure_item_catalog_key(item)
+                    sync_placement_from_item(item)
                 except MenuItem.DoesNotExist:
                     continue
             
@@ -360,6 +376,13 @@ class MenuSeparatorListView(BaseMenuAPIView):
         serializer = MenuSeparatorSerializer(data=request.data)
         if serializer.is_valid():
             separator = serializer.save()
+            if not separator.before_catalog_key and separator.before_order is not None:
+                separator.before_catalog_key = resolve_before_catalog_key_from_order(
+                    separator.before_order
+                )
+                separator.save(update_fields=['before_catalog_key'])
+            ensure_separator_catalog_key(separator)
+            sync_layout_from_separator(separator)
             invalidate_user_menu_cache()
             audit_log('menu.item_created', request=request,
                    entity={'type': 'menu_separator', 'label': str(separator)})
@@ -434,6 +457,13 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
         serializer = MenuSeparatorSerializer(separator, data=request.data, partial=True)
         if serializer.is_valid():
             separator = serializer.save()
+            if not separator.before_catalog_key and separator.before_order is not None:
+                separator.before_catalog_key = resolve_before_catalog_key_from_order(
+                    separator.before_order
+                )
+                separator.save(update_fields=['before_catalog_key'])
+            ensure_separator_catalog_key(separator)
+            sync_layout_from_separator(separator)
             invalidate_user_menu_cache()
             return Response(MenuSeparatorSerializer(separator).data)
         
@@ -465,7 +495,10 @@ class MenuSeparatorDetailView(BaseMenuAPIView):
             )
         
         separator_label = str(separator)
+        catalog_key = separator.catalog_key
         separator.delete()
+        if catalog_key:
+            MenuSeparatorLayout.objects.filter(catalog_key=catalog_key).delete()
         invalidate_user_menu_cache()
         audit_log('menu.item_deleted', request=request,
                entity={'type': 'menu_separator', 'label': separator_label})

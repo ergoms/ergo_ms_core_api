@@ -39,7 +39,8 @@ def _prune_empty_folder_nodes(nodes: list[dict]) -> list[dict]:
 
 def _serialize_menu_item(item: MenuItem) -> dict:
     return {
-        'id': item.id,
+        'id': str(item.public_id),
+        'catalog_key': item.catalog_key,
         'name': item.name,
         'route_name': item.route_name,
         'icon': item.icon,

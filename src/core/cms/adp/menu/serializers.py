@@ -25,7 +25,7 @@ class MenuItemChildSerializer(ModelSerializer):
     class Meta:
         model = MenuItem
         fields = [
-            'id', 'name', 'route_name', 'icon', 'item_type',
+            'id', 'catalog_key', 'name', 'route_name', 'icon', 'item_type',
             'page', 'order', 'is_active',
         ]
 
@@ -47,14 +47,14 @@ class MenuItemSerializer(ModelSerializer):
     class Meta:
         model = MenuItem
         fields = [
-            'id', 'name', 'route_name', 'icon', 'item_type',
+            'id', 'catalog_key', 'name', 'route_name', 'icon', 'item_type',
             'page', 'external_url', 'parent', 'parent_name',
             'order', 'is_active', 'is_admin_only',
             'allowed_roles', 'allowed_roles_data',
             'allowed_role_groups', 'allowed_role_groups_data',
             'module_source', 'children', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'children']
+        read_only_fields = ['id', 'catalog_key', 'created_at', 'updated_at', 'children']
 
 
 class MenuItemTreeSerializer(ModelSerializer):
@@ -65,7 +65,7 @@ class MenuItemTreeSerializer(ModelSerializer):
     class Meta:
         model = MenuItem
         fields = [
-            'id', 'name', 'route_name', 'icon', 'item_type',
+            'id', 'catalog_key', 'name', 'route_name', 'icon', 'item_type',
             'page', 'external_url', 'order', 'children',
         ]
 
@@ -126,10 +126,11 @@ class MenuSeparatorSerializer(ModelSerializer):
     class Meta:
         model = MenuSeparator
         fields = [
-            'id', 'name', 'before_order', 'is_active',
+            'id', 'catalog_key', 'module_source', 'name',
+            'before_order', 'before_catalog_key', 'is_active',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'catalog_key', 'created_at', 'updated_at']
 
 
 class UserMenuSerializer(Serializer):

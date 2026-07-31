@@ -2,9 +2,11 @@
 """
 Management command: восстановление меню из populate-функций миграций.
 
-Полностью пересоздаёт меню: сохраняет настройки доступа, очищает MenuItem/MenuSeparator,
-вызывает populate из core-миграций и всех установленных модулей (динамическое обнаружение),
-восстанавливает allowed_roles и allowed_role_groups.
+Пересоздаёт каталог (MenuItem/MenuSeparator), сохраняя:
+- layout (order/parent/is_active, якоря разделителей) в MenuLayoutPlacement /
+  MenuSeparatorLayout;
+- настройки доступа (allowed_roles / allowed_role_groups);
+- админские пункты с catalog_key ``admin::*``.
 """
 
 import importlib
@@ -36,8 +38,8 @@ class _MigrationApps:
         return apps.get_model(app_label, model_name)
 
 
-def _menu_access_key(item) -> tuple:
-    """Уникальный ключ пункта меню для сохранения/восстановления доступа."""
+def _menu_access_legacy_key(item) -> tuple:
+    """Устаревший ключ доступа (до catalog_key) — запасной вариант."""
     parent_ref = ''
     if item.parent_id:
         parent = item.parent
@@ -51,26 +53,32 @@ def _menu_access_key(item) -> tuple:
 
 
 def _save_access_map():
-    """Сохраняет маппинг доступа (route_name, module_source, name, parent_ref) -> {roles, groups}."""
+    """Сохраняет доступ: catalog_key → {roles, groups}; плюс legacy-ключ."""
     access_map = {}
     for item in MenuItem.objects.select_related('parent').prefetch_related(
         'allowed_roles', 'allowed_role_groups',
     ).all():
-        key = _menu_access_key(item)
         role_ids = list(item.allowed_roles.values_list('id', flat=True))
         group_ids = list(item.allowed_role_groups.values_list('id', flat=True))
-        if role_ids or group_ids:
-            access_map[key] = {'roles': role_ids, 'groups': group_ids}
+        if not role_ids and not group_ids:
+            continue
+        payload = {'roles': role_ids, 'groups': group_ids}
+        if getattr(item, 'catalog_key', None):
+            access_map[('catalog', item.catalog_key)] = payload
+        access_map[('legacy', _menu_access_legacy_key(item))] = payload
     return access_map
 
 
 def _restore_access_map(access_map):
     """Восстанавливает allowed_roles и allowed_role_groups из access_map."""
     for item in MenuItem.objects.select_related('parent').all():
-        key = _menu_access_key(item)
-        if key not in access_map:
+        mapping = None
+        if getattr(item, 'catalog_key', None):
+            mapping = access_map.get(('catalog', item.catalog_key))
+        if mapping is None:
+            mapping = access_map.get(('legacy', _menu_access_legacy_key(item)))
+        if mapping is None:
             continue
-        mapping = access_map[key]
         if mapping.get('roles'):
             item.allowed_roles.set(mapping['roles'])
         if mapping.get('groups'):
@@ -154,6 +162,9 @@ def _discover_core_menu_migrations():
 
         # Оркестраторы (call restore_menu) не входят в цепочку — иначе рекурсия.
         if getattr(mod, 'MENU_RESTORE_ORCHESTRATOR', False):
+            continue
+        # Одноразовые schema/backfill-миграции (не populate меню).
+        if getattr(mod, 'MENU_RESTORE_SKIP', False):
             continue
 
         migration_class = getattr(mod, 'Migration', None)
@@ -384,12 +395,28 @@ class Command(BaseCommand):
 
         core_migrations = _discover_core_menu_migrations()
 
+        from src.core.cms.adp.menu.layout_service import (
+            cleanup_orphan_layouts,
+            delete_seed_catalog,
+            materialize_all_layouts,
+        )
+        from src.core.cms.adp.menu.models import MenuLayoutPlacement, MenuSeparatorLayout
+
         if self.dry_run:
             access_map = _save_access_map()
-            item_count = MenuItem.objects.count()
-            sep_count = MenuSeparator.objects.count()
+            seed_items = MenuItem.objects.exclude(catalog_key__startswith='admin::').count()
+            seed_seps = MenuSeparator.objects.exclude(catalog_key__startswith='admin::').count()
+            admin_items = MenuItem.objects.filter(catalog_key__startswith='admin::').count()
+            layout_n = MenuLayoutPlacement.objects.count()
+            sep_layout_n = MenuSeparatorLayout.objects.count()
             self.stdout.write(self.style.WARNING(f'[dry-run] Сохранено настроек доступа: {len(access_map)}'))
-            self.stdout.write(self.style.WARNING(f'[dry-run] Будет удалено: {item_count} MenuItem, {sep_count} MenuSeparator'))
+            self.stdout.write(self.style.WARNING(
+                f'[dry-run] Будет пересоздан seed-каталог: {seed_items} MenuItem, {seed_seps} MenuSeparator'
+            ))
+            self.stdout.write(self.style.WARNING(
+                f'[dry-run] Сохранятся: {admin_items} admin::* пунктов, '
+                f'{layout_n} layout placements, {sep_layout_n} separator layouts'
+            ))
             for stem, func_name, _ in core_migrations:
                 self.stdout.write(self.style.WARNING(f'[dry-run] core: {func_name} ({stem})'))
             discovered = _discover_module_menu_migrations()
@@ -403,9 +430,11 @@ class Command(BaseCommand):
         access_map = _save_access_map()
         self.stdout.write(f'Сохранено настроек доступа: {len(access_map)}')
 
-        MenuItem.objects.all().delete()
-        MenuSeparator.objects.all().delete()
-        self.stdout.write('Очищены MenuItem и MenuSeparator')
+        deleted_items, deleted_seps = delete_seed_catalog(keep_admin=True)
+        self.stdout.write(
+            f'Очищен seed-каталог ({deleted_items} MenuItem, {deleted_seps} MenuSeparator); '
+            f'layout и admin::* сохранены'
+        )
 
         for stem, func_name, func in core_migrations:
             func(apps, schema_editor)
@@ -429,6 +458,18 @@ class Command(BaseCommand):
                         self.style.ERROR(f'  {module_name}: ошибка — {e}')
                     )
                     raise
+
+        layout_stats = materialize_all_layouts()
+        self.stdout.write(
+            f'Применён layout: {layout_stats["items"]} пунктов, '
+            f'{layout_stats["separators"]} разделителей'
+        )
+        orphan_stats = cleanup_orphan_layouts()
+        if orphan_stats['placements'] or orphan_stats['separator_layouts']:
+            self.stdout.write(
+                f'Удалены устаревшие layout: {orphan_stats["placements"]} placements, '
+                f'{orphan_stats["separator_layouts"]} separator layouts'
+            )
 
         _restore_access_map(access_map)
         self.stdout.write(f'Восстановлено настроек доступа: {len(access_map)}')
