@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+from pathlib import Path
 from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,27 @@ SETTINGS_MODULES: tuple[str, ...] = (
     'server',
     'smtp',
     'swagger',
+    'templates',
     'user_swappable',
 )
+
+_SETTINGS_DIR = Path(__file__).resolve().parent / 'settings'
+
+
+def _assert_settings_modules_complete() -> None:
+    """Падаем, если на диске есть settings/*.py вне SETTINGS_MODULES."""
+    on_disk = {
+        path.stem
+        for path in _SETTINGS_DIR.glob('*.py')
+        if path.name != '__init__.py'
+    }
+    known = set(SETTINGS_MODULES)
+    missing = sorted(on_disk - known)
+    if missing:
+        raise RuntimeError(
+            'settings_loader.SETTINGS_MODULES не содержит модули на диске: '
+            + ', '.join(missing)
+        )
 
 
 def load_settings_modules(
@@ -58,6 +78,8 @@ def load_settings_modules(
     :param deferred: модули, пропускаемые для текущего процесса (celery_beat / jupyter / …)
     :param skip: уже загруженные модули (например logger до dictConfig)
     """
+    _assert_settings_modules_complete()
+
     deferred_set = set(deferred)
     skip_set = set(skip)
 
