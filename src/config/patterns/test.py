@@ -8,39 +8,21 @@
 загружаются все модули (стандартное поведение).
 """
 
-import importlib
 import os
-import sys
-from pathlib import Path
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'src.config.patterns.test')
 
 from src.config.env import env
+from src.config.settings_loader import load_settings_modules
 
 SECRET_KEY = env.str('API_SECRET_KEY')
 DEBUG = True
 ALLOWED_HOSTS = ['*']
 
-settings_dir = Path(__file__).parent.parent / 'settings'
-
-deferred_settings = {'celery_beat', 'jupyter', 'apps'}
-
-for file_path in settings_dir.glob('*.py'):
-    if file_path.name in ('__init__.py', '__pycache__'):
-        continue
-    module_name = file_path.stem
-    if module_name in deferred_settings:
-        continue
-    module_path = f'src.config.settings.{module_name}'
-    try:
-        module = importlib.import_module(module_path)
-        globals().update({
-            name: getattr(module, name)
-            for name in dir(module)
-            if not name.startswith('_')
-        })
-    except ImportError as e:
-        print(f"Ошибка импорта модуля {module_path}: {e}")
+load_settings_modules(
+    globals(),
+    deferred={'celery_beat', 'jupyter', 'apps'},
+)
 
 from src.config.settings.user_swappable import resolve_auth_user_model
 

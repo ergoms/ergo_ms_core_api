@@ -1,21 +1,18 @@
 """
 Файл объединяющий локальные настройки для Django-приложения.
 
-Импортирует настройки из settings. Модули celery_beat и celery
+Импортирует настройки из settings. Модули celery_beat и jupyter
 загружаются только для соответствующих процессов (отложенная загрузка).
 """
 
-import importlib
 import logging.config
 import sys
-from pathlib import Path
 
-# До glob settings: иначе celery.py логирует до dictConfig (алфавитный порядок).
+# До загрузки settings: иначе celery.py логирует до dictConfig (алфавитный порядок).
 from src.config.settings.logger import LOGGING
+from src.config.settings_loader import load_settings_modules
 
 logging.config.dictConfig(LOGGING)
-
-settings_dir = Path(__file__).parent.parent / 'settings'
 
 argv_joined = ' '.join(sys.argv).lower()
 is_celery_beat = 'beat' in argv_joined
@@ -27,22 +24,11 @@ if not is_celery_beat:
 if not is_jupyter_cmd:
     deferred_settings.add('jupyter')
 
-for file_path in settings_dir.glob('*.py'):
-    if file_path.name in ('__init__.py', '__pycache__'):
-        continue
-    module_name = file_path.stem
-    if module_name in deferred_settings:
-        continue
-    module_path = f'src.config.settings.{module_name}'
-    try:
-        module = importlib.import_module(module_path)
-        globals().update({
-            name: getattr(module, name)
-            for name in dir(module)
-            if not name.startswith('_')
-        })
-    except ImportError as e:
-        print(f"Ошибка импорта модуля {module_path}: {e}")
+load_settings_modules(
+    globals(),
+    deferred=deferred_settings,
+    skip={'logger'},
+)
 
 from src.config.settings.user_swappable import resolve_auth_user_model
 

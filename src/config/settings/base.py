@@ -14,6 +14,12 @@ from src.config.nginx_runtime import (
     media_api_public_base_url,
     nginx_use_https,
 )
+from src.config.paths import (
+    ENV_FILE_PATH,
+    MODULES_DIR,
+    SYSTEM_DIR,
+    VIRTUAL_ENV_DIR,
+)
 
 """
 Определяет базовый каталог проекта.
@@ -26,19 +32,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # Получаем путь к директории api (ergo_ms/api)
 API_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
-# Получаем путь к директории системы (ergo_ms/)
-SYSTEM_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
-
-CORE_DIR = BASE_DIR / 'core'
-
-# Корневая директория для модулей.
-MODULES_DIR = SYSTEM_DIR / 'modules'
-
-# Путь к основному .env файлу (в корне проекта SYSTEM_DIR).
-ENV_FILE_PATH = SYSTEM_DIR / '.env'
-
-# Корневая директория для виртуального окружения.
-VIRTUAL_ENV_DIR = SYSTEM_DIR / 'virtual_env'
+# Django-пакет src.core (не путать с REPO_CORE_DIR / CORE_DIR из paths.py).
+DJANGO_CORE_DIR = BASE_DIR / 'core'
 
 # Корневая директория для ресурсов.
 RESOURCES_DIR = VIRTUAL_ENV_DIR / 'resources'

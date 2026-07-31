@@ -13,7 +13,7 @@ import re
 from django.core.management.base import BaseCommand, CommandError
 from django.db import migrations
 
-from src.config.settings.base import CORE_DIR, MODULES_DIR
+from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR
 from src.core.cms.adp.menu.models import MenuItem, MenuSeparator
 
 MENU_MARKERS = ('MenuMigrationHelper', 'MenuItem', 'MenuSeparator')
@@ -130,7 +130,7 @@ def _discover_core_menu_migrations():
     - update-миграции для module_source, который не создаётся ни одной оставшейся миграцией
     Возвращает отсортированный по номеру список (stem, func_name, func).
     """
-    migrations_dir = CORE_DIR / 'cms' / 'adp' / 'migrations'
+    migrations_dir = DJANGO_CORE_DIR / 'cms' / 'adp' / 'migrations'
     if not migrations_dir.exists():
         return []
 

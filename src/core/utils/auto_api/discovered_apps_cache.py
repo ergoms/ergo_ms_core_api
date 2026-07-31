@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
-from src.config.settings.base import CORE_DIR, MODULES_DIR, VIRTUAL_ENV_DIR
+from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR, VIRTUAL_ENV_DIR
 
 logger = logging.getLogger('utils')
 
@@ -55,7 +55,7 @@ def _get_dirs_fingerprint() -> dict:
     Также включает DISABLED_MODULES — при изменении списка кэш инвалидируется.
     """
     result = {}
-    for name, path in [('core', CORE_DIR), ('modules', MODULES_DIR)]:
+    for name, path in [('core', DJANGO_CORE_DIR), ('modules', MODULES_DIR)]:
         p = Path(path)
         if p.exists():
             try:
@@ -101,7 +101,7 @@ def _run_discovery_fast() -> List[str]:
 def _collect_core_apps_fast() -> List[str]:
     """Собирает приложения из core/."""
     result: List[str] = []
-    _recursively_find_apps_fast(str(CORE_DIR), 'src.core', result)
+    _recursively_find_apps_fast(str(DJANGO_CORE_DIR), 'src.core', result)
     return result
 
 
@@ -165,7 +165,7 @@ def _run_discovery() -> List[str]:
 
     discoverer = ModuleDiscoverer()
     core_apps: List[str] = []
-    discoverer._recursively_find_apps(str(CORE_DIR), 'src.core', core_apps)
+    discoverer._recursively_find_apps(str(DJANGO_CORE_DIR), 'src.core', core_apps)
     module_apps: List[str] = []
     discoverer._find_modules_apps(str(MODULES_DIR), module_apps)
     return _finalize_discovered_apps(core_apps + module_apps)

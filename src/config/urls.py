@@ -7,18 +7,18 @@
 """
 
 from src.core.utils.auto_api.auto_config import ModuleDiscoverer
-from src.config.settings.base import CORE_DIR, MODULES_DIR, BASE_DIR
+from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR, BASE_DIR
 from src.core.utils.path_utils import convert_path_to_dot_notation
 
 urlpatterns = []
 
 discoverer = ModuleDiscoverer()
 
-# Добавляем URL-конфигурации ядра, автоматически обнаруженные в директории CORE_DIR
-core_relative_path = CORE_DIR.relative_to(BASE_DIR.parent)
+# Добавляем URL-конфигурации ядра, автоматически обнаруженные в DJANGO_CORE_DIR
+core_relative_path = DJANGO_CORE_DIR.relative_to(BASE_DIR.parent)
 core_prefix = convert_path_to_dot_notation(core_relative_path)
 core_urlpatterns: list = []
-discoverer._recursively_find_urls(str(CORE_DIR), core_prefix, "", core_urlpatterns)
+discoverer._recursively_find_urls(str(DJANGO_CORE_DIR), core_prefix, "", core_urlpatterns)
 urlpatterns += core_urlpatterns
 
 # Добавляем URL-конфигурации модулей, автоматически обнаруженные в директории MODULES_DIR

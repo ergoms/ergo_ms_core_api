@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from src.config.settings.base import MODULES_DIR, CORE_DIR
+from src.config.settings.base import MODULES_DIR
 
 
 def _extract_module_name_from_import(import_path: str) -> Optional[str]:

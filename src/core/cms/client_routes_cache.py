@@ -8,7 +8,7 @@
 import logging
 from pathlib import Path
 
-from src.config.settings.base import CORE_DIR, MODULES_DIR, SYSTEM_DIR, VIRTUAL_ENV_DIR
+from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR, SYSTEM_DIR, VIRTUAL_ENV_DIR
 from src.core.cms.scripts import discover_client_routes_catalog
 from src.core.utils.auto_api.auto_config import ModuleDiscoverer
 from src.core.utils.cache_io import read_bin_cache, write_bin_cache
@@ -45,7 +45,7 @@ def _get_fingerprint() -> dict:
     else:
         result['core_routes_js'] = 0
 
-    for name, path in (('core', CORE_DIR), ('modules', MODULES_DIR)):
+    for name, path in (('core', DJANGO_CORE_DIR), ('modules', MODULES_DIR)):
         p = Path(path)
         if p.exists():
             try:
