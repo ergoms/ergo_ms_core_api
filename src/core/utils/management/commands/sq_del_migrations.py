@@ -22,6 +22,7 @@ from src.core.utils.management.commands.sq_del_migrations_lib import (
     collect_statistics,
     find_squash_migration_file,
     fix_runpython_functions,
+    inspect_squash_sync_status,
     list_migration_stems,
     read_replaces,
     strip_replaces,
@@ -439,27 +440,57 @@ class Command(BaseCommand):
             replaces, stats, dependencies_found, phase='finalize'
         )
 
+        sync_status = inspect_squash_sync_status(
+            app_label,
+            squash_file.stem,
+            replaces,
+            migrations_dir=migrations_dir,
+            db_connection=connection,
+        )
+        self.stdout.write(
+            f"\nГотовность БД: ready_for_finalize="
+            f"{sync_status['ready_for_finalize']}"
+        )
+        self.stdout.write(f"  squash_applied={sync_status['squash_applied']}")
+        self.stdout.write(
+            f"  missing_replaces={len(sync_status['missing_replaces'])} "
+            f"orphans={len(sync_status['orphans'])}"
+        )
+        self.stdout.write(f"  {sync_status['reason']}")
+
+        if sync_status['can_record_squash'] and not sync_status['squash_applied']:
+            self.stdout.write(
+                self.style.WARNING(
+                    '\nНа этой БД можно синхронизировать squash без схемы:\n'
+                    f'  ergoms sync-squashed-migrations --app {app_label}'
+                )
+            )
+
         try:
             assert_squash_ready_for_finalize(
                 app_label, squash_file.stem, replaces, connection
             )
             self.stdout.write(
                 self.style.SUCCESS(
-                    'Preflight OK: squash applied или все replaces applied.'
+                    'Preflight OK: эта БД готова к finalize.'
                 )
             )
+            finalize_ready = True
         except CommandError as e:
+            finalize_ready = False
             if check_only:
                 self.stdout.write(self.style.WARNING(f'Preflight: {e}'))
             else:
                 raise
 
+        deps_block = False
         if dependencies_found:
             if not update_deps and not force:
                 msg = (
                     f'Найдено {len(dependencies_found)} внешних зависимостей. '
                     f'Укажите --update-deps или --force.'
                 )
+                deps_block = True
                 if check_only:
                     self.stdout.write(self.style.WARNING(msg))
                 else:
@@ -473,13 +504,28 @@ class Command(BaseCommand):
                 )
 
         if check_only:
-            self.stdout.write(
-                self.style.SUCCESS(
-                    '\nПроверка finalize завершена. Для выполнения:\n'
-                    f'ergoms sq-del-migrations {app_label} '
-                    '--phase finalize --update-deps'
+            if finalize_ready and not deps_block:
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        '\n[READY] Эта БД готова к finalize.\n'
+                        'Finalize меняет файлы в репозитории — запускайте '
+                        'один раз у разработчика, когда все среды уже сделали '
+                        'db-migrate / sync-squashed-migrations:\n'
+                        f'  ergoms sq-del-migrations {app_label} '
+                        '--phase finalize --update-deps'
+                    )
                 )
-            )
+            else:
+                self.stdout.write(
+                    self.style.WARNING(
+                        '\n[NOT READY] Сначала на этой БД:\n'
+                        '  ergoms db-migrate\n'
+                        '  или ergoms sync-squashed-migrations '
+                        f'--app {app_label}\n'
+                        'Повторите: ergoms sq-del-migrations '
+                        f'{app_label} --phase finalize --check-only'
+                    )
+                )
             return
 
         if interactive:

@@ -73,6 +73,9 @@ def _get_app_commands_from_fs(core_dir: Path, modules_dir: Path) -> List[str]:
                 continue
             if f.name.startswith('_') or f.name.endswith('_'):
                 continue
+            # Вспомогательные модули рядом с командами (не management-команды)
+            if f.stem.endswith('_lib'):
+                continue
             name = f.stem
             if name in ['__init__', '__pycache__']:
                 continue

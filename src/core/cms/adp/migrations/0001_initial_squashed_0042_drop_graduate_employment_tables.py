@@ -831,6 +831,8 @@ def drop_graduate_employment_schema(apps, schema_editor):
 class Migration(migrations.Migration):
 
 
+
+
     # Без swappable AUTH_USER_MODEL: ErgoUser создаётся в этом squash (0039),
     # а settings.0007 → AUTH_USER → squash даёт цикл.
     dependencies = [

@@ -181,27 +181,29 @@ def strip_replaces(squash_path):
     path.write_text(new_content, encoding='utf-8')
 
 
-def assert_squash_ready_for_finalize(app_label, squash_name, replaces, db_connection=None):
-    """
-    Проверяет, что squash можно finalize:
-    запись squash в django_migrations ИЛИ все replaces уже applied.
-    """
+def get_app_applied_names(app_label, db_connection=None):
+    """Имена applied-миграций приложения из django_migrations."""
     conn = db_connection or connection
     recorder = MigrationRecorder(conn)
-    applied = {
+    return {
         name
         for app, name in recorder.applied_migrations()
         if app == app_label
     }
 
-    if squash_name in applied:
+
+def assert_squash_ready_for_finalize(app_label, squash_name, replaces, db_connection=None):
+    """
+    Проверяет, что squash можно finalize:
+    запись squash в django_migrations ИЛИ все replaces уже applied.
+    """
+    status = inspect_squash_sync_status(
+        app_label, squash_name, replaces, db_connection=db_connection
+    )
+    if status['ready_for_finalize']:
         return
 
-    replaces_set = set(replaces)
-    if replaces_set and replaces_set.issubset(applied):
-        return
-
-    missing = sorted(replaces_set - applied) if replaces_set else []
+    missing = status['missing_replaces']
     detail = (
         f'Не применены: {", ".join(missing[:10])}'
         + ('...' if len(missing) > 10 else '')
@@ -210,8 +212,197 @@ def assert_squash_ready_for_finalize(app_label, squash_name, replaces, db_connec
     )
     raise CommandError(
         f'Squash ещё не готов к finalize ({detail}). '
-        f'Сначала выполните: ergoms db-migrate'
+        f'Сначала: ergoms db-migrate '
+        f'или ergoms sync-squashed-migrations --app {app_label}'
     )
+
+
+def inspect_squash_sync_status(
+    app_label, squash_name, replaces, migrations_dir=None, db_connection=None
+):
+    """
+    Статус синхронизации squash с django_migrations.
+
+    Возвращает dict:
+      squash_applied, replaces, missing_replaces, orphans,
+      can_record_squash, ready_for_finalize, reason
+    """
+    applied = get_app_applied_names(app_label, db_connection)
+    replaces_list = list(replaces or [])
+    replaces_set = set(replaces_list)
+    squash_applied = squash_name in applied
+    missing = sorted(replaces_set - applied) if replaces_set else []
+
+    disk_stems = set()
+    if migrations_dir is not None:
+        disk_stems = list_migration_stems(Path(migrations_dir))
+
+    orphans = sorted(
+        name for name in applied
+        if name != squash_name and name not in disk_stems
+    ) if disk_stems else []
+
+    # Можно записать squash без выполнения операций:
+    # 1) все replaces applied, squash ещё нет
+    # 2) post-finalize: replaces пуст, squash не applied, есть orphans на диске
+    can_record = False
+    reason = ''
+    if squash_applied:
+        reason = 'squash уже записан в django_migrations'
+    elif replaces_set and not missing:
+        can_record = True
+        reason = 'все replaces applied — можно записать squash (fake)'
+    elif replaces_set and missing:
+        reason = (
+            f'не хватает {len(missing)} replaces — нужен ergoms db-migrate'
+        )
+    elif not replaces_set and orphans:
+        can_record = True
+        reason = (
+            'replaces снят, есть orphan-записи старых миграций — '
+            'можно записать squash (восстановление после раннего finalize)'
+        )
+    elif not replaces_set:
+        reason = (
+            'нет replaces и нет orphan-записей; '
+            'если схема уже актуальна — ergoms api migrate '
+            f'{app_label} {squash_name} --fake'
+        )
+
+    ready_for_finalize = bool(
+        replaces_set and (squash_applied or (not missing))
+    )
+
+    return {
+        'app_label': app_label,
+        'squash_name': squash_name,
+        'squash_applied': squash_applied,
+        'replaces': replaces_list,
+        'missing_replaces': missing,
+        'orphans': orphans,
+        'can_record_squash': can_record,
+        'ready_for_finalize': ready_for_finalize,
+        'reason': reason,
+    }
+
+
+def record_squash_applied(app_label, squash_name, db_connection=None):
+    """Записывает squash в django_migrations без выполнения операций."""
+    conn = db_connection or connection
+    recorder = MigrationRecorder(conn)
+    applied = get_app_applied_names(app_label, conn)
+    if squash_name in applied:
+        return False
+    recorder.record_applied(app_label, squash_name)
+    return True
+
+
+def clean_replaced_migration_records(
+    app_label, names_to_remove, db_connection=None
+):
+    """Удаляет устаревшие строки django_migrations (не трогает схему)."""
+    if not names_to_remove:
+        return 0
+    conn = db_connection or connection
+    deleted = 0
+    with conn.cursor() as cursor:
+        for name in names_to_remove:
+            cursor.execute(
+                'DELETE FROM django_migrations WHERE app = %s AND name = %s',
+                [app_label, name],
+            )
+            deleted += cursor.rowcount
+    return deleted
+
+
+def discover_squash_files(migrations_dir):
+    """
+    Список (path, replaces) для squash-файлов в каталоге.
+    С replaces — приоритет; без replaces — по маске *_squashed_*.py.
+    """
+    migrations_dir = Path(migrations_dir)
+    found = []
+    seen = set()
+
+    for path in sorted(migrations_dir.glob('*.py')):
+        if path.name == '__init__.py' or path.name.startswith('.'):
+            continue
+        replaces = read_replaces(path)
+        is_squashed_name = '_squashed_' in path.stem
+        if replaces or is_squashed_name:
+            found.append((path, replaces))
+            seen.add(path.stem)
+
+    return found
+
+
+def sync_app_squashed_migrations(
+    app_label,
+    migrations_dir,
+    *,
+    dry_run=False,
+    clean_orphans=False,
+    db_connection=None,
+):
+    """
+    Синхронизирует записи squash в django_migrations для одного app.
+
+    Возвращает list[dict] результатов по каждому найденному squash.
+    """
+    conn = db_connection or connection
+    results = []
+
+    for squash_path, replaces in discover_squash_files(migrations_dir):
+        status = inspect_squash_sync_status(
+            app_label,
+            squash_path.stem,
+            replaces,
+            migrations_dir=migrations_dir,
+            db_connection=conn,
+        )
+        action = 'skip'
+        recorded = False
+        cleaned = 0
+
+        if status['can_record_squash'] and not status['squash_applied']:
+            action = 'record'
+            if not dry_run:
+                recorded = record_squash_applied(
+                    app_label, squash_path.stem, conn
+                )
+                status['squash_applied'] = True
+                status['can_record_squash'] = False
+                status['reason'] = 'squash записан в django_migrations'
+                status['ready_for_finalize'] = bool(replaces)
+
+        if clean_orphans and status['squash_applied']:
+            to_clean = []
+            if replaces:
+                to_clean = [
+                    n for n in replaces
+                    if n in get_app_applied_names(app_label, conn)
+                ]
+            elif status['orphans']:
+                to_clean = list(status['orphans'])
+            if to_clean:
+                action = 'record_and_clean' if action == 'record' else 'clean'
+                if not dry_run:
+                    cleaned = clean_replaced_migration_records(
+                        app_label, to_clean, conn
+                    )
+                else:
+                    cleaned = len(to_clean)
+
+        results.append({
+            **status,
+            'squash_file': squash_path.name,
+            'action': action,
+            'recorded': recorded,
+            'cleaned': cleaned,
+            'dry_run': dry_run,
+        })
+
+    return results
 
 
 def collect_external_dependencies(loader, app_label, migration_names):
