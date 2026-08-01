@@ -83,6 +83,7 @@ class CMSUserMenuSerializer(ModelSerializer):
     Возвращает данные для бокового меню и карточки профиля:
     username, email, first_name, middle_name, full_name, initials_name, date_joined.
     Используется в session-bootstrap и данных пользователя для меню.
+    public_id — для PresenceIndicator / UserAvatar (show-online-status) в тулбаре.
     """
     full_name = SerializerMethodField(read_only=True)
     initials_name = SerializerMethodField(read_only=True)
@@ -91,6 +92,7 @@ class CMSUserMenuSerializer(ModelSerializer):
         model = User
         fields = [
             'id',
+            'public_id',
             'username',
             'email',
             'first_name',
@@ -99,7 +101,7 @@ class CMSUserMenuSerializer(ModelSerializer):
             'initials_name',
             'date_joined',
         ]
-        read_only_fields = ['id', 'full_name', 'initials_name', 'date_joined']
+        read_only_fields = ['id', 'public_id', 'full_name', 'initials_name', 'date_joined']
 
     def get_full_name(self, obj):
         full_name = obj.get_full_name()
