@@ -1,21 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-После 0051 (DeleteModel MenuItem) и 0052 (CreateModel без данных) меню пустое.
-Восстанавливаем дерево через restore_menu, если ядро ещё не засеяно.
+После 0051/0052 таблицы меню пустые.
+
+Раньше здесь вызывался restore_menu, но живые модели уже требуют
+catalog_key (0054), а колонки ещё нет — PostgreSQL падает на SELECT.
+
+Засев перенесён в конец 0054 (после AddField catalog_key / layout).
+Эта миграция остаётся no-op, чтобы не ломать цепочку зависимостей.
 """
 
-from django.core.management import call_command
 from django.db import migrations
 
 # Не включать в _discover_core_menu_migrations (иначе restore_menu вызовет сам себя).
 MENU_RESTORE_ORCHESTRATOR = True
-
-
-def restore_menu_if_core_missing(apps, schema_editor):
-    MenuItem = apps.get_model('cms_adp', 'MenuItem')
-    if MenuItem.objects.filter(module_source='core/cms').exists():
-        return
-    call_command('restore_menu')
 
 
 class Migration(migrations.Migration):
@@ -26,7 +23,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.RunPython(
-            restore_menu_if_core_missing,
+            migrations.RunPython.noop,
             migrations.RunPython.noop,
         ),
     ]
