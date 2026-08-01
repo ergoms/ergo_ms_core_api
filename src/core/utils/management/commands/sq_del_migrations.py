@@ -1,117 +1,203 @@
 """
-Команда для объединения миграций с проверкой зависимостей.
+Двухфазное объединение миграций (Django squash).
 
-Процесс:
-1. Создает squash миграцию через squashmigrations
-2. Проверяет зависимости других приложений на старые миграции
-3. Удаляет старые миграции только если нет зависимостей
-4. Обновляет зависимости в других приложениях при необходимости
+Фаза create:
+  squashmigrations + правка RunPython; старые файлы и django_migrations не трогаем.
+
+Фаза finalize (после ergoms db-migrate на всех инстансах):
+  обновить чужие dependencies, удалить replaced-файлы, снять replaces.
 """
 from pathlib import Path
 
 from django.apps import apps
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
+from django.db import DEFAULT_DB_ALIAS, connection, connections
 from django.db.migrations.loader import MigrationLoader
 
 from src.core.utils.management.commands.sq_del_migrations_lib import (
+    MANUAL_COPY_MARKER,
+    assert_squash_ready_for_finalize,
+    collect_external_dependencies,
     collect_statistics,
+    find_squash_migration_file,
     fix_runpython_functions,
+    list_migration_stems,
+    read_replaces,
+    strip_replaces,
     update_dependencies_in_other_apps,
 )
 
 
 class Command(BaseCommand):
     help = (
-        'Объединяет миграции приложения через squash и удаляет старые файлы. '
-        'Проверяет зависимости других приложений перед удалением.'
+        'Объединяет миграции приложения через squash в две фазы: '
+        'create (создать squash) и finalize (удалить replaced после migrate).'
     )
 
     def add_arguments(self, parser):
         parser.add_argument(
             'app_label',
             type=str,
-            help='Название приложения (например, cms_shortcodes)'
+            help='Название приложения (например, cms_adp)',
         )
         parser.add_argument(
             'start_migration',
             type=str,
             nargs='?',
-            help='Начальная миграция для объединения (по умолчанию 0001_initial). Если не указана, используется первая миграция.'
+            help='Начальная миграция (по умолчанию первая)',
         )
         parser.add_argument(
             'end_migration',
             type=str,
             nargs='?',
-            help='Конечная миграция для объединения (по умолчанию последняя миграция приложения)'
+            help='Конечная миграция (по умолчанию последняя)',
+        )
+        parser.add_argument(
+            '--phase',
+            choices=('create', 'finalize'),
+            default='create',
+            help='Фаза: create (по умолчанию) или finalize',
         )
         parser.add_argument(
             '--noinput',
             '--no-input',
             action='store_false',
             dest='interactive',
-            help='Не запрашивать подтверждение у пользователя',
+            help='Не запрашивать подтверждение',
         )
         parser.add_argument(
             '--force',
             action='store_true',
-            help='Принудительно удалить миграции даже при наличии зависимостей',
+            help=(
+                'В finalize: продолжить при внешних зависимостях '
+                'без --update-deps (риск поломки графа)'
+            ),
+        )
+        parser.add_argument(
+            '--update-deps',
+            action='store_true',
+            help='В finalize: обновить dependencies в других приложениях',
         )
         parser.add_argument(
             '--check-only',
             action='store_true',
-            help='Только проверить зависимости, не выполнять squash',
+            help='Только отчёт (диапазон, зависимости, applied), без записи',
+        )
+        parser.add_argument(
+            '--squash-name',
+            type=str,
+            default=None,
+            help='Stem squash-файла (для finalize или при нескольких кандидатах)',
         )
 
     def handle(self, *args, **options):
         app_label = options['app_label']
-        start_migration = options.get('start_migration')
-        end_migration = options.get('end_migration')
+        phase = options['phase']
         interactive = options.get('interactive', True)
         force = options.get('force', False)
+        update_deps = options.get('update_deps', False)
         check_only = options.get('check_only', False)
+        squash_name = options.get('squash_name')
 
         try:
             app_config = apps.get_app_config(app_label)
-        except LookupError:
-            raise CommandError(f'Приложение "{app_label}" не найдено.')
+        except LookupError as exc:
+            raise CommandError(f'Приложение "{app_label}" не найдено.') from exc
 
-        app_path = Path(app_config.path)
-        migrations_dir = app_path / 'migrations'
-
+        migrations_dir = Path(app_config.path) / 'migrations'
         if not migrations_dir.exists():
             raise CommandError(
                 f'Директория migrations не найдена для приложения "{app_label}"'
             )
 
-        from django.db import connections, DEFAULT_DB_ALIAS
         loader = MigrationLoader(connections[DEFAULT_DB_ALIAS])
 
-        app_migrations = {}
-        for (app, name), migration in loader.graph.nodes.items():
-            if app == app_label:
-                app_migrations[name] = migration
+        if phase == 'finalize':
+            self._handle_finalize(
+                app_label=app_label,
+                migrations_dir=migrations_dir,
+                loader=loader,
+                interactive=interactive,
+                force=force,
+                update_deps=update_deps,
+                check_only=check_only,
+                squash_name=squash_name,
+            )
+            return
 
+        start_migration, end_migration, migrations_to_squash = (
+            self._resolve_range(app_label, loader, options)
+        )
+        dependencies_found = collect_external_dependencies(
+            loader, app_label, migrations_to_squash
+        )
+        stats = collect_statistics(
+            self.stdout,
+            app_label,
+            migrations_to_squash,
+            loader,
+            migrations_dir,
+            style=self.style,
+        )
+        self._print_range_and_stats(
+            migrations_to_squash, stats, dependencies_found, phase='create'
+        )
+
+        if check_only:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    '\nПроверка завершена. '
+                    'Create: ergoms sq-del-migrations '
+                    f'{app_label} --phase create\n'
+                    'После migrate на всех средах: '
+                    f'ergoms sq-del-migrations {app_label} '
+                    '--phase finalize --update-deps'
+                )
+            )
+            return
+
+        self._handle_create(
+            app_label=app_label,
+            migrations_dir=migrations_dir,
+            loader=loader,
+            start_migration=start_migration,
+            end_migration=end_migration,
+            migrations_to_squash=migrations_to_squash,
+            dependencies_found=dependencies_found,
+            interactive=interactive,
+            verbosity=options.get('verbosity', 1),
+            squash_name=squash_name,
+        )
+
+    def _resolve_range(self, app_label, loader, options):
+        start_migration = options.get('start_migration')
+        end_migration = options.get('end_migration')
+
+        app_migrations = {
+            name: migration
+            for (app, name), migration in loader.graph.nodes.items()
+            if app == app_label
+        }
         if not app_migrations:
             raise CommandError(
                 f'Миграции не найдены для приложения "{app_label}"'
             )
 
         if not start_migration:
-            migration_names = sorted(app_migrations.keys())
-            start_migration = migration_names[0]
+            start_migration = sorted(app_migrations.keys())[0]
             self.stdout.write(
                 f'Начальная миграция не указана, используется: {start_migration}'
             )
 
         if not end_migration:
-            leaf_nodes = loader.graph.leaf_nodes()
-            app_leaf_nodes = [name for app, name in leaf_nodes if app == app_label]
-
-            if app_leaf_nodes:
+            leaf_nodes = [
+                name for app, name in loader.graph.leaf_nodes() if app == app_label
+            ]
+            if leaf_nodes:
                 last_migration = None
                 max_depth = -1
-                for leaf_name in app_leaf_nodes:
+                for leaf_name in leaf_nodes:
                     try:
                         plan = loader.graph.backwards_plan((app_label, leaf_name))
                         depth = len([m for m in plan if m[0] == app_label])
@@ -120,250 +206,330 @@ class Command(BaseCommand):
                             last_migration = leaf_name
                     except Exception:
                         pass
-
-                if last_migration:
-                    end_migration = last_migration
-                else:
-                    end_migration = sorted(app_leaf_nodes)[-1]
+                end_migration = last_migration or sorted(leaf_nodes)[-1]
             else:
                 end_migration = sorted(app_migrations.keys())[-1]
-
             self.stdout.write(
                 f'Конечная миграция не указана, используется последняя: {end_migration}'
             )
 
-        migrations_to_squash = []
-        dependencies_found = []
-
         try:
             plan = loader.graph.forwards_plan((app_label, end_migration))
-
+            migrations_to_squash = []
             in_range = False
             for app, name in plan:
-                if app == app_label:
-                    if name == start_migration:
-                        in_range = True
-                    if in_range:
-                        migrations_to_squash.append(name)
-                    if name == end_migration:
-                        break
+                if app != app_label:
+                    continue
+                if name == start_migration:
+                    in_range = True
+                if in_range:
+                    migrations_to_squash.append(name)
+                if name == end_migration:
+                    break
         except Exception as e:
             raise CommandError(
                 f'Ошибка при определении миграций для объединения: {e}'
-            )
+            ) from e
 
         if not migrations_to_squash:
             raise CommandError(
-                f'Не найдены миграции для объединения между "{start_migration}" и "{end_migration}"'
+                f'Не найдены миграции для объединения между '
+                f'"{start_migration}" и "{end_migration}"'
             )
+        return start_migration, end_migration, migrations_to_squash
 
+    def _print_range_and_stats(
+        self, migrations_to_squash, stats, dependencies_found, phase
+    ):
         self.stdout.write(
             self.style.SUCCESS(
-                f'Найдено миграций для объединения: {len(migrations_to_squash)}'
+                f'Найдено миграций в диапазоне: {len(migrations_to_squash)}'
             )
         )
         self.stdout.write(f'От: {migrations_to_squash[0]}')
         self.stdout.write(f'До: {migrations_to_squash[-1]}')
+        self.stdout.write(f'Фаза: {phase}')
 
-        self.stdout.write('\nПроверка зависимостей других приложений...')
+        self.stdout.write('\n' + '=' * 60)
+        self.stdout.write(self.style.MIGRATE_HEADING('Статистика:'))
+        self.stdout.write('=' * 60)
 
-        for (app_name, migration_name), migration in loader.graph.nodes.items():
-            if app_name == app_label:
-                continue
-
-            for dep_app, dep_name in migration.dependencies:
-                if dep_app == app_label and dep_name in migrations_to_squash:
-                    dependencies_found.append({
-                        'app': app_name,
-                        'migration': migration_name,
-                        'depends_on': (app_label, dep_name),
-                        'type': 'dependency'
-                    })
-
-            for dep_app, dep_name in getattr(migration, 'run_before', []):
-                if dep_app == app_label and dep_name in migrations_to_squash:
-                    dependencies_found.append({
-                        'app': app_name,
-                        'migration': migration_name,
-                        'depends_on': (app_label, dep_name),
-                        'type': 'run_before'
-                    })
-
-        stats = collect_statistics(
-            self.stdout, app_label, migrations_to_squash, loader, migrations_dir
+        label = (
+            'Файлов миграций в диапазоне (create не удаляет)'
+            if phase == 'create'
+            else 'Файлов миграций к удалению в finalize'
         )
-
-        self.stdout.write('\n' + '='*60)
-        self.stdout.write(self.style.MIGRATE_HEADING('Статистика операции:'))
-        self.stdout.write('='*60)
-
-        self.stdout.write(f'\nФайлов миграций для удаления: {stats["migration_files_count"]}')
+        self.stdout.write(f'\n{label}: {stats["migration_files_count"]}')
         if stats['migration_files']:
             for file_name in stats['migration_files'][:10]:
                 self.stdout.write(f' - {file_name}')
             if len(stats['migration_files']) > 10:
-                self.stdout.write(f' ... и еще {len(stats["migration_files"]) - 10} файлов')
+                self.stdout.write(
+                    f' ... и еще {len(stats["migration_files"]) - 10} файлов'
+                )
 
-        self.stdout.write(f'\nЗаписей в django_migrations для удаления: {stats["db_records_count"]}')
-        if stats['db_records']:
-            for record in stats['db_records'][:10]:
+        self.stdout.write(
+            f'\nУже applied в django_migrations (не удаляются командой): '
+            f'{stats["applied_records_count"]}'
+        )
+        if stats['applied_records']:
+            for record in stats['applied_records'][:10]:
                 self.stdout.write(f' - {record}')
-            if len(stats['db_records']) > 10:
-                self.stdout.write(f' ... и еще {len(stats["db_records"]) - 10} записей')
+            if len(stats['applied_records']) > 10:
+                self.stdout.write(
+                    f' ... и еще {len(stats["applied_records"]) - 10} записей'
+                )
 
-        self.stdout.write(f'\nТаблиц в БД (не будут удалены): {stats["tables_count"]}')
+        self.stdout.write(f'\nТаблиц в БД (не затрагиваются): {stats["tables_count"]}')
         if stats['tables']:
             for table in stats['tables'][:10]:
                 self.stdout.write(f' - {table}')
             if len(stats['tables']) > 10:
-                self.stdout.write(f' ... и еще {len(stats["tables"]) - 10} таблиц')
-
-        self.stdout.write('='*60)
+                self.stdout.write(
+                    f' ... и еще {len(stats["tables"]) - 10} таблиц'
+                )
+        self.stdout.write('=' * 60)
 
         if dependencies_found:
             self.stdout.write(
                 self.style.WARNING(
-                    f'\nНайдено зависимостей от объединяемых миграций: {len(dependencies_found)}'
+                    f'\nНайдено внешних зависимостей от диапазона: '
+                    f'{len(dependencies_found)}'
                 )
             )
             for dep in dependencies_found:
                 self.stdout.write(
                     f" {dep['app']}.{dep['migration']} "
-                    f"({dep['type']}) -> {dep['depends_on'][0]}.{dep['depends_on'][1]}"
+                    f"({dep['type']}) -> "
+                    f"{dep['depends_on'][0]}.{dep['depends_on'][1]}"
                 )
             self.stdout.write(
-                '\nDjango автоматически обновит зависимости при применении squash миграции.'
+                'В finalize укажите --update-deps, чтобы переписать '
+                'dependencies на squash.'
             )
 
-        if not check_only:
-            if interactive:
-                self.stdout.write(
-                    self.style.WARNING(
-                        '\nВНИМАНИЕ: Эта операция удалит файлы миграций и записи из БД!'
-                    )
+    def _handle_create(
+        self,
+        *,
+        app_label,
+        migrations_dir,
+        loader,
+        start_migration,
+        end_migration,
+        migrations_to_squash,
+        dependencies_found,
+        interactive,
+        verbosity,
+        squash_name,
+    ):
+        before_stems = list_migration_stems(migrations_dir)
+
+        self.stdout.write('\nСоздание squash миграции...')
+        try:
+            squash_args = [app_label, start_migration, end_migration]
+            call_command(
+                'squashmigrations',
+                *squash_args,
+                verbosity=verbosity,
+                interactive=interactive,
+            )
+        except Exception as e:
+            raise CommandError(f'Ошибка при создании squash миграции: {e}') from e
+
+        try:
+            squash_file = find_squash_migration_file(
+                migrations_dir,
+                before_stems=before_stems,
+                squash_name=squash_name,
+            )
+        except CommandError as exc:
+            after_stems = list_migration_stems(migrations_dir)
+            new_stems = after_stems - before_stems
+            if len(new_stems) != 1:
+                raise
+            candidate = migrations_dir / f'{next(iter(new_stems))}.py'
+            if not read_replaces(candidate):
+                raise CommandError(
+                    f'Новый файл {candidate.name} не содержит replaces.'
+                ) from exc
+            squash_file = candidate
+
+        self.stdout.write(
+            self.style.SUCCESS(f'Squash миграция: {squash_file.name}')
+        )
+
+        runpython_ok = fix_runpython_functions(
+            self.stdout,
+            squash_file,
+            migrations_to_squash,
+            app_label,
+            loader,
+            style=self.style,
+        )
+        content = squash_file.read_text(encoding='utf-8')
+        if not runpython_ok or MANUAL_COPY_MARKER in content:
+            raise CommandError(
+                f'В {squash_file.name} остались функции RunPython, '
+                f'требующие ручного копирования. Исправьте файл и повторите '
+                f'проверку, затем ergoms db-migrate.'
+            )
+
+        if dependencies_found:
+            self.stdout.write(
+                self.style.WARNING(
+                    '\nВнешние зависимости сохранены (create их не меняет). '
+                    'После migrate на всех средах: '
+                    f'ergoms sq-del-migrations {app_label} '
+                    '--phase finalize --update-deps'
                 )
-                response = input('\nПродолжить? (yes/no): ')
-                if response.lower() not in ('yes', 'y'):
-                    self.stdout.write(self.style.ERROR('Отменено пользователем.'))
-                    return
+            )
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                '\nФаза create завершена. Старые файлы и django_migrations '
+                'не изменялись.\n'
+                'Следующие шаги:\n'
+                f'1. Проверьте {squash_file.name}\n'
+                '2. Закоммитьте squash вместе со старыми миграциями\n'
+                '3. На всех средах: ergoms db-migrate\n'
+                f'4. Затем: ergoms sq-del-migrations {app_label} '
+                '--phase finalize --update-deps'
+            )
+        )
+
+    def _handle_finalize(
+        self,
+        *,
+        app_label,
+        migrations_dir,
+        loader,
+        interactive,
+        force,
+        update_deps,
+        check_only,
+        squash_name,
+    ):
+        squash_file = find_squash_migration_file(
+            migrations_dir,
+            before_stems=None,
+            squash_name=squash_name,
+        )
+        replaces = read_replaces(squash_file)
+        if not replaces:
+            raise CommandError(
+                f'В {squash_file.name} нет replaces — finalize не нужен '
+                f'или уже выполнен.'
+            )
+
+        self.stdout.write(f'Squash: {squash_file.name}')
+        self.stdout.write(f'replaces ({len(replaces)}): {replaces[0]} … {replaces[-1]}')
+
+        dependencies_found = collect_external_dependencies(
+            loader, app_label, replaces
+        )
+        stats = collect_statistics(
+            self.stdout,
+            app_label,
+            replaces,
+            loader,
+            migrations_dir,
+            style=self.style,
+        )
+        self._print_range_and_stats(
+            replaces, stats, dependencies_found, phase='finalize'
+        )
+
+        try:
+            assert_squash_ready_for_finalize(
+                app_label, squash_file.stem, replaces, connection
+            )
+            self.stdout.write(
+                self.style.SUCCESS(
+                    'Preflight OK: squash applied или все replaces applied.'
+                )
+            )
+        except CommandError as e:
+            if check_only:
+                self.stdout.write(self.style.WARNING(f'Preflight: {e}'))
             else:
+                raise
+
+        if dependencies_found:
+            if not update_deps and not force:
+                msg = (
+                    f'Найдено {len(dependencies_found)} внешних зависимостей. '
+                    f'Укажите --update-deps или --force.'
+                )
+                if check_only:
+                    self.stdout.write(self.style.WARNING(msg))
+                else:
+                    raise CommandError(msg)
+            elif force and not update_deps:
                 self.stdout.write(
                     self.style.WARNING(
-                        '\nПродолжаем с автоматическим обновлением зависимостей...'
+                        '\n--force без --update-deps: чужие dependencies '
+                        'не будут обновлены, граф миграций может сломаться.'
                     )
                 )
 
         if check_only:
             self.stdout.write(
-                self.style.SUCCESS('\nПроверка завершена. Используйте без --check-only для выполнения.')
+                self.style.SUCCESS(
+                    '\nПроверка finalize завершена. Для выполнения:\n'
+                    f'ergoms sq-del-migrations {app_label} '
+                    '--phase finalize --update-deps'
+                )
             )
             return
 
-        self.stdout.write('\nСоздание squash миграции...')
-        try:
-            squash_args = [app_label]
-            if start_migration:
-                squash_args.append(start_migration)
-            squash_args.append(end_migration)
-
-            call_command(
-                'squashmigrations',
-                *squash_args,
-                verbosity=options.get('verbosity', 1),
-                no_input=not interactive,
-            )
-            self.stdout.write(
-                self.style.SUCCESS('Squash миграция успешно создана.')
-            )
-        except Exception as e:
-            raise CommandError(f'Ошибка при создании squash миграции: {e}')
-
-        existing_migrations = set([
-            f.stem for f in migrations_dir.glob('*.py')
-            if f.name != '__init__.py' and not f.name.startswith('.')
-        ])
-
-        squash_files = list(migrations_dir.glob('*_squashed_*.py'))
-        if not squash_files:
-            all_files = set([
-                f.stem for f in migrations_dir.glob('*.py')
-                if f.name != '__init__.py' and not f.name.startswith('.')
-            ])
-            new_files = all_files - existing_migrations
-            if new_files:
-                squash_files = [migrations_dir / f'{name}.py' for name in new_files]
-
-        if not squash_files:
+        if interactive:
             self.stdout.write(
                 self.style.WARNING(
-                    'Squash миграция не найдена. Возможно, она уже существует или произошла ошибка.'
+                    '\nВНИМАНИЕ: finalize удалит replaced-файлы миграций '
+                    'и снимет replaces. Записи django_migrations не трогаются.'
                 )
             )
-            return
+            response = input('\nПродолжить? (yes/no): ')
+            if response.lower() not in ('yes', 'y'):
+                self.stdout.write(self.style.ERROR('Отменено пользователем.'))
+                return
 
-        squash_file = squash_files[0]
-        self.stdout.write(f'Найдена squash миграция: {squash_file.name}')
-
-        fix_runpython_functions(
-            self.stdout, squash_file, migrations_to_squash, app_label, loader
-        )
-
-        update_dependencies_in_other_apps(
-            self.stdout, app_label, migrations_to_squash, squash_file.stem, loader
-        )
-
-        self.stdout.write('\nУдаление записей из django_migrations...')
-        from django.db import connection
-
-        deleted_db_records = 0
-        with connection.cursor() as cursor:
-            for migration_name in migrations_to_squash:
-                if migration_name == start_migration and start_migration.startswith('0001_'):
-                    continue
-
-                cursor.execute(
-                    "DELETE FROM django_migrations WHERE app = %s AND name = %s",
-                    [app_label, migration_name]
-                )
-                if cursor.rowcount > 0:
-                    deleted_db_records += 1
-                    self.stdout.write(f'Удалена запись: {app_label}.{migration_name}')
-
-        self.stdout.write(
-            self.style.SUCCESS(
-                f'Удалено записей из БД: {deleted_db_records}'
+        if update_deps:
+            update_dependencies_in_other_apps(
+                self.stdout,
+                app_label,
+                replaces,
+                squash_file.stem,
+                loader,
+                style=self.style,
             )
-        )
 
-        self.stdout.write('\nУдаление старых файлов миграций...')
+        self.stdout.write('\nУдаление replaced-файлов...')
         deleted_count = 0
-
-        for migration_name in migrations_to_squash:
-            if migration_name == start_migration and start_migration.startswith('0001_'):
-                self.stdout.write(
-                    f'Пропущена начальная миграция: {migration_name}'
-                )
-                continue
-
+        for migration_name in replaces:
             migration_file = migrations_dir / f'{migration_name}.py'
+            if migration_file.resolve() == squash_file.resolve():
+                continue
             if migration_file.exists():
                 migration_file.unlink()
                 deleted_count += 1
                 self.stdout.write(f'Удален файл: {migration_name}.py')
 
         self.stdout.write(
-            self.style.SUCCESS(
-                f'Удалено файлов миграций: {deleted_count}'
-            )
+            self.style.SUCCESS(f'Удалено файлов: {deleted_count}')
+        )
+
+        strip_replaces(squash_file)
+        self.stdout.write(
+            self.style.SUCCESS(f'Снят replaces в {squash_file.name}')
         )
 
         self.stdout.write(
             self.style.SUCCESS(
-                '\nОбъединение миграций завершено успешно!\n'
-                'Следующие шаги:\n'
-                '1. Проверьте созданную squash миграцию\n'
-                '2. Примените миграции: python manage.py migrate\n'
-                '3. После применения на всех инстансах можно удалить squash миграцию '
-                'и оставить только объединенную'
+                '\nФаза finalize завершена.\n'
+                'Проверьте: ergoms api showmigrations '
+                f'{app_label}\n'
+                'и: ergoms api makemigrations --dry-run\n'
+                'Затем закоммитьте изменения.'
             )
         )

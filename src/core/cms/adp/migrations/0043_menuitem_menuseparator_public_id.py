@@ -15,7 +15,7 @@ def backfill_public_ids(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('cms_adp', '0042_drop_graduate_employment_tables'),
+        ('cms_adp', '0001_initial_squashed_0042_drop_graduate_employment_tables'),
     ]
 
     operations = [

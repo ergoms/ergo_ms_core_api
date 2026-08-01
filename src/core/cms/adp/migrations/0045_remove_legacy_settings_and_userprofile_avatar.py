@@ -21,7 +21,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('cms_adp', '0044_remove_userprofile_email_notifications'),
-        ('settings', '0007_useravatar'),
+        ('settings', '0001_initial_squashed_0038_emailsettings_password_encrypted'),
     ]
 
     operations = [
