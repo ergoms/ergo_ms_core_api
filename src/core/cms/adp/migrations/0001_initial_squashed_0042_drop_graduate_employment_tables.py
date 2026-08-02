@@ -10,6 +10,90 @@ from django.conf import settings
 from django.db import migrations, models
 
 
+FORK_AUTH_MIGRATIONS = (
+    '0013_add_user_middle_name',
+    '0014_add_user_public_id',
+)
+
+REMOVED_ROUTE_NAMES = (
+    'SiteSettings',
+    'Shortcodes',
+    'MainShortcodePage',
+    'Templates',
+    'Pages',
+    'Layouts',
+    'PageShortcodeCategories',
+    'Categories',
+    'PageCategories',
+    'PageCategoriesManager',
+    'TagsManager',
+)
+
+REMOVED_MODULE_SOURCES = (
+    'core/shortcodes',
+    'cms_shortcodes',
+    'core/categories',
+)
+
+ROUTE_NAME = 'AuditLogPanel'
+NEW_ROUTE_NAME = 'AccessControlPanel'
+MODULE_SOURCE = 'core/cms'
+GRADUATE_EMPLOYMENT_MODULE_SOURCE = 'modules/graduate_employment'
+MODULE_NAME = 'graduate_employment'
+ROLE_GROUP_TEACHER = 'Преподаватель (НН)'
+ROLE_GROUP_STUDENT = 'Студент (НН)'
+
+
+def _column_exists(cursor, vendor, table_name, column_name):
+    if vendor == 'sqlite':
+        cursor.execute(f'PRAGMA table_info("{table_name}")')
+        return any(col[1] == column_name for col in cursor.fetchall())
+    if vendor == 'postgresql':
+        cursor.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = CURRENT_SCHEMA()
+                  AND table_name = %s
+                  AND column_name = %s
+            )
+            """,
+            [table_name, column_name],
+        )
+        return cursor.fetchone()[0]
+    return False
+
+
+def _add_column_if_missing(cursor, vendor, table_name, column_name, column_sql):
+    if _column_exists(cursor, vendor, table_name, column_name):
+        return
+    if vendor == 'sqlite':
+        cursor.execute(
+            f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {column_sql}'
+        )
+        return
+    cursor.execute(
+        f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS '
+        f'"{column_name}" {column_sql}'
+    )
+
+
+def ensure_ergo_user_table(apps, schema_editor):
+    """Создаёт auth_user (+ M2M), если таблицы ещё нет (fresh install).
+
+    В database_operations SeparateDatabaseAndState historical apps ещё без
+    ErgoUser (CreateModel только в state_operations) — берём установленную модель.
+    """
+    from django.apps import apps as global_apps
+
+    ErgoUser = global_apps.get_model('cms_adp', 'ErgoUser')
+    table_name = ErgoUser._meta.db_table
+    existing = set(schema_editor.connection.introspection.table_names())
+    if table_name in existing:
+        return
+    schema_editor.create_model(ErgoUser)
+
 
 def create_system_roles(apps, schema_editor):
     """
@@ -514,6 +598,39 @@ def restructure_site_settings_menu(apps, schema_editor):
     pass
 
 
+def _ensure_admin_panel_children(cms, MenuItem, admin_panel):
+    users_menu = MenuItem.objects.filter(route_name='UsersPanel', parent=admin_panel).first()
+    if not users_menu:
+        users_menu = cms.create_group(
+            'Пользователи',
+            'UsersPanel',
+            icon='Users',
+            parent=admin_panel,
+            order=10,
+            is_admin_only=True,
+        )
+
+    if not MenuItem.objects.filter(parent=users_menu, route_name='OnlineUsersPanel').exists():
+        cms.create_route('В сети', 'OnlineUsersPanel', parent=users_menu, is_admin_only=True)
+
+    admin_routes = [
+        ('Роли', 'CategoriesPanel'),
+        ('Ролевые группы', 'GroupsPanel'),
+        ('Политики и права', 'PermissionsPanel'),
+        ('Ограничения', 'LiminationPanel'),
+        ('Управление меню', 'MenuPanel'),
+    ]
+    for order, (name, route_name) in enumerate(admin_routes, start=20):
+        if not MenuItem.objects.filter(parent=admin_panel, route_name=route_name).exists():
+            cms.create_route(
+                name,
+                route_name,
+                parent=admin_panel,
+                order=order,
+                is_admin_only=True,
+            )
+
+
 def restore_admin_panel_menu(apps, schema_editor):
     from src.core.cms.adp.menu.migration_utils import MenuMigrationHelper
 
@@ -812,7 +929,7 @@ def migrate_user_content_type(apps, schema_editor):
 def remove_graduate_employment(apps, schema_editor):
     MenuItem = apps.get_model('cms_adp', 'MenuItem')
     ModulePermission = apps.get_model('cms_adp', 'ModulePermission')
-    MenuItem.objects.filter(module_source=MODULE_SOURCE).delete()
+    MenuItem.objects.filter(module_source=GRADUATE_EMPLOYMENT_MODULE_SOURCE).delete()
     ModulePermission.objects.filter(module_name=MODULE_NAME).delete()
 
 
@@ -830,17 +947,51 @@ def drop_graduate_employment_schema(apps, schema_editor):
 
 class Migration(migrations.Migration):
 
-
-
-
-    # Без swappable AUTH_USER_MODEL: ErgoUser создаётся в этом squash (0039),
-    # а settings.0007 → AUTH_USER → squash даёт цикл.
+    # ErgoUser в state в начале squash (до FK на AUTH_USER_MODEL).
+    # Без swappable_dependency на AUTH_USER: иначе цикл со settings squash.
+    # Таблица auth_user: create_model только если ещё нет (legacy auth.User).
     dependencies = [
         ('auth', '0012_alter_user_first_name_max_length'),
         ('contenttypes', '0002_remove_content_type_name'),
     ]
 
     operations = [
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.CreateModel(
+                    name='ErgoUser',
+                    fields=[
+                        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                        ('password', models.CharField(max_length=128, verbose_name='password')),
+                        ('last_login', models.DateTimeField(blank=True, null=True, verbose_name='last login')),
+                        ('is_superuser', models.BooleanField(default=False, help_text='Designates that this user has all permissions without explicitly assigning them.', verbose_name='superuser status')),
+                        ('username', models.CharField(error_messages={'unique': 'A user with that username already exists.'}, help_text='Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.', max_length=150, unique=True, validators=[django.contrib.auth.validators.UnicodeUsernameValidator()], verbose_name='username')),
+                        ('first_name', models.CharField(blank=True, max_length=150, verbose_name='first name')),
+                        ('last_name', models.CharField(blank=True, max_length=150, verbose_name='last name')),
+                        ('email', models.EmailField(blank=True, max_length=254, verbose_name='email address')),
+                        ('is_staff', models.BooleanField(default=False, help_text='Designates whether the user can log into this admin site.', verbose_name='staff status')),
+                        ('is_active', models.BooleanField(default=True, help_text='Designates whether this user should be treated as active. Unselect this instead of deleting accounts.', verbose_name='active')),
+                        ('date_joined', models.DateTimeField(default=django.utils.timezone.now, verbose_name='date joined')),
+                        ('middle_name', models.CharField(blank=True, default='', max_length=150, verbose_name='Отчество')),
+                        ('public_id', models.UUIDField(default=uuid.uuid4, editable=False, null=True, unique=True, verbose_name='public id')),
+                        ('groups', models.ManyToManyField(blank=True, help_text='The groups this user belongs to. A user will get all permissions granted to each of their groups.', related_name='user_set', related_query_name='user', to='auth.group', verbose_name='groups')),
+                        ('user_permissions', models.ManyToManyField(blank=True, help_text='Specific permissions for this user.', related_name='user_set', related_query_name='user', to='auth.permission', verbose_name='user permissions')),
+                    ],
+                    options={
+                        'verbose_name': 'пользователь',
+                        'verbose_name_plural': 'пользователи',
+                        'db_table': 'auth_user',
+                        'swappable': 'AUTH_USER_MODEL',
+                    },
+                    managers=[
+                        ('objects', django.contrib.auth.models.UserManager()),
+                    ],
+                ),
+            ],
+            database_operations=[
+                migrations.RunPython(ensure_ergo_user_table, noop_reverse),
+            ],
+        ),
         migrations.CreateModel(
             name='EmailConfirmationCode',
             fields=[
@@ -1191,13 +1342,8 @@ class Migration(migrations.Migration):
                 'verbose_name': 'Заявка на изменение данных профиля',
                 'verbose_name_plural': 'Заявки на изменение данных профиля',
                 'ordering': ['-created_at'],
-                'indexes': [models.Index(fields=['user', 'status'], name='cms_adp_use_user_id_status_idx')],
+                'indexes': [models.Index(fields=['user', 'status'], name='cms_adp_use_user_id_a313df_idx')],
             },
-        ),
-        migrations.RenameIndex(
-            model_name='userprofilechangerequest',
-            new_name='cms_adp_use_user_id_a313df_idx',
-            old_name='cms_adp_use_user_id_status_idx',
         ),
         migrations.RunPython(
             code=remove_users_all_submenu,
@@ -1239,38 +1385,6 @@ class Migration(migrations.Migration):
         migrations.RunPython(
             code=remove_fork_auth_migration_records,
             reverse_code=noop_reverse,
-        ),
-        migrations.SeparateDatabaseAndState(
-            state_operations=[
-                migrations.CreateModel(
-                    name='ErgoUser',
-                    fields=[
-                        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                        ('password', models.CharField(max_length=128, verbose_name='password')),
-                        ('last_login', models.DateTimeField(blank=True, null=True, verbose_name='last login')),
-                        ('is_superuser', models.BooleanField(default=False, help_text='Designates that this user has all permissions without explicitly assigning them.', verbose_name='superuser status')),
-                        ('username', models.CharField(error_messages={'unique': 'A user with that username already exists.'}, help_text='Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.', max_length=150, unique=True, validators=[django.contrib.auth.validators.UnicodeUsernameValidator()], verbose_name='username')),
-                        ('first_name', models.CharField(blank=True, max_length=150, verbose_name='first name')),
-                        ('last_name', models.CharField(blank=True, max_length=150, verbose_name='last name')),
-                        ('email', models.EmailField(blank=True, max_length=254, verbose_name='email address')),
-                        ('is_staff', models.BooleanField(default=False, help_text='Designates whether the user can log into this admin site.', verbose_name='staff status')),
-                        ('is_active', models.BooleanField(default=True, help_text='Designates whether this user should be treated as active. Unselect this instead of deleting accounts.', verbose_name='active')),
-                        ('date_joined', models.DateTimeField(default=django.utils.timezone.now, verbose_name='date joined')),
-                        ('middle_name', models.CharField(blank=True, default='', max_length=150, verbose_name='Отчество')),
-                        ('public_id', models.UUIDField(default=uuid.uuid4, editable=False, null=True, unique=True, verbose_name='public id')),
-                        ('groups', models.ManyToManyField(blank=True, help_text='The groups this user belongs to. A user will get all permissions granted to each of their groups.', related_name='user_set', related_query_name='user', to='auth.group', verbose_name='groups')),
-                        ('user_permissions', models.ManyToManyField(blank=True, help_text='Specific permissions for this user.', related_name='user_set', related_query_name='user', to='auth.permission', verbose_name='user permissions')),
-                    ],
-                    options={
-                        'verbose_name': 'пользователь',
-                        'verbose_name_plural': 'пользователи',
-                        'db_table': 'auth_user',
-                    },
-                    managers=[
-                        ('objects', django.contrib.auth.models.UserManager()),
-                    ],
-                ),
-            ],
         ),
         migrations.RunPython(
             code=migrate_user_content_type,

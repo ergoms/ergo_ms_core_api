@@ -5,8 +5,7 @@ from django.db import models
 from django.utils.translation import gettext as _
 import json
 
-if getattr(settings, 'AUTH_USER_MODEL', None) == 'cms_adp.ErgoUser':
-    from src.core.cms.adp.ergo_user import ErgoUser  # noqa: F401
+from src.core.cms.adp.ergo_user import ErgoUser  # noqa: F401
 
 
 class EmailConfirmationCode(models.Model):

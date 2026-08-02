@@ -44,7 +44,6 @@ SETTINGS_MODULES: tuple[str, ...] = (
     'smtp',
     'swagger',
     'templates',
-    'user_swappable',
 )
 
 _SETTINGS_DIR = Path(__file__).resolve().parent / 'settings'

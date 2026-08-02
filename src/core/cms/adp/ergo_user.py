@@ -31,6 +31,7 @@ class ErgoUser(AbstractUser):
         db_table = 'auth_user'
         verbose_name = 'пользователь'
         verbose_name_plural = 'пользователи'
+        swappable = 'AUTH_USER_MODEL'
 
     def get_full_name(self) -> str:
         """Формат: «Имя Отчество Фамилия»."""

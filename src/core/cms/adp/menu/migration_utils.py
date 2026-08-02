@@ -34,10 +34,21 @@ class MenuMigrationHelper:
         self.MenuItem = apps.get_model('cms_adp', 'MenuItem')
         self.MenuSeparator = apps.get_model('cms_adp', 'MenuSeparator')
         self.module_source = module_source
-        self._has_layout_models = self._detect_layout_models(apps)
+        self._has_catalog_key = self._model_has_field(self.MenuItem, 'catalog_key')
+        self._has_layout_models = (
+            self._has_catalog_key and self._detect_layout_models(apps)
+        )
         if self._has_layout_models:
             self.MenuLayoutPlacement = apps.get_model('cms_adp', 'MenuLayoutPlacement')
             self.MenuSeparatorLayout = apps.get_model('cms_adp', 'MenuSeparatorLayout')
+
+    @staticmethod
+    def _model_has_field(model, field_name: str) -> bool:
+        try:
+            model._meta.get_field(field_name)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _detect_layout_models(apps) -> bool:
@@ -151,21 +162,23 @@ class MenuMigrationHelper:
         is_admin_only: bool = False,
         order: int = None,
     ):
-        catalog_key = self._item_catalog_key(
-            item_type=item_type,
-            route_name=route_name,
-            page=page,
-            external_url=external_url,
-            name=name,
-            parent=parent,
-        )
-
-        existing = (
-            self.MenuItem.objects.filter(catalog_key=catalog_key).first()
-            if catalog_key
+        catalog_key = (
+            self._item_catalog_key(
+                item_type=item_type,
+                route_name=route_name,
+                page=page,
+                external_url=external_url,
+                name=name,
+                parent=parent,
+            )
+            if self._has_catalog_key
             else None
         )
-        placement = self._get_placement(catalog_key)
+
+        existing = None
+        if self._has_catalog_key and catalog_key:
+            existing = self.MenuItem.objects.filter(catalog_key=catalog_key).first()
+        placement = self._get_placement(catalog_key) if self._has_catalog_key else None
 
         if placement is not None:
             parent_obj = None
@@ -193,8 +206,9 @@ class MenuMigrationHelper:
             is_active=effective_active,
             is_admin_only=is_admin_only,
             module_source=self.module_source,
-            catalog_key=catalog_key,
         )
+        if self._has_catalog_key:
+            fields['catalog_key'] = catalog_key
 
         if existing is not None:
             for key, value in fields.items():
@@ -202,15 +216,7 @@ class MenuMigrationHelper:
             existing.save()
             item = existing
         else:
-            create_kwargs = dict(fields)
-            try:
-                item = self.MenuItem.objects.create(**create_kwargs)
-            except TypeError:
-                create_kwargs.pop('catalog_key', None)
-                item = self.MenuItem.objects.create(**create_kwargs)
-                if hasattr(item, 'catalog_key'):
-                    item.catalog_key = catalog_key
-                    item.save(update_fields=['catalog_key'])
+            item = self.MenuItem.objects.create(**fields)
 
         self._ensure_item_placement(
             item,

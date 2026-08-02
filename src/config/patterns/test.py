@@ -24,12 +24,6 @@ load_settings_modules(
     deferred={'celery_beat', 'jupyter', 'apps'},
 )
 
-from src.config.settings.user_swappable import resolve_auth_user_model
-
-_resolved_auth_user_model = resolve_auth_user_model(DATABASES)
-if _resolved_auth_user_model:
-    AUTH_USER_MODEL = _resolved_auth_user_model
-
 target_module = os.environ.get('TEST_TARGET_MODULE')
 use_full_apps = os.environ.get('TEST_FULL_APPS', '').lower() in ('1', 'true', 'yes')
 

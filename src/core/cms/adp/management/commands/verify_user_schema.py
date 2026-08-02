@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Pre-flight проверка схемы auth_user перед/после миграции ErgoUser.
+Pre-flight проверка схемы auth_user / ErgoUser.
 
 Запуск: ergoms api verify_user_schema
 """
@@ -11,18 +11,15 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
-from src.config.settings.user_swappable import (
-    ERGO_USER_APPLIED_MIGRATIONS,
-    ERGO_USER_MIGRATION_APP,
-    ERGO_USER_SQUASH_MIGRATION_NAME,
-)
-
 
 REQUIRED_COLUMNS = ('middle_name', 'public_id')
 MIGRATION_0038 = ('cms_adp', '0038_user_extension_fields')
 MIGRATION_0039 = ('cms_adp', '0039_ergo_user_swappable')
 MIGRATION_0040 = ('cms_adp', '0040_migrate_user_content_type')
-MIGRATION_SQUASH = (ERGO_USER_MIGRATION_APP, ERGO_USER_SQUASH_MIGRATION_NAME)
+MIGRATION_SQUASH = (
+    'cms_adp',
+    '0001_initial_squashed_0042_drop_graduate_employment_tables',
+)
 
 ORPHAN_FK_CHECKS = (
     ('cms_adp_userprofile', 'user_id'),
@@ -77,7 +74,7 @@ def _column_exists(cursor, vendor: str, table_name: str, column_name: str) -> bo
 class Command(BaseCommand):
     help = (
         'Проверяет схему auth_user (middle_name, public_id), counts пользователей '
-        'и orphan FK перед/после миграции ErgoUser.'
+        'и orphan FK для ErgoUser.'
     )
 
     def add_arguments(self, parser):
@@ -96,21 +93,18 @@ class Command(BaseCommand):
         self.stdout.write(f'Модель пользователя: {user_model._meta.label}')
         self.stdout.write(f'Таблица: {table_name} (БД: {vendor})')
 
+        if user_model._meta.label_lower != 'cms_adp.ergouser':
+            errors.append(
+                f'Ожидается cms_adp.ErgoUser, сейчас {user_model._meta.label}. '
+                'Проверьте AUTH_USER_MODEL = cms_adp.ErgoUser.'
+            )
+
         if not self._ergo_user_schema_ready():
             errors.append(
                 'Переход на ErgoUser не зафиксирован в django_migrations '
                 f'(ожидается {MIGRATION_0038[1]}+{MIGRATION_0039[1]}+{MIGRATION_0040[1]} '
                 f'либо squash {MIGRATION_SQUASH[1]}). '
                 'Выполните: ergoms db-migrate'
-            )
-
-        if (
-            self._ergo_user_swapped_in_history()
-            and user_model._meta.label_lower != 'cms_adp.ergouser'
-        ):
-            errors.append(
-                'ErgoUser уже в истории миграций, но активна auth.User. '
-                'Перезапустите API и worker после ergoms db-migrate.'
             )
 
         with connection.cursor() as cursor:
@@ -121,7 +115,7 @@ class Command(BaseCommand):
                     if not _column_exists(cursor, vendor, table_name, column):
                         errors.append(
                             f'Колонка {table_name}.{column} отсутствует. '
-                            'Примените cms_adp.0038_user_extension_fields.'
+                            'Выполните: ergoms db-migrate'
                         )
 
                 stats = self._fetch_user_stats(cursor, table_name)
@@ -174,21 +168,6 @@ class Command(BaseCommand):
                 migration,
             )
             return cursor.fetchone()[0]
-
-    def _ergo_user_swapped_in_history(self) -> bool:
-        """0039 или squash (после sync запись 0039 удаляется)."""
-        with connection.cursor() as cursor:
-            placeholders = ', '.join(['%s'] * len(ERGO_USER_APPLIED_MIGRATIONS))
-            cursor.execute(
-                f"""
-                SELECT EXISTS (
-                    SELECT 1 FROM django_migrations
-                    WHERE app = %s AND name IN ({placeholders})
-                )
-                """,
-                [ERGO_USER_MIGRATION_APP, *ERGO_USER_APPLIED_MIGRATIONS],
-            )
-            return bool(cursor.fetchone()[0])
 
     def _ergo_user_schema_ready(self) -> bool:
         if self._migration_applied(MIGRATION_SQUASH):

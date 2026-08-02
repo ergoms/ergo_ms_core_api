@@ -29,9 +29,3 @@ load_settings_modules(
     deferred=deferred_settings,
     skip={'logger'},
 )
-
-from src.config.settings.user_swappable import resolve_auth_user_model
-
-_resolved_auth_user_model = resolve_auth_user_model(DATABASES)
-if _resolved_auth_user_model:
-    AUTH_USER_MODEL = _resolved_auth_user_model
