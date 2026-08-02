@@ -11,11 +11,18 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
+from src.config.settings.user_swappable import (
+    ERGO_USER_APPLIED_MIGRATIONS,
+    ERGO_USER_MIGRATION_APP,
+    ERGO_USER_SQUASH_MIGRATION_NAME,
+)
+
 
 REQUIRED_COLUMNS = ('middle_name', 'public_id')
 MIGRATION_0038 = ('cms_adp', '0038_user_extension_fields')
 MIGRATION_0039 = ('cms_adp', '0039_ergo_user_swappable')
 MIGRATION_0040 = ('cms_adp', '0040_migrate_user_content_type')
+MIGRATION_SQUASH = (ERGO_USER_MIGRATION_APP, ERGO_USER_SQUASH_MIGRATION_NAME)
 
 ORPHAN_FK_CHECKS = (
     ('cms_adp_userprofile', 'user_id'),
@@ -89,25 +96,20 @@ class Command(BaseCommand):
         self.stdout.write(f'Модель пользователя: {user_model._meta.label}')
         self.stdout.write(f'Таблица: {table_name} (БД: {vendor})')
 
-        if not self._migration_applied(MIGRATION_0038):
+        if not self._ergo_user_schema_ready():
             errors.append(
-                f'Миграция {MIGRATION_0038[0]}.{MIGRATION_0038[1]} не применена. '
+                'Переход на ErgoUser не зафиксирован в django_migrations '
+                f'(ожидается {MIGRATION_0038[1]}+{MIGRATION_0039[1]}+{MIGRATION_0040[1]} '
+                f'либо squash {MIGRATION_SQUASH[1]}). '
                 'Выполните: ergoms db-migrate'
             )
 
-        for migration in (MIGRATION_0039, MIGRATION_0040):
-            if not self._migration_applied(migration):
-                errors.append(
-                    f'Миграция {migration[0]}.{migration[1]} не применена. '
-                    'Выполните: ergoms db-migrate'
-                )
-
         if (
-            self._migration_applied(MIGRATION_0039)
+            self._ergo_user_swapped_in_history()
             and user_model._meta.label_lower != 'cms_adp.ergouser'
         ):
             errors.append(
-                'Миграция 0039 применена, но активна auth.User. '
+                'ErgoUser уже в истории миграций, но активна auth.User. '
                 'Перезапустите API и worker после ergoms db-migrate.'
             )
 
@@ -172,6 +174,29 @@ class Command(BaseCommand):
                 migration,
             )
             return cursor.fetchone()[0]
+
+    def _ergo_user_swapped_in_history(self) -> bool:
+        """0039 или squash (после sync запись 0039 удаляется)."""
+        with connection.cursor() as cursor:
+            placeholders = ', '.join(['%s'] * len(ERGO_USER_APPLIED_MIGRATIONS))
+            cursor.execute(
+                f"""
+                SELECT EXISTS (
+                    SELECT 1 FROM django_migrations
+                    WHERE app = %s AND name IN ({placeholders})
+                )
+                """,
+                [ERGO_USER_MIGRATION_APP, *ERGO_USER_APPLIED_MIGRATIONS],
+            )
+            return bool(cursor.fetchone()[0])
+
+    def _ergo_user_schema_ready(self) -> bool:
+        if self._migration_applied(MIGRATION_SQUASH):
+            return True
+        return all(
+            self._migration_applied(m)
+            for m in (MIGRATION_0038, MIGRATION_0039, MIGRATION_0040)
+        )
 
     def _fetch_user_stats(self, cursor, table_name: str) -> dict:
         cursor.execute(f'SELECT COUNT(*) FROM "{table_name}"')

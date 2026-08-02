@@ -1,9 +1,13 @@
 """
-AUTH_USER_MODEL включается только после cms_adp.0039_ergo_user_swappable.
+AUTH_USER_MODEL включается после перехода на ErgoUser.
 
-Проверка django_migrations выполняется в конце local.py / test.py (после DATABASES),
+Маркеры в django_migrations (достаточно любого):
+- cms_adp.0039_ergo_user_swappable — до squash;
+- cms_adp.0001_initial_squashed_0042_... — после squash sync (0039 очищается).
+
+Проверка выполняется в конце local.py / test.py (после DATABASES),
 без django.db.connection — на этапе загрузки settings соединение ещё не готово.
-До 0039 остаётся auth.User; ergoms db-migrate применяет 0039 и 0040.
+До маркера остаётся auth.User; ergoms db-migrate применяет 0039/0040 или squash.
 После первого migrate на сервере нужен перезапуск API/worker.
 """
 
@@ -12,13 +16,25 @@ from __future__ import annotations
 from typing import Any
 
 ERGO_USER_MIGRATION_APP = 'cms_adp'
+# Обратная совместимость: старое имя до появления списка маркеров.
 ERGO_USER_MIGRATION_NAME = '0039_ergo_user_swappable'
+ERGO_USER_SQUASH_MIGRATION_NAME = (
+    '0001_initial_squashed_0042_drop_graduate_employment_tables'
+)
+# Любая из записей означает: state уже содержит ErgoUser.
+ERGO_USER_APPLIED_MIGRATIONS = (
+    ERGO_USER_MIGRATION_NAME,
+    ERGO_USER_SQUASH_MIGRATION_NAME,
+)
 ERGO_USER_MODEL = 'cms_adp.ErgoUser'
 
-_MIGRATION_EXISTS_SQL = """
+
+def _migration_in_sql(placeholder: str) -> str:
+    names = ', '.join(placeholder for _ in ERGO_USER_APPLIED_MIGRATIONS)
+    return f"""
 SELECT EXISTS (
     SELECT 1 FROM django_migrations
-    WHERE app = %s AND name = %s
+    WHERE app = {placeholder} AND name IN ({names})
 )
 """
 
@@ -37,8 +53,8 @@ def _migration_applied_postgresql(config: dict[str, Any]) -> bool:
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                _MIGRATION_EXISTS_SQL,
-                [ERGO_USER_MIGRATION_APP, ERGO_USER_MIGRATION_NAME],
+                _migration_in_sql('%s'),
+                [ERGO_USER_MIGRATION_APP, *ERGO_USER_APPLIED_MIGRATIONS],
             )
             return bool(cursor.fetchone()[0])
     finally:
@@ -51,8 +67,8 @@ def _migration_applied_sqlite(config: dict[str, Any]) -> bool:
     conn = sqlite3.connect(config['NAME'], timeout=3)
     try:
         cursor = conn.execute(
-            _MIGRATION_EXISTS_SQL.replace('%s', '?'),
-            (ERGO_USER_MIGRATION_APP, ERGO_USER_MIGRATION_NAME),
+            _migration_in_sql('?'),
+            (ERGO_USER_MIGRATION_APP, *ERGO_USER_APPLIED_MIGRATIONS),
         )
         return bool(cursor.fetchone()[0])
     finally:
