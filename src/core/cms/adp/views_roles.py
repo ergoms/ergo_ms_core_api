@@ -436,7 +436,13 @@ class UserPermissionsView(BaseAPIViewAuthMixin, BaseAPIView):
         """Получить все права текущего пользователя"""
         from src.core.cms.adp.services.permissions_snapshot_cache import get_user_permissions_payload
 
-        return Response(get_user_permissions_payload(request.user))
+        organization_id = getattr(request, 'organization_id', None)
+        return Response(
+            get_user_permissions_payload(
+                request.user,
+                organization_id=organization_id,
+            )
+        )
 
 
 class CheckURLAccessView(BaseAPIViewAuthMixin, BaseAPIView):

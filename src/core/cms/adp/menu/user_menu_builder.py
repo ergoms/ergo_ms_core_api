@@ -67,7 +67,7 @@ def _build_node(item: MenuItem, children_by_parent: dict, checker: MenuAccessChe
     return node
 
 
-def build_user_menu_items(user) -> list[dict]:
+def build_user_menu_items(user, organization_id=None) -> list[dict]:
     """Возвращает отфильтрованное дерево меню для пользователя."""
     items = list(
         MenuItem.objects
@@ -80,7 +80,7 @@ def build_user_menu_items(user) -> list[dict]:
     for item in items:
         children_by_parent[item.parent_id].append(item)
 
-    checker = MenuAccessChecker(user)
+    checker = MenuAccessChecker(user, organization_id=organization_id)
     root_items = [item for item in children_by_parent.get(None, []) if checker.can_see(item)]
 
     menu_tree = []

@@ -82,6 +82,14 @@ class DeviceBoundTokenRefreshView(TokenRefreshView):
             user = get_user_model().objects.filter(pk=user_id).first()
             if user is None:
                 return
-            response.data['session_bootstrap'] = build_session_bootstrap_payload(user)
+            organization_id = refresh.payload.get('organization_id')
+            try:
+                organization_id = int(organization_id) if organization_id is not None else None
+            except (TypeError, ValueError):
+                organization_id = None
+            response.data['session_bootstrap'] = build_session_bootstrap_payload(
+                user,
+                organization_id=organization_id,
+            )
         except Exception:
             logger.exception('Не удалось вложить session_bootstrap в token-refresh')

@@ -10,7 +10,11 @@ User = get_user_model()
 from src.core.cms.adp.middleware.permission_request_cache import get_request_permission_cache
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
 from src.core.integrations import bridge
-from src.core.integrations.module_contracts import ADP_PERMISSION_CHECK
+from src.core.integrations.module_contracts import (
+    ADP_FILTER_GRANTED_ROLE_GROUP_IDS,
+    ADP_PERMISSION_CHECK,
+    ADP_SESSION_SCOPED_MODULE_PERMISSIONS,
+)
 
 
 class RoleAssignmentError(Exception):
@@ -303,6 +307,50 @@ class PermissionService:
         return policies
 
     @staticmethod
+    def _excluded_granted_role_group_ids(role_group_ids: list[int]) -> set[int]:
+        """Id групп, исключённых модулями из глобальных ModulePermission grants."""
+        if not role_group_ids:
+            return set()
+        excluded: set[int] = set()
+        for result in bridge.emit(
+            ADP_FILTER_GRANTED_ROLE_GROUP_IDS,
+            role_group_ids=list(role_group_ids),
+        ):
+            if not result:
+                continue
+            if isinstance(result, (set, list, tuple, frozenset)):
+                for group_id in result:
+                    try:
+                        excluded.add(int(group_id))
+                    except (TypeError, ValueError):
+                        continue
+        return excluded
+
+    @staticmethod
+    def _filter_role_group_ids_for_grants(role_group_ids: list[int]) -> list[int]:
+        excluded = PermissionService._excluded_granted_role_group_ids(role_group_ids)
+        if not excluded:
+            return role_group_ids
+        return [group_id for group_id in role_group_ids if group_id not in excluded]
+
+    @staticmethod
+    def _session_scoped_module_permissions(user: User, organization_id: int | None):
+        """Доп. ModulePermission из модулей для текущего session-scope."""
+        if not organization_id or not user:
+            return []
+        extra = []
+        for result in bridge.emit(
+            ADP_SESSION_SCOPED_MODULE_PERMISSIONS,
+            user=user,
+            organization_id=organization_id,
+        ):
+            if not result:
+                continue
+            if isinstance(result, (list, tuple)):
+                extra.extend(result)
+        return extra
+
+    @staticmethod
     def _get_granted_module_permission_keys(user: User) -> set[tuple[str, str]]:
         cache = get_request_permission_cache()
         cache_key = f'module_perm_keys:{user.pk}'
@@ -314,11 +362,11 @@ class PermissionService:
             cache[cache_key] = set()
             return cache[cache_key]
 
-        group_ids = [
+        group_ids = PermissionService._filter_role_group_ids_for_grants([
             group.id
             for group in user_role.role_groups.all()
             if group.is_active
-        ]
+        ])
         if not group_ids:
             cache[cache_key] = set()
             return cache[cache_key]
@@ -402,12 +450,12 @@ class PermissionService:
         return bool(re.match(regex_pattern, url_path))
     
     @staticmethod
-    def get_user_permissions(user: User) -> Dict:
+    def get_user_permissions(user: User, organization_id: int | None = None) -> Dict:
         """
         Получить все права пользователя.
-        
-        Returns:
-            Словарь с информацией о правах пользователя
+
+        organization_id — id текущего session-scope: фильтр grants через bridge
+        и доп. effective ModulePermission от модулей.
         """
         user_role = PermissionService.get_user_role(user)
         
@@ -441,8 +489,8 @@ class PermissionService:
             else:
                 denied_urls.append(policy.resource_path)
         
-        # Политики ролевых групп
-        role_groups = user_role.role_groups.filter(is_active=True)
+        # Политики ролевых групп (URL — по всем группам пользователя)
+        role_groups = list(user_role.role_groups.filter(is_active=True))
         for group in role_groups:
             group_policies = Policy.objects.filter(
                 role_group=group,
@@ -455,21 +503,31 @@ class PermissionService:
                     allowed_urls.append(policy.resource_path)
                 else:
                     denied_urls.append(policy.resource_path)
-        
-        # Собираем права модулей
+
+        grant_group_ids = set(
+            PermissionService._filter_role_group_ids_for_grants(
+                [group.id for group in role_groups]
+            )
+        )
         module_permissions = []
         for group in role_groups:
+            if group.id not in grant_group_ids:
+                continue
             perms = ModulePermission.objects.filter(
                 role_group=group,
                 is_granted=True
             )
             module_permissions.extend(perms)
+
+        module_permissions.extend(
+            PermissionService._session_scoped_module_permissions(user, organization_id)
+        )
         
         return {
             'user_id': user.id,
             'username': user.username,
             'role': user_role.role,
-            'role_groups': list(role_groups),
+            'role_groups': role_groups,
             'allowed_urls': allowed_urls,
             'denied_urls': denied_urls,
             'module_permissions': module_permissions,

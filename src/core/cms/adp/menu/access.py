@@ -9,10 +9,14 @@ from src.core.integrations.module_contracts import (
 )
 
 
-def _collect_route_overrides(user) -> dict[str, bool]:
+def _collect_route_overrides(user, organization_id=None) -> dict[str, bool]:
     """Один проход bridge.prepare_visibility вместо emit_first на каждый пункт."""
     overrides: dict[str, bool] = {}
-    for result in bridge.emit(MENU_PREPARE_VISIBILITY, user=user):
+    for result in bridge.emit(
+        MENU_PREPARE_VISIBILITY,
+        user=user,
+        organization_id=organization_id,
+    ):
         if not isinstance(result, dict):
             continue
         for route_name, visible in result.items():
@@ -24,10 +28,11 @@ def _collect_route_overrides(user) -> dict[str, bool]:
 class MenuAccessChecker:
     """Контекст проверки прав на пункты меню за один запрос."""
 
-    def __init__(self, user):
+    def __init__(self, user, organization_id=None):
         self.user = user
+        self.organization_id = organization_id
         self._is_admin = PermissionService.is_admin(user)
-        self._route_overrides = _collect_route_overrides(user)
+        self._route_overrides = _collect_route_overrides(user, organization_id)
 
     def _load_user_role(self):
         return PermissionService.get_user_role(self.user)
@@ -47,7 +52,12 @@ class MenuAccessChecker:
         if route_name and route_name in self._route_overrides:
             return self._route_overrides[route_name]
 
-        menu_override = bridge.emit_first(MENU_CAN_SEE_ITEM, item=item, user=self.user)
+        menu_override = bridge.emit_first(
+            MENU_CAN_SEE_ITEM,
+            item=item,
+            user=self.user,
+            organization_id=self.organization_id,
+        )
         if menu_override is not None:
             return bool(menu_override)
 

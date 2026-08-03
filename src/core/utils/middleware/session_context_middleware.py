@@ -14,7 +14,6 @@ import logging
 from typing import Any
 
 from src.core.integrations.session_context import (
-    collect_session_jwt_claims,
     get_session_claim_descriptors,
     get_session_entity_resolvers,
 )
@@ -34,7 +33,8 @@ class SessionContextMiddleware:
     Устанавливает request.<request_attr> из токена; request.<entity_key> —
     ленивая загрузка через resolver дескриптора.
 
-    Размещать ПОСЛЕ AuthenticationMiddleware и JWT authentication.
+    DRF JWT-аутентификация выполняется уже во view, поэтому middleware
+    читает Bearer access-токен из Authorization сам (не ждёт request.auth).
     """
 
     def __init__(self, get_response):
@@ -65,14 +65,37 @@ class SessionContextMiddleware:
         return self.get_response(request)
 
     @staticmethod
+    def _access_token_payload(request) -> Any | None:
+        """Payload access JWT: request.auth (если уже есть) или Authorization Bearer."""
+        auth = getattr(request, 'auth', None)
+        if auth is not None and hasattr(auth, 'get'):
+            return auth
+
+        header = request.META.get('HTTP_AUTHORIZATION') or ''
+        if not isinstance(header, str) or not header.startswith('Bearer '):
+            return None
+        raw = header[7:].strip()
+        if not raw:
+            return None
+        try:
+            from rest_framework_simplejwt.tokens import AccessToken
+
+            return AccessToken(raw)
+        except Exception:
+            return None
+
+    @staticmethod
     def _extract_session_claims_from_token(request) -> None:
-        if not hasattr(request, 'auth') or not request.auth:
+        payload = SessionContextMiddleware._access_token_payload(request)
+        if payload is None:
             return
         try:
-            for claim in collect_session_jwt_claims():
-                value = request.auth.get(claim)
+            for descriptor in get_session_claim_descriptors():
+                claim = descriptor['claim']
+                request_attr = descriptor['request_attr']
+                value = payload.get(claim)
                 if value is not None:
-                    setattr(request, claim, int(value))
+                    setattr(request, request_attr, int(value))
         except (ValueError, TypeError, AttributeError) as exc:
             logger.warning('Ошибка извлечения session context из токена: %s', exc)
 

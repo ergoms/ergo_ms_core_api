@@ -34,6 +34,12 @@ NOTIFICATIONS_FILTER_EVENTS_PREFIX = 'notifications.filter_events_for_user.'
 # --- Events (bridge.subscribe_to / emit / emit_first) ---
 
 ADP_PERMISSION_CHECK = 'adp.permission_check'
+# Подписчики возвращают iterable id RoleGroup, которые нельзя учитывать
+# в глобальной агрегации ModulePermission (session-scoped системные группы и т.п.).
+ADP_FILTER_GRANTED_ROLE_GROUP_IDS = 'adp.filter_granted_role_group_ids'
+# Подписчики возвращают list ModulePermission (или совместимых объектов)
+# для обогащения snapshot прав в контексте текущего session-scope.
+ADP_SESSION_SCOPED_MODULE_PERMISSIONS = 'adp.session_scoped_module_permissions'
 AUDIT_CAN_READ = 'audit.can_read'
 AUDIT_RECORD = 'audit.record'
 

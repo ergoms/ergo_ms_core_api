@@ -49,13 +49,16 @@ def _role_groups_key(user_role) -> str:
     return ','.join(str(group_id) for group_id in group_ids) or 'none'
 
 
-def _menu_cache_key(user) -> str:
+def _menu_cache_key(user, organization_id=None) -> str:
     version = get_menu_cache_version()
     is_admin = 1 if PermissionService.is_admin(user) else 0
     user_role = PermissionService.get_user_role(user)
     role_id = user_role.role_id if user_role else 'none'
     groups_key = _role_groups_key(user_role)
-    return f'menu:v{version}:u{user.pk}:r{role_id}:g{groups_key}:a{is_admin}'
+    org_part = f'o{organization_id}' if organization_id is not None else 'o0'
+    return (
+        f'menu:v{version}:u{user.pk}:r{role_id}:g{groups_key}:a{is_admin}:{org_part}'
+    )
 
 
 def get_active_menu_separators() -> list[dict]:
@@ -63,24 +66,24 @@ def get_active_menu_separators() -> list[dict]:
     return MenuSeparatorSerializer(separators, many=True).data
 
 
-def _build_user_menu_payload(user) -> dict:
+def _build_user_menu_payload(user, organization_id=None) -> dict:
     return {
-        'menu_items': build_user_menu_items(user),
+        'menu_items': build_user_menu_items(user, organization_id=organization_id),
         'separators': get_active_menu_separators(),
     }
 
 
-def get_user_menu_payload(user) -> dict:
+def get_user_menu_payload(user, organization_id=None) -> dict:
     """Меню пользователя: из кэша или сборка с записью в кэш."""
     ttl = get_menu_cache_ttl()
     if ttl <= 0:
-        return _build_user_menu_payload(user)
+        return _build_user_menu_payload(user, organization_id=organization_id)
 
-    cache_key = _menu_cache_key(user)
+    cache_key = _menu_cache_key(user, organization_id=organization_id)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
-    payload = _build_user_menu_payload(user)
+    payload = _build_user_menu_payload(user, organization_id=organization_id)
     cache.set(cache_key, payload, timeout=ttl)
     return payload

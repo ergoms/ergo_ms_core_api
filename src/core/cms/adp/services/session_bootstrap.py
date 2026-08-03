@@ -51,12 +51,12 @@ def _serialize_profile(user) -> dict:
     return data
 
 
-def build_permissions_snapshot_payload(user) -> dict:
+def build_permissions_snapshot_payload(user, organization_id=None) -> dict:
     """Тот же контракт, что GET /api/cms/adp/my-permissions/."""
-    return get_user_permissions_payload(user)
+    return get_user_permissions_payload(user, organization_id=organization_id)
 
 
-def build_session_bootstrap_payload(user) -> dict:
+def build_session_bootstrap_payload(user, organization_id=None) -> dict:
     """Агрегированные данные для холодного старта клиента."""
     user = (
         User.objects
@@ -67,11 +67,19 @@ def build_session_bootstrap_payload(user) -> dict:
 
     return {
         'user': CMSUserMenuSerializer(user).data,
-        'menu': get_user_menu_payload(user) if user is not None else {'menu_items': [], 'separators': []},
+        'menu': (
+            get_user_menu_payload(user, organization_id=organization_id)
+            if user is not None
+            else {'menu_items': [], 'separators': []}
+        ),
         'profile': _serialize_profile(user) if user is not None else {},
         'avatar_url': _get_user_avatar_url(user) if user is not None else None,
         'access_to_panel': PermissionService.can_access_admin_panel(user),
-        'permissions': build_permissions_snapshot_payload(user) if user is not None else None,
+        'permissions': (
+            build_permissions_snapshot_payload(user, organization_id=organization_id)
+            if user is not None
+            else None
+        ),
         'realtime': build_realtime_config_payload(),
         'system_version': get_system_version(),
     }

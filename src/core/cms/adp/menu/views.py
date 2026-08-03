@@ -68,7 +68,10 @@ class UserMenuView(BaseMenuAPIView):
         tags=['Menu']
     )
     def get(self, request):
-        return Response(get_user_menu_payload(request.user))
+        organization_id = getattr(request, 'organization_id', None)
+        return Response(
+            get_user_menu_payload(request.user, organization_id=organization_id)
+        )
 
 
 class MenuItemListView(BaseMenuAPIView):

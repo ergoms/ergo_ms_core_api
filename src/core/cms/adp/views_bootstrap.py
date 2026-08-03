@@ -32,7 +32,11 @@ class SessionBootstrapView(BaseAPIViewAuthMixin, BaseAPIView):
     )
     def get(self, request):
         touch_device_activity(request)
+        organization_id = getattr(request, 'organization_id', None)
         return Response(
-            build_session_bootstrap_payload(request.user),
+            build_session_bootstrap_payload(
+                request.user,
+                organization_id=organization_id,
+            ),
             status=status.HTTP_200_OK,
         )

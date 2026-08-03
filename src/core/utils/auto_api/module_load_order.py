@@ -23,7 +23,7 @@ logger = logging.getLogger('utils')
 
 
 def module_name_from_app(app_path: str) -> str | None:
-    """``modules.project_ed.api`` → ``project_ed``; иначе None."""
+    """``modules.<name>.api`` → ``<name>``; иначе None."""
     if not app_path.startswith('modules.'):
         return None
     parts = app_path.split('.')

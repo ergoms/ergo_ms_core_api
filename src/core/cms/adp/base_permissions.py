@@ -70,13 +70,17 @@ class BaseModulePermission(BasePermission):
             if scope_id is not None:
                 return scope_id
 
-        return None
+        # Session claim (SessionContextMiddleware: request.{scope_type}_id)
+        return _as_int(getattr(request, f'{scope_type}_id', None))
 
     def _scope_kwargs(self, request, view) -> dict:
         """Контекст scope для передачи в проверку прав ({scope_type}_id=...)."""
         if not self.scope_type:
             return {}
-        return {f'{self.scope_type}_id': self._get_scope_id(request, view, self.scope_type)}
+        scope_id = self._get_scope_id(request, view, self.scope_type)
+        if scope_id is None:
+            return {}
+        return {f'{self.scope_type}_id': scope_id}
 
     def has_permission(self, request, view) -> bool:
         """

@@ -422,9 +422,22 @@ class UserAuthorizationView(BaseAPIView):
 
                 access_lifetime, refresh_lifetime = get_token_lifetime(remember_me)
 
-                restore_claims = bridge.call(SESSION_RESTORE_CLAIMS, user=user) or {}
-                if not isinstance(restore_claims, dict):
+                # Смена аккаунта в том же браузере: не восстанавливать session-scope
+                # claims предыдущего пользователя (клиент шлёт previous_user_id после logout).
+                previous_user_id = request.data.get('previous_user_id')
+                skip_restore = False
+                if previous_user_id is not None and previous_user_id != '':
+                    try:
+                        skip_restore = int(previous_user_id) != int(user.id)
+                    except (TypeError, ValueError):
+                        skip_restore = str(previous_user_id) != str(user.id)
+
+                if skip_restore:
                     restore_claims = {}
+                else:
+                    restore_claims = bridge.call(SESSION_RESTORE_CLAIMS, user=user) or {}
+                    if not isinstance(restore_claims, dict):
+                        restore_claims = {}
 
                 refresh = ScopedSessionRefreshToken.for_user_with_claims(
                     user,
