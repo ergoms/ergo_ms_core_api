@@ -10,6 +10,7 @@ Management command: восстановление меню из populate-функ
 """
 
 import importlib
+import inspect
 import re
 
 from django.core.management.base import BaseCommand, CommandError
@@ -130,13 +131,22 @@ def _topological_sort(items, dep_fn):
     return result
 
 
+def _callable_source(func) -> str:
+    try:
+        return inspect.getsource(func)
+    except (OSError, TypeError):
+        return ''
+
+
 def _discover_core_menu_migrations():
     """
-    Сканирует core/cms/adp/migrations/ на наличие data-миграций, затрагивающих меню.
-    Фильтрует «аннулированные» миграции:
-    - create+delete пары (создание module_source X, а позже полное удаление X)
-    - update-миграции для module_source, который не создаётся ни одной оставшейся миграцией
-    Возвращает отсортированный по номеру список (stem, func_name, func).
+    Сканирует core/cms/adp/migrations/ на data-миграции меню.
+
+    Берёт все forward RunPython, где в теле есть маркеры меню (не только первую
+    операцию файла — squash 0001 содержит populate_core_menu не первым).
+
+    Фильтр create+delete смотрит только forward-код (не reverse_populate), иначе
+    squash ошибочно пропускается и restore_menu оставляет пустой каталог.
     """
     migrations_dir = DJANGO_CORE_DIR / 'cms' / 'adp' / 'migrations'
     if not migrations_dir.exists():
@@ -172,48 +182,20 @@ def _discover_core_menu_migrations():
             continue
 
         for op in migration_class.operations:
-            if isinstance(op, migrations.RunPython):
-                raw.append((stem, op.code.__name__, op.code, content))
-                break
+            if not isinstance(op, migrations.RunPython):
+                continue
+            code = op.code
+            if code is None or code is migrations.RunPython.noop:
+                continue
+            forward_src = _callable_source(code)
+            if not any(marker in forward_src for marker in MENU_MARKERS):
+                continue
+            raw.append((stem, code.__name__, code, forward_src))
 
-    if not raw:
-        return []
-
-    stem_creates = {}
-    deleted_sources = {}
-    stem_update_sources = {}
-
-    for stem, _, _, content in raw:
-        sources = set(_RE_HELPER_SOURCE.findall(content))
-        if sources:
-            stem_creates[stem] = sources
-        for source in _RE_DELETE_SOURCE.findall(content):
-            deleted_sources[source] = stem
-        update_sources = set(_RE_UPDATE_SOURCE.findall(content))
-        if update_sources:
-            stem_update_sources[stem] = update_sources
-
-    skip_stems = set()
-    for stem, sources in stem_creates.items():
-        if all(s in deleted_sources for s in sources):
-            skip_stems.add(stem)
-            for s in sources:
-                skip_stems.add(deleted_sources[s])
-
-    effective_sources = set()
-    for stem, sources in stem_creates.items():
-        if stem not in skip_stems:
-            effective_sources.update(sources)
-
-    for stem, sources in stem_update_sources.items():
-        if not any(s in effective_sources for s in sources):
-            skip_stems.add(stem)
-
-    return [
-        (stem, func_name, func)
-        for stem, func_name, func, _ in raw
-        if stem not in skip_stems
-    ]
+    # Не фильтруем create+delete на уровне stem: squash 0001 и create, и удаляет
+    # module_source в разных forward-операциях одного файла — старый фильтр выкидывал
+    # весь populate_core_menu и оставлял пустое меню после restore_menu.
+    return [(stem, func_name, func) for stem, func_name, func, _ in raw]
 
 
 def _is_module_menu_migration(content: str) -> bool:
