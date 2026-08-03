@@ -18,6 +18,8 @@ from rest_framework.throttling import AnonRateThrottle
 
 from src.core.cms.adp.auth_cookies import (
     clear_auth_cookies,
+    clear_prev_user_cookie,
+    get_prev_user_id_from_request,
     refresh_cookie_max_age,
     set_refresh_cookie,
 )
@@ -422,15 +424,12 @@ class UserAuthorizationView(BaseAPIView):
 
                 access_lifetime, refresh_lifetime = get_token_lifetime(remember_me)
 
-                # Смена аккаунта в том же браузере: не восстанавливать session-scope
-                # claims предыдущего пользователя (клиент шлёт previous_user_id после logout).
-                previous_user_id = request.data.get('previous_user_id')
-                skip_restore = False
-                if previous_user_id is not None and previous_user_id != '':
-                    try:
-                        skip_restore = int(previous_user_id) != int(user.id)
-                    except (TypeError, ValueError):
-                        skip_restore = str(previous_user_id) != str(user.id)
+                # Смена аккаунта: cookie ergo_prev_user со прошлого logout.
+                previous_user_id = get_prev_user_id_from_request(request)
+                skip_restore = (
+                    previous_user_id is not None
+                    and previous_user_id != user.id
+                )
 
                 if skip_restore:
                     restore_claims = {}
@@ -460,6 +459,7 @@ class UserAuthorizationView(BaseAPIView):
                     str(refresh),
                     refresh_cookie_max_age(refresh_lifetime),
                 )
+                clear_prev_user_cookie(response)
                 audit_log(
                     'auth.login',
                     request=request,
