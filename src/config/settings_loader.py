@@ -26,6 +26,7 @@ SETTINGS_MODULES: tuple[str, ...] = (
     'channel_layers',
     'client_monitoring',
     'cors',
+    'csrf',
     'database',
     'drf',
     'geoip',
