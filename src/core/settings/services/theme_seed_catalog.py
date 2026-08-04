@@ -625,6 +625,17 @@ ACCESSIBILITY_THEME_RENAME_MAP = {
 }
 
 _DARK_SUFFIX = ' · тёмная'
+_LIGHT_SUFFIX = ' · светлая'
+
+
+def derive_site_theme_pair_key(name):
+    """Ключ группировки light/dark вариантов темы сайта — базовое имя без суффикса варианта."""
+    raw = (name or '').strip()
+    if raw.endswith(_DARK_SUFFIX):
+        return raw[: -len(_DARK_SUFFIX)].strip()
+    if raw.endswith(_LIGHT_SUFFIX):
+        return raw[: -len(_LIGHT_SUFFIX)].strip()
+    return raw
 
 
 def is_accessibility_theme(name):

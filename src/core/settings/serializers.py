@@ -17,7 +17,7 @@ class ThemeSerializer(serializers.ModelSerializer):
         model = Theme
         fields = [
             'id', 'name', 'description', 'author', 'base_theme',
-            'module_key', 'module_pair', 'module_tokens',
+            'module_key', 'module_pair', 'theme_pair', 'module_tokens',
             'is_active', 'is_default', 'is_available', 'is_system',
             'colors', 'bootstrap_colors',
             'created_at', 'updated_at'
@@ -72,11 +72,13 @@ class ThemeSerializer(serializers.ModelSerializer):
 
 class UserThemePreferenceSerializer(serializers.Serializer):
     selected_theme_id = serializers.IntegerField(allow_null=True, required=False)
+    selected_theme_pair = serializers.CharField(allow_null=True, required=False, read_only=True)
     favorite_ids = serializers.ListField(
         child=serializers.IntegerField(),
         required=False,
     )
     default_theme_id = serializers.IntegerField(allow_null=True, required=False, read_only=True)
+    default_theme_pair = serializers.CharField(allow_null=True, required=False, read_only=True)
 
     class Meta:
         ref_name = 'UserThemePreferenceSerializer'

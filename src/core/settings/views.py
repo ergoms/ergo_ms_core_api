@@ -183,21 +183,23 @@ class ThemeViewSet(SwaggerSafeMixin, AuditedModelMixin, _ThemeImportMixin, views
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        from src.core.settings.services.site_theme_pairs import build_site_theme_pair
         from src.core.settings.services.user_theme_preference import get_effective_site_theme
 
         user = request.user if getattr(request.user, 'is_authenticated', False) else None
         effective = get_effective_site_theme(user)
         if effective:
-            return Response(ThemeSerializer(effective).data)
+            pair = build_site_theme_pair(Theme.objects.filter(module_key__isnull=True), effective)
+            return Response(pair)
         return Response({'detail': _('Активная тема не найдена')}, status=status.HTTP_404_NOT_FOUND)
 
     @action(detail=False, methods=['get'], url_path='catalog')
     def catalog(self, request):
-        """Темы сайта, доступные в общем быстром выборе."""
-        qs = Theme.objects.filter(module_key__isnull=True, is_available=True).order_by(
-            '-is_default', '-is_system', 'name',
-        )
-        return Response(ThemeSerializer(qs, many=True).data)
+        """Темы сайта, доступные в общем быстром выборе (сгруппированы в пары light/dark)."""
+        from src.core.settings.services.site_theme_pairs import list_site_theme_pairs
+
+        qs = Theme.objects.filter(module_key__isnull=True, is_available=True)
+        return Response(list_site_theme_pairs(qs))
 
     @action(detail=False, methods=['get', 'patch'], url_path='me')
     def my_preference(self, request):

@@ -77,6 +77,14 @@ class Theme(models.Model):
         help_text=_("Связка light+dark вариантов модуля. Пусто — тема системы."),
     )
 
+    theme_pair = models.CharField(
+        _("Пара палитры сайта"),
+        max_length=100,
+        blank=True,
+        default='',
+        help_text=_("Связка light+dark вариантов темы сайта. Пусто — тема без пары."),
+    )
+
     defaults_snapshot = models.JSONField(
         _("Снимок начальных значений"),
         default=dict,

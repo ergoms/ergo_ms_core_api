@@ -45,6 +45,8 @@ def get_effective_site_theme(user=None) -> Theme | None:
 
 
 def preference_payload(user) -> dict:
+    from src.core.settings.services.site_theme_pairs import pair_key_for_theme
+
     pref = get_or_create_preference(user)
     default_theme = get_site_default_theme()
     selected = pref.selected_theme
@@ -56,8 +58,10 @@ def preference_payload(user) -> dict:
     )
     return {
         'selected_theme_id': selected.id if selected else None,
+        'selected_theme_pair': pair_key_for_theme(selected) if selected else None,
         'favorite_ids': favorite_ids,
         'default_theme_id': default_theme.id if default_theme else None,
+        'default_theme_pair': pair_key_for_theme(default_theme) if default_theme else None,
     }
 
 

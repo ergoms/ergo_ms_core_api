@@ -6,6 +6,7 @@ from src.core.settings.services.theme_seed_catalog import (
     DEFAULT_THEME_COLORS,
     SYSTEM_THEME_RENAME_MAP,
     SYSTEM_THEMES,
+    derive_site_theme_pair_key,
     is_accessibility_theme,
 )
 
@@ -15,6 +16,7 @@ __all__ = [
     "DEFAULT_THEME_COLORS",
     "SYSTEM_THEME_RENAME_MAP",
     "SYSTEM_THEMES",
+    "derive_site_theme_pair_key",
     "ensure_module_themes_from_manifests",
     "ensure_system_themes",
     "is_accessibility_theme",
@@ -57,7 +59,8 @@ def reset_system_theme_to_defaults(theme):
     theme.description = spec['description']
     theme.colors = _colors_for_spec(spec)
     theme.bootstrap_colors = {}
-    theme.save(update_fields=['description', 'colors', 'bootstrap_colors', 'updated_at'])
+    theme.theme_pair = derive_site_theme_pair_key(theme.name)
+    theme.save(update_fields=['description', 'colors', 'bootstrap_colors', 'theme_pair', 'updated_at'])
     return True
 
 
@@ -161,6 +164,7 @@ def ensure_system_themes(theme_model, *, update_existing=False):
             'bootstrap_colors': {},
             'is_active': False,
             'is_default': spec['is_default'],
+            'theme_pair': derive_site_theme_pair_key(spec['name']),
         }
         theme = _dedupe_system_themes_by_name(theme_model, spec['name'])
         if theme is None:
