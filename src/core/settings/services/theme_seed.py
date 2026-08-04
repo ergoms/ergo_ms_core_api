@@ -59,8 +59,11 @@ def reset_system_theme_to_defaults(theme):
     theme.description = spec['description']
     theme.colors = _colors_for_spec(spec)
     theme.bootstrap_colors = {}
-    theme.theme_pair = derive_site_theme_pair_key(theme.name)
-    theme.save(update_fields=['description', 'colors', 'bootstrap_colors', 'theme_pair', 'updated_at'])
+    update_fields = ['description', 'colors', 'bootstrap_colors', 'updated_at']
+    if _model_has_field(type(theme), 'theme_pair'):
+        theme.theme_pair = derive_site_theme_pair_key(theme.name)
+        update_fields.append('theme_pair')
+    theme.save(update_fields=update_fields)
     return True
 
 
@@ -164,8 +167,9 @@ def ensure_system_themes(theme_model, *, update_existing=False):
             'bootstrap_colors': {},
             'is_active': False,
             'is_default': spec['is_default'],
-            'theme_pair': derive_site_theme_pair_key(spec['name']),
         }
+        if _model_has_field(theme_model, 'theme_pair'):
+            defaults['theme_pair'] = derive_site_theme_pair_key(spec['name'])
         theme = _dedupe_system_themes_by_name(theme_model, spec['name'])
         if theme is None:
             create_kwargs = {
