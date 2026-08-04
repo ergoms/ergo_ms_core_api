@@ -14,7 +14,7 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.serializers import ValidationError as DRFValidationError
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle
 
 from src.core.cms.adp.auth_cookies import (
     clear_auth_cookies,
@@ -120,7 +120,9 @@ class PasswordResetSettingsView(BaseAPIView):
 
 
 class SendConfirmationCodeView(BaseAPIView):
-    throttle_classes = [AnonRateThrottle]
+    # ScopedRateThrottle — единственный класс, который читает throttle_scope;
+    # без него действовал только общий anon-лимит (см. security-audit.md, В1).
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
     throttle_scope = 'password_reset'
 
     @swagger_auto_schema(
@@ -198,7 +200,7 @@ class VerifyConfirmationCodeView(BaseAPIView):
             return Response({"error": _("Неверный код")}, status=status.HTTP_400_BAD_REQUEST)
 
 class ResetPasswordView(BaseAPIView):
-    throttle_classes = [AnonRateThrottle]
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
     throttle_scope = 'password_reset'
 
     @swagger_auto_schema(
@@ -371,6 +373,9 @@ class UserRegistrationView(BaseAPIView):
         )
 
 class UserAuthorizationView(BaseAPIView):
+    # ScopedRateThrottle — единственный класс, который читает throttle_scope;
+    # без него действовал только общий anon-лимит (см. security-audit.md, В1).
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
     throttle_scope = 'login'
 
     @swagger_auto_schema(
