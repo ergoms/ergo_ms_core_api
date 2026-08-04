@@ -23,14 +23,15 @@ from src.core.cms.adp.services.import_users_welcome import (
     normalize_welcome_templates,
     parse_send_welcome_emails_flag,
 )
+from src.core.cms.adp.services.permissions import PermissionService
 from src.core.settings.views import _safe_content_disposition_filename
-from src.core.utils.base.base_views import BaseAPIViewAuthMixin
+from src.core.utils.base.base_views import BaseAPIViewGlobalAdminMixin
 from src.core.utils.mixins import MediaApiFileMixin, read_storage_file_bytes
 
 logger = logging.getLogger(__name__)
 
 
-class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
+class ImportUsersView(MediaApiFileMixin, BaseAPIViewGlobalAdminMixin):
     """
     Импорт пользователей из Excel или CSV файла через Celery с real-time прогрессом.
     Ожидаемые столбцы: Фамилия, Имя, Отчество, Логин, E-mail.
@@ -163,9 +164,13 @@ class ImportUsersView(MediaApiFileMixin, BaseAPIViewAuthMixin):
             }, status=status.HTTP_400_BAD_REQUEST)
 
 
-class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
+class ImportUsersTaskStatusView(BaseAPIViewGlobalAdminMixin):
     """
-    Получение статуса Celery задачи импорта пользователей
+    Получение статуса Celery задачи импорта пользователей.
+
+    Доступ ограничен глобальным администратором; дополнительно (С1) проверяется,
+    что запрос либо от инициатора задачи, либо от администратора — на случай,
+    если задачу запросят по чужому task_id.
     """
     
     @swagger_auto_schema(
@@ -201,7 +206,23 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
         from celery.result import AsyncResult
         
         task = AsyncResult(task_id)
-        
+
+        initiated_by_user_id = None
+        if task.state == 'PROGRESS' and isinstance(task.info, dict):
+            initiated_by_user_id = task.info.get('initiated_by_user_id')
+        elif task.state == 'SUCCESS' and isinstance(task.result, dict):
+            initiated_by_user_id = task.result.get('initiated_by_user_id')
+
+        if (
+            initiated_by_user_id is not None
+            and initiated_by_user_id != request.user.id
+            and not PermissionService.can_manage_users_as_global_admin(request.user)
+        ):
+            return Response(
+                {'error': _('Недостаточно прав для просмотра этой задачи.')},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Получаем индекс последнего лога для накопления
         last_log_index = int(request.query_params.get('last_log_index', 0))
         
@@ -277,7 +298,7 @@ class ImportUsersTaskStatusView(BaseAPIViewAuthMixin):
         return Response(response, status=status.HTTP_200_OK)
 
 
-class ImportUsersWelcomeEmailDefaultsView(BaseAPIViewAuthMixin):
+class ImportUsersWelcomeEmailDefaultsView(BaseAPIViewGlobalAdminMixin):
     """Шаблон приветственного письма для массового импорта пользователей."""
 
     @swagger_auto_schema(
@@ -289,7 +310,7 @@ class ImportUsersWelcomeEmailDefaultsView(BaseAPIViewAuthMixin):
         return Response(get_welcome_email_defaults(), status=status.HTTP_200_OK)
 
 
-class ImportUsersPasswordsDownloadView(BaseAPIViewAuthMixin):
+class ImportUsersPasswordsDownloadView(BaseAPIViewGlobalAdminMixin):
     """Одноразовая выгрузка Excel с паролями импортированных пользователей."""
 
     @swagger_auto_schema(

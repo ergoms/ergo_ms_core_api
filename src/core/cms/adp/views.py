@@ -1,5 +1,6 @@
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -55,6 +56,9 @@ class LogoutView(BaseAPIView):
     # Идемпотентная очистка cookie: не режем throttle'ом — иначе шторм 401→logout
     # получает 429 и refresh-cookie так и не сбрасывается.
     throttle_classes = []
+    # Plain JWT без привязки к устройству: logout должен очищать cookie и после
+    # отзыва сессии устройства, когда device-bound access уже недействителен.
+    authentication_classes = [JWTAuthentication]
 
     def post(self, request):
         response = Response(status=status.HTTP_204_NO_CONTENT)

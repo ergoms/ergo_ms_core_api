@@ -3,7 +3,6 @@
 """
 
 from rest_framework.views import APIView
-from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
@@ -15,11 +14,13 @@ class BaseAPIView(APIView):
     Базовый класс для публичных API представлений (login, register, reset).
 
     Включает:
-    - JWT аутентификацию
     - Ограничение частоты запросов
     - Публичный доступ (AllowAny)
+
+    Аутентификация не переопределяется — действует DEFAULT_AUTHENTICATION_CLASSES
+    (DeviceBoundJWTAuthentication), поэтому Bearer-токен с отозванной сессией
+    устройства отклоняется и на анонимных по permission_classes представлениях.
     """
-    authentication_classes = [JWTAuthentication]
     throttle_classes = [AnonRateThrottle, UserRateThrottle]
     permission_classes = [AllowAny]
 

@@ -26,7 +26,7 @@ MAX_LOGS_IN_META = 1000
 PROGRESS_UPDATE_EVERY_ROWS = 10
 
 
-def _import_meta(current, total, created, skipped, progress, accumulated_logs, last_log):
+def _import_meta(current, total, created, skipped, progress, accumulated_logs, last_log, initiated_by_user_id=None):
     logs = accumulated_logs[-MAX_LOGS_IN_META:].copy()
     meta = {
         'current': current,
@@ -37,6 +37,7 @@ def _import_meta(current, total, created, skipped, progress, accumulated_logs, l
         'logs': logs,
         'logs_total': len(accumulated_logs),
         'last_log': last_log,
+        'initiated_by_user_id': initiated_by_user_id,
     }
     return meta
 
@@ -79,6 +80,7 @@ def _append_skip(
     results,
     accumulated_logs,
     task,
+    initiated_by_user_id=None,
 ):
     logger.warning(message)
     log_entry = {'level': 'warn', 'message': message}
@@ -96,6 +98,7 @@ def _append_skip(
             progress,
             accumulated_logs,
             log_entry,
+            initiated_by_user_id,
         ),
     )
 
@@ -159,6 +162,7 @@ def import_users_task(
                 'created': 0,
                 'skipped': 0,
                 'total': 0,
+                'initiated_by_user_id': initiated_by_user_id,
             }
 
         total_rows = len(df)
@@ -189,7 +193,7 @@ def import_users_task(
         accumulated_logs.append(start_log)
         self.update_state(
             state='PROGRESS',
-            meta=_import_meta(0, total_rows, 0, 0, 0, accumulated_logs, start_log),
+            meta=_import_meta(0, total_rows, 0, 0, 0, accumulated_logs, start_log, initiated_by_user_id),
         )
 
         bridge.emit(CORE_BULK_USER_CREATE, phase='start')
@@ -217,6 +221,7 @@ def import_users_task(
                             results=results,
                             accumulated_logs=accumulated_logs,
                             task=self,
+                            initiated_by_user_id=initiated_by_user_id,
                         )
                         continue
 
@@ -229,6 +234,7 @@ def import_users_task(
                             results=results,
                             accumulated_logs=accumulated_logs,
                             task=self,
+                            initiated_by_user_id=initiated_by_user_id,
                         )
                         continue
 
@@ -243,6 +249,7 @@ def import_users_task(
                             results=results,
                             accumulated_logs=accumulated_logs,
                             task=self,
+                            initiated_by_user_id=initiated_by_user_id,
                         )
                         continue
 
@@ -319,6 +326,7 @@ def import_users_task(
                             progress,
                             accumulated_logs,
                             log_entry,
+                            initiated_by_user_id,
                         ),
                     )
         finally:
@@ -373,6 +381,7 @@ def import_users_task(
                 100,
                 accumulated_logs,
                 final_log,
+                initiated_by_user_id,
             ),
         )
 
@@ -391,6 +400,7 @@ def import_users_task(
             'emails_sent': results['emails_sent'],
             'emails_failed': results['emails_failed'],
             'emails_skipped_no_email': results['emails_skipped_no_email'],
+            'initiated_by_user_id': initiated_by_user_id,
         }
 
     except Exception as e:
