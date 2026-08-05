@@ -84,6 +84,10 @@ MEDIA_API_PORT = int(effective_media_public_port('8003'))
 MEDIA_API_PROTOCOL = 'https' if nginx_use_https() else os.getenv('MEDIA_API_PROTOCOL', 'http')
 MEDIA_URL_EXPIRATION = int(os.getenv('MEDIA_URL_EXPIRATION', '3600'))
 MEDIA_UPLOAD_MAX_SIZE = int(os.getenv('MEDIA_UPLOAD_MAX_SIZE', '524288000'))
+# Абсолютный потолок: модуль может запросить выше MEDIA_UPLOAD_MAX_SIZE, но не выше hard.
+MEDIA_UPLOAD_HARD_MAX_SIZE = int(os.getenv('MEDIA_UPLOAD_HARD_MAX_SIZE', str(5 * 1024 * 1024 * 1024)))
+if MEDIA_UPLOAD_HARD_MAX_SIZE < MEDIA_UPLOAD_MAX_SIZE:
+    MEDIA_UPLOAD_HARD_MAX_SIZE = MEDIA_UPLOAD_MAX_SIZE
 MEDIA_UPLOAD_TOKEN_EXPIRATION = int(os.getenv('MEDIA_UPLOAD_TOKEN_EXPIRATION', '300'))
 
 # Режим доступа core/api к файлам: ERGO_MEDIA (или явный MEDIA_ACCESS_MODE)
