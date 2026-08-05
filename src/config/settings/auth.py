@@ -28,6 +28,11 @@ AUTHENTICATION_BACKENDS = [
 # Настройка ограничения запросов для анонимных и аутентифицированных пользователей.
 THROTTLE_RATES_ANON = env.str('API_THROTTLE_RATES_ANON', default='10/minute')
 THROTTLE_RATES_USER = env.str('API_THROTTLE_RATES_USER', default='5000/hour')
+THROTTLE_RATES_LOGIN = env.str('API_THROTTLE_RATES_LOGIN', default='5/minute')
+THROTTLE_RATES_PASSWORD_RESET = env.str(
+    'API_THROTTLE_RATES_PASSWORD_RESET',
+    default='5/minute',
+)
 
 DEFAULT_RENDERER_CLASSES = [
     'rest_framework.renderers.JSONRenderer',
@@ -51,8 +56,8 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon': THROTTLE_RATES_ANON,
         'user': THROTTLE_RATES_USER,
-        'password_reset': '5/minute',
-        'login': '5/minute',
+        'password_reset': THROTTLE_RATES_PASSWORD_RESET,
+        'login': THROTTLE_RATES_LOGIN,
     },
 }
 
