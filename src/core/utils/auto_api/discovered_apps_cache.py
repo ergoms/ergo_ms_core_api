@@ -33,11 +33,11 @@ def _cache_file() -> Path:
 CACHE_FILE = CACHE_DIR / 'discovered_apps.bin'
 
 
-def _max_mtime_apps_py(root: Path) -> float:
-    """Max mtime всех apps.py в директории."""
+def _max_mtime_named(root: Path, filename: str) -> float:
+    """Max mtime всех файлов с именем filename под root."""
     max_mtime = 0.0
     try:
-        for p in root.rglob('apps.py'):
+        for p in root.rglob(filename):
             if p.is_file():
                 try:
                     max_mtime = max(max_mtime, p.stat().st_mtime)
@@ -51,7 +51,7 @@ def _max_mtime_apps_py(root: Path) -> float:
 def _get_dirs_fingerprint() -> dict:
     """
     Fingerprint для проверки актуальности кэша discovered_apps.
-    Учитывает mtime директорий и всех apps.py — ловит добавление/изменение приложений.
+    Учитывает mtime директорий, apps.py и integrations.yaml.
     Также включает DISABLED_MODULES — при изменении списка кэш инвалидируется.
     """
     result = {}
@@ -60,9 +60,12 @@ def _get_dirs_fingerprint() -> dict:
         if p.exists():
             try:
                 dir_mtime = p.stat().st_mtime
-                apps_mtime = _max_mtime_apps_py(p)
+                apps_mtime = _max_mtime_named(p, 'apps.py')
+                integrations_mtime = (
+                    _max_mtime_named(p, 'integrations.yaml') if name == 'modules' else 0.0
+                )
                 result[f'{name}_dir'] = dir_mtime
-                result[f'{name}_apps'] = max(dir_mtime, apps_mtime)
+                result[f'{name}_apps'] = max(dir_mtime, apps_mtime, integrations_mtime)
             except OSError:
                 result[f'{name}_dir'] = 0
                 result[f'{name}_apps'] = 0
@@ -76,13 +79,13 @@ def _get_dirs_fingerprint() -> dict:
         result['process_filter'] = get_process_filter_fingerprint()
     except Exception:
         result['process_filter'] = ''
-    # Инвалидация кэша при смене алгоритма порядка module_requires
-    result['module_load_order'] = 1
+    # Инвалидация кэша при смене алгоритма порядка (integrations.yaml)
+    result['module_load_order'] = 2
     return result
 
 
 def _finalize_discovered_apps(apps: List[str]) -> List[str]:
-    """Топсорт модулей по AppConfig.module_requires."""
+    """Топсорт модулей по requires из integrations.yaml."""
     from src.core.utils.auto_api.module_load_order import sort_discovered_apps
 
     return sort_discovered_apps(apps)
