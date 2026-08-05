@@ -2,8 +2,9 @@
 Команда установки всех зависимостей: ядра и всех модулей.
 
 Использование:
-    api install            — установить ядро + модули, удалить лишние пакеты
-    api install --force    — принудительно переустановить зависимости модулей
+    api install                    — установить ядро + модули, удалить лишние пакеты
+    api install --force            — принудительно переустановить зависимости модулей
+    api install --with loadtest    — ядро + optional Poetry-группа (например locust)
 """
 
 import ast
@@ -39,6 +40,25 @@ _NO_DEPS_RUNTIME_DEPS: Dict[str, List[str]] = {
 }
 
 
+def _parse_with_groups(args: Tuple[Any, ...]) -> frozenset[str]:
+    """Poetry-стиль: --with loadtest | --with=loadtest | --with a,b."""
+    groups: list[str] = []
+    tokens = [str(a) for a in args]
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token == '--with' and i + 1 < len(tokens):
+            groups.extend(g.strip() for g in tokens[i + 1].split(',') if g.strip())
+            i += 2
+            continue
+        if token.startswith('--with='):
+            groups.extend(
+                g.strip() for g in token.split('=', 1)[1].split(',') if g.strip()
+            )
+        i += 1
+    return frozenset(groups)
+
+
 class InstallCommand(PoetryCommand):
     """
     Устанавливает зависимости ядра через poetry install, затем сканирует
@@ -53,14 +73,21 @@ class InstallCommand(PoetryCommand):
 
     def run(self, *args) -> int:
         force = "--force" in args
+        extra_groups = _parse_with_groups(args)
 
         project_root = self._find_project_root()
         if project_root is None:
             print("Ошибка: не удалось найти корневой pyproject.toml.")
             return 1
 
-        print("─── Установка зависимостей ядра (main)...")
-        rc = self._install_core(project_root)
+        if extra_groups:
+            print(
+                "─── Установка зависимостей ядра (main + "
+                f"{', '.join(sorted(extra_groups))})..."
+            )
+        else:
+            print("─── Установка зависимостей ядра (main)...")
+        rc = self._install_core(project_root, extra_groups=extra_groups)
         if rc != 0:
             return rc
 
@@ -119,28 +146,37 @@ class InstallCommand(PoetryCommand):
         if rc != 0:
             return rc
 
-        rc = self._remove_orphaned_packages(project_root, module_only)
+        rc = self._remove_orphaned_packages(
+            project_root, module_only, extra_groups=extra_groups
+        )
         if rc != 0:
             return rc
 
-        return self._prune_unused_dep_caches(project_root, module_only)
+        return self._prune_unused_dep_caches(
+            project_root, module_only, extra_groups=extra_groups
+        )
 
-    def _install_core(self, project_root: Path) -> int:
+    def _install_core(
+        self,
+        project_root: Path,
+        *,
+        extra_groups: frozenset[str] = frozenset(),
+    ) -> int:
         env = os.environ.copy()
         env["POETRY_VIRTUALENVS_CREATE"] = "false"
-        result = subprocess.run(
-            [
-                "poetry",
-                "install",
-                "--no-root",
-                "--only",
-                "main",
-                "--directory",
-                str(project_root),
-            ],
-            cwd=str(project_root),
-            env=env,
-        )
+        cmd = [
+            "poetry",
+            "install",
+            "--no-root",
+            "--directory",
+            str(project_root),
+        ]
+        if extra_groups:
+            # main + optional groups (не --only main — иначе группа не ставится)
+            cmd.extend(["--with", ",".join(sorted(extra_groups))])
+        else:
+            cmd.extend(["--only", "main"])
+        result = subprocess.run(cmd, cwd=str(project_root), env=env)
         return result.returncode
 
     def _install_module_packages(
@@ -483,15 +519,24 @@ class InstallCommand(PoetryCommand):
             [sys.executable, "-m", "pip", "uninstall", "-y", *packages],
         )
 
+    def _lock_groups_for_install(
+        self, extra_groups: frozenset[str] = frozenset()
+    ) -> frozenset[str]:
+        return frozenset(_CORE_LOCK_GROUPS | set(extra_groups))
+
     def _desired_installed_packages(
-        self, project_root: Path, module_only: Dict[str, Any]
+        self,
+        project_root: Path,
+        module_only: Dict[str, Any],
+        *,
+        extra_groups: frozenset[str] = frozenset(),
     ) -> Set[str]:
         """Имена пакетов, которые должны остаться в venv (lock + модули + инструменты)."""
         lock_packages = {
             canonicalize_name(name)
             for name in self._parse_poetry_lock(
                 project_root / "poetry.lock",
-                groups=_CORE_LOCK_GROUPS,
+                groups=self._lock_groups_for_install(extra_groups),
             )
         }
         if not lock_packages:
@@ -510,10 +555,16 @@ class InstallCommand(PoetryCommand):
         return self._dependency_closure(roots)
 
     def _remove_orphaned_packages(
-        self, project_root: Path, module_only: Dict[str, Any]
+        self,
+        project_root: Path,
+        module_only: Dict[str, Any],
+        *,
+        extra_groups: frozenset[str] = frozenset(),
     ) -> int:
         """Удаляет пакеты, которых нет в poetry.lock ядра и зависимостях модулей."""
-        desired = self._desired_installed_packages(project_root, module_only)
+        desired = self._desired_installed_packages(
+            project_root, module_only, extra_groups=extra_groups
+        )
         if not desired:
             print(
                 "─── poetry.lock ядра пуст или не найден — "
@@ -543,12 +594,18 @@ class InstallCommand(PoetryCommand):
         return 0
 
     def _prune_unused_dep_caches(
-        self, project_root: Path, module_only: Dict[str, Any]
+        self,
+        project_root: Path,
+        module_only: Dict[str, Any],
+        *,
+        extra_groups: frozenset[str] = frozenset(),
     ) -> int:
         """Чистит virtual_env/cache от артефактов пакетов вне текущих зависимостей."""
         from commands.dep_caches import prune_python_dep_caches
 
-        desired = self._desired_installed_packages(project_root, module_only)
+        desired = self._desired_installed_packages(
+            project_root, module_only, extra_groups=extra_groups
+        )
         if not desired:
             desired = set(self._get_installed_versions())
             desired.update(_ENV_TOOL_PACKAGES)

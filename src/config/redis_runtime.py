@@ -43,9 +43,12 @@ def _load_redis_section() -> dict[str, Any]:
     if _REDIS_SECTION_CACHE is not None:
         return _REDIS_SECTION_CACHE
 
-    from src.core.utils.database.config_manager import _get_cached_yaml
+    from src.core.utils.database.config_manager import (
+        _get_cached_yaml,
+        resolve_databases_yaml_path,
+    )
 
-    databases = _get_cached_yaml(SYSTEM_DIR / 'databases.yaml') or {}
+    databases = _get_cached_yaml(resolve_databases_yaml_path(SYSTEM_DIR)) or {}
     section = databases.get('redis')
     if isinstance(section, dict):
         _REDIS_SECTION_CACHE = dict(section)
