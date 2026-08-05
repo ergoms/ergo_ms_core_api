@@ -458,4 +458,10 @@ class Command(BaseCommand):
         if populated_modules:
             _reapply_module_sidebar_role_groups(populated_modules)
             self.stdout.write('Повторно применены allowed_role_groups модулей с menu_sidebar')
+
+        from src.core.cms.adp.menu.menu_cache import invalidate_user_menu_cache
+
+        invalidate_user_menu_cache()
+        self.stdout.write('Сброшен серверный кэш меню')
+
         self.stdout.write(self.style.SUCCESS('Готово. Обновите страницу (F5) для отображения меню.'))

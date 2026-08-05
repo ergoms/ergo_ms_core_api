@@ -636,6 +636,7 @@ class MenuRestoreView(BaseMenuAPIView):
         buffer = StringIO()
         try:
             call_command('restore_menu', stdout=buffer)
+            invalidate_user_menu_cache()
             return Response({
                 'message': _('Меню восстановлено из миграций'),
                 'details': buffer.getvalue(),
