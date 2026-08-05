@@ -21,6 +21,10 @@ from src.config.settings.drf import DRF_BROWSABLE_ENABLED
 
 AUTH_USER_MODEL = 'cms_adp.ErgoUser'
 
+AUTHENTICATION_BACKENDS = [
+    'src.core.cms.adp.backends.EmailOrUsernameModelBackend',
+]
+
 # Настройка ограничения запросов для анонимных и аутентифицированных пользователей.
 THROTTLE_RATES_ANON = env.str('API_THROTTLE_RATES_ANON', default='10/minute')
 THROTTLE_RATES_USER = env.str('API_THROTTLE_RATES_USER', default='5000/hour')

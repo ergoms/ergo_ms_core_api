@@ -22,6 +22,7 @@ from src.core.cms.adp.auth_cookies import (
     refresh_cookie_max_age,
     set_refresh_cookie,
 )
+from src.core.cms.adp.backends import get_user_by_login
 from src.core.cms.adp.models import UserDevice, UserProfile
 from src.core.cms.adp.password_policy import validate_new_password_pair
 from src.core.cms.adp.serializers import (
@@ -365,7 +366,7 @@ class UserAuthorizationView(BaseAPIView):
             properties={
                 'username': openapi.Schema(
                     type=openapi.TYPE_STRING,
-                    description='Логин'
+                    description='Логин или email'
                 ),
                 'password': openapi.Schema(
                     type=openapi.TYPE_STRING,
@@ -453,12 +454,12 @@ class UserAuthorizationView(BaseAPIView):
                 )
                 return response
 
-            inactive_user = (
-                User.objects
-                .filter(username=username, is_active=False)
-                .first()
-            )
-            if inactive_user is not None and inactive_user.check_password(password):
+            inactive_user = get_user_by_login(username)
+            if (
+                inactive_user is not None
+                and not inactive_user.is_active
+                and inactive_user.check_password(password)
+            ):
                 audit_log(
                     'auth.login_failed',
                     request=request,

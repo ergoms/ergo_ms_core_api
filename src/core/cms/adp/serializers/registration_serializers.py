@@ -119,7 +119,7 @@ class UserRegistrationSerializer(ModelSerializer):
 
 
 class UserLoginSerializer(Serializer):
-    username = CharField(max_length=150)
+    username = CharField(max_length=254)
     password = CharField(write_only=True)
 
 

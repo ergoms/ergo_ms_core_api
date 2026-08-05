@@ -187,6 +187,11 @@ def _discover_core_menu_migrations():
             code = op.code
             if code is None or code is migrations.RunPython.noop:
                 continue
+            # remove_*/reverse_* — очистка, не seed; в squash после add_* ломают
+            # restore (CASCADE на таблицы модулей, которых ещё нет в цепочке migrate).
+            func_name = getattr(code, '__name__', '') or ''
+            if func_name.startswith(('remove_', 'reverse_', 'delete_')):
+                continue
             forward_src = _callable_source(code)
             if not any(marker in forward_src for marker in MENU_MARKERS):
                 continue
