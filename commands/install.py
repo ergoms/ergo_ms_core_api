@@ -8,6 +8,7 @@
 """
 
 import ast
+import hashlib
 import os
 import re
 import shutil
@@ -27,6 +28,7 @@ from commands.base import PoetryCommand
 
 _CORE_LOCK_GROUPS = frozenset({"main"})
 _PIP_BATCH_SIZE = 40
+_PYTHON_DEPS_STAMP_REL = Path("virtual_env/cache/.ergo-python-deps-ok")
 # Инструменты окружения: не в poetry.lock ядра, но нужны для ergoms/poetry/pip.
 _ENV_TOOL_PACKAGES = frozenset({"pip", "setuptools", "wheel", "poetry"})
 # moviepy 2.2.1 объявляет pillow<12.0, хотя с Pillow 12.x обычно работает (см. Zulko/moviepy#2553).
@@ -79,6 +81,34 @@ class InstallCommand(PoetryCommand):
         if project_root is None:
             print("Ошибка: не удалось найти корневой pyproject.toml.")
             return 1
+
+        fingerprint = self._python_deps_fingerprint(project_root, extra_groups=extra_groups)
+        if not force and self._python_deps_stamp_matches(project_root, fingerprint):
+            root_data = self._read_toml(project_root / "pyproject.toml")
+            if root_data is not None:
+                module_configs = self._scan_module_configs(project_root)
+                module_only: Dict[str, Any] = {}
+                if module_configs:
+                    merged_deps, _conflicts = self._merge_dependencies(
+                        root_data, module_configs
+                    )
+                    root_deps = self._get_poetry_deps(root_data)
+                    module_only = {
+                        pkg: constraint
+                        for pkg, constraint in merged_deps.items()
+                        if pkg != "python" and pkg not in root_deps
+                    }
+                unsatisfied = (
+                    self._filter_unsatisfied_module_deps(module_only, project_root)
+                    if module_only
+                    else {}
+                )
+                if not unsatisfied:
+                    print(
+                        "─── Зависимости Python уже актуальны "
+                        "(fingerprint совпал) — установка пропущена."
+                    )
+                    return 0
 
         if extra_groups:
             print(
@@ -152,9 +182,58 @@ class InstallCommand(PoetryCommand):
         if rc != 0:
             return rc
 
-        return self._prune_unused_dep_caches(
+        rc = self._prune_unused_dep_caches(
             project_root, module_only, extra_groups=extra_groups
         )
+        if rc != 0:
+            return rc
+
+        self._write_python_deps_stamp(project_root, fingerprint)
+        return 0
+
+    def _python_deps_fingerprint(
+        self,
+        project_root: Path,
+        *,
+        extra_groups: frozenset[str] = frozenset(),
+    ) -> str:
+        digest = hashlib.sha256()
+        digest.update(
+            f"groups:{','.join(sorted(extra_groups))}\n".encode("utf-8")
+        )
+        digest.update(
+            f"disabled:{os.environ.get('DISABLED_MODULES', '')}\n".encode("utf-8")
+        )
+        for rel in ("poetry.lock", "pyproject.toml"):
+            path = project_root / rel
+            if not path.is_file():
+                continue
+            digest.update(rel.encode("utf-8"))
+            digest.update(path.read_bytes())
+        modules_dir = project_root / "modules"
+        if modules_dir.is_dir():
+            for config_path in sorted(modules_dir.glob("*/pyproject.toml")):
+                rel = config_path.relative_to(project_root).as_posix()
+                digest.update(rel.encode("utf-8"))
+                digest.update(config_path.read_bytes())
+        return digest.hexdigest()
+
+    def _python_deps_stamp_path(self, project_root: Path) -> Path:
+        return project_root / _PYTHON_DEPS_STAMP_REL
+
+    def _python_deps_stamp_matches(self, project_root: Path, fingerprint: str) -> bool:
+        stamp = self._python_deps_stamp_path(project_root)
+        if not stamp.is_file():
+            return False
+        try:
+            return stamp.read_text(encoding="utf-8").strip() == fingerprint
+        except OSError:
+            return False
+
+    def _write_python_deps_stamp(self, project_root: Path, fingerprint: str) -> None:
+        stamp = self._python_deps_stamp_path(project_root)
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(fingerprint + "\n", encoding="utf-8")
 
     def _install_core(
         self,

@@ -11,11 +11,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
-from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR, VIRTUAL_ENV_DIR
+from src.config.paths import CACHE_DIR
+from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR
 
 logger = logging.getLogger('utils')
-
-CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
 
 
 def _cache_file() -> Path:

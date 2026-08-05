@@ -25,6 +25,36 @@ from src.core.cms.adp.serializers import (
 from src.core.cms.adp.services.permissions import PermissionService, RoleAssignmentError
 from src.core.audit.shortcuts import audit_log
 from src.core.utils.methods import parse_errors_to_dict
+from src.core.search.mixins import parse_search_pagination
+from src.core.search.service import search_queryset
+
+
+def _wants_paginated_list(request) -> bool:
+    params = getattr(request, 'query_params', None) or getattr(request, 'GET', {})
+    return any(params.get(key) not in (None, '') for key in ('q', 'search', 'page', 'page_size'))
+
+
+def _paginated_search_list(request, queryset, index_uid, serializer_class, *, default_page_size=50):
+    page, page_size, search = parse_search_pagination(
+        request,
+        default_page_size=default_page_size,
+        max_page_size=200,
+    )
+    queryset, search_result = search_queryset(
+        index_uid,
+        search,
+        queryset,
+        page=page,
+        page_size=page_size,
+    )
+    items = list(queryset)
+    serializer = serializer_class(items, many=True)
+    return Response({
+        'items': serializer.data,
+        'total': search_result.total,
+        'page': page,
+        'page_size': page_size,
+    })
 
 
 class RoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
@@ -39,7 +69,10 @@ class RoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     )
     def get(self, request):
         """Получить список всех ролей"""
-        roles = Role.objects.all()
+        roles = Role.objects.all().order_by('name')
+        if _wants_paginated_list(request):
+            from src.core.search.core_indexes import INDEX_ROLES
+            return _paginated_search_list(request, roles, INDEX_ROLES, RoleSerializer)
         serializer = RoleSerializer(roles, many=True)
         return Response(serializer.data)
     
@@ -157,7 +190,16 @@ class RoleGroupListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     def get(self, request):
         """Получить список всех ролевых групп"""
         minimal = request.query_params.get('minimal') in ('1', 'true', 'yes')
-        groups = RoleGroup.objects.select_related('parent_role').all()
+        groups = RoleGroup.objects.select_related('parent_role').all().order_by('name')
+        if _wants_paginated_list(request):
+            from src.core.search.core_indexes import INDEX_ROLE_GROUPS
+            serializer_class = RoleGroupMinimalSerializer if minimal else RoleGroupSerializer
+            return _paginated_search_list(
+                request,
+                groups,
+                INDEX_ROLE_GROUPS,
+                serializer_class,
+            )
         serializer_class = RoleGroupMinimalSerializer if minimal else RoleGroupSerializer
         serializer = serializer_class(groups, many=True)
         return Response(serializer.data)
@@ -512,12 +554,22 @@ class ModulePermissionListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     def get(self, request):
         """Получить список прав модулей"""
         role_group_id = request.query_params.get('role_group_id')
-        
+
         if role_group_id:
             permissions = ModulePermission.objects.filter(role_group_id=role_group_id)
         else:
             permissions = ModulePermission.objects.all()
-        
+        permissions = permissions.select_related('role_group').order_by('module_name', 'permission_key')
+
+        if _wants_paginated_list(request):
+            from src.core.search.core_indexes import INDEX_MODULE_PERMISSIONS
+            return _paginated_search_list(
+                request,
+                permissions,
+                INDEX_MODULE_PERMISSIONS,
+                ModulePermissionSerializer,
+            )
+
         serializer = ModulePermissionSerializer(permissions, many=True)
         return Response(serializer.data)
     

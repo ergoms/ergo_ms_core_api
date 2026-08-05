@@ -8,11 +8,10 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
-from src.config.paths import MODULES_DIR, VIRTUAL_ENV_DIR
+from src.config.paths import CACHE_DIR, MODULES_DIR
 
 logger = logging.getLogger('celery.cache')
 
-CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
 CACHE_FILE = CACHE_DIR / 'celery_queues.bin'
 
 

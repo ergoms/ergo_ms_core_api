@@ -2,8 +2,7 @@
 API для приглашений на регистрацию и публичных настроек регистрации.
 """
 
-from django.db.models import Q
-from django.utils.translation import gettext as _
+from src.core.search.mixins import parse_search_pagination
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
@@ -29,15 +28,11 @@ def _serialize_invitation(invitation):
 
 
 def _parse_pagination(request, default_page_size=12):
-    try:
-        page = max(1, int(request.query_params.get('page', 1)))
-    except (TypeError, ValueError):
-        page = 1
-    try:
-        page_size = min(100, max(1, int(request.query_params.get('page_size', default_page_size))))
-    except (TypeError, ValueError):
-        page_size = default_page_size
-    search = (request.query_params.get('search') or '').strip()
+    page, page_size, search = parse_search_pagination(
+        request,
+        default_page_size=default_page_size,
+        max_page_size=100,
+    )
     status = (request.query_params.get('status') or '').strip().lower()
     return page, page_size, search, status
 
@@ -106,20 +101,22 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
 
         page, page_size, search, status_filter = _parse_pagination(request)
         queryset = RegistrationInvitation.objects.select_related('invited_by').order_by('-created_at')
-
-        if search:
-            queryset = queryset.filter(
-                Q(email__icontains=search)
-                | Q(note__icontains=search)
-                | Q(invited_by__username__icontains=search)
-            )
-
         queryset = RegistrationService.filter_invitations_queryset_by_status(queryset, status_filter)
 
-        total = queryset.count()
+        from src.core.search.core_indexes import INDEX_INVITATIONS
+        from src.core.search.service import search_queryset
+
+        queryset, search_result = search_queryset(
+            INDEX_INVITATIONS,
+            search,
+            queryset,
+            page=page,
+            page_size=page_size,
+        )
+
+        total = search_result.total
         total_all = RegistrationInvitation.objects.count()
-        offset = (page - 1) * page_size
-        invitations = list(queryset[offset:offset + page_size])
+        invitations = list(queryset)
         serializer = RegistrationInvitationSerializer(invitations, many=True)
 
         inactive_count = RegistrationService.get_inactive_invitations_queryset().count()

@@ -21,8 +21,9 @@ import logging
 from pathlib import Path
 from typing import Iterable
 
-from django.conf import settings
 from django.core.cache import cache
+
+from src.config.paths import CACHE_DIR
 
 logger = logging.getLogger('utils.cache')
 
@@ -57,14 +58,14 @@ _CELERY_BIN_NAMES = (
 
 
 def _cache_dir() -> Path:
-    return Path(getattr(settings, 'VIRTUAL_ENV_DIR', '')) / 'cache'
+    return CACHE_DIR
 
 
 def _delete_bin_files(names: Iterable[str]) -> list[str]:
     deleted: list[str] = []
-    cache_dir = _cache_dir()
+    root = _cache_dir()
     for name in names:
-        path = cache_dir / name
+        path = root / name
         try:
             if path.is_file():
                 path.unlink()

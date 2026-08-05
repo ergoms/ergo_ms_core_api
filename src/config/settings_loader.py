@@ -41,6 +41,7 @@ SETTINGS_MODULES: tuple[str, ...] = (
     'realtime',
     'registration',
     'security_headers',
+    'search',
     'server',
     'smtp',
     'swagger',

@@ -9,7 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from src.config.paths import MODULES_DIR, SYSTEM_DIR, VIRTUAL_ENV_DIR
+from src.config.paths import CACHE_DIR, MODULES_DIR, SYSTEM_DIR
 
 logger = logging.getLogger('celery.cache')
 
@@ -93,7 +93,6 @@ def _deserialize_schedule(data: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str
         result[name] = restored
     return result
 
-CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
 CACHE_FILE = CACHE_DIR / 'celery_routes_queues.bin'
 BEAT_SCHEDULE_CACHE_FILE = CACHE_DIR / 'celery_beat_schedule.bin'
 

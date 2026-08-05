@@ -179,9 +179,20 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             if parsed is not None:
                 qs = qs.filter(created_at__lte=parsed)
 
-        search = (params.get('q') or '').strip()
+        search = (params.get('q') or params.get('search') or '').strip()
         if search:
-            qs = self._apply_search_filter(qs, search)
+            from src.core.search.core_indexes import INDEX_AUDIT
+            from src.core.search.fallback import apply_ordered_ids
+            from src.core.search.service import search_index
+
+            result = search_index(
+                INDEX_AUDIT,
+                search,
+                qs,
+                page=1,
+                page_size=10000,
+            )
+            qs = apply_ordered_ids(qs, result.ids) if result.ids else qs.none()
         else:
             qs = qs.order_by('-created_at', '-id')
 

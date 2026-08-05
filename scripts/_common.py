@@ -60,7 +60,9 @@ _bootstrap_project_env()
 
 MODULES_DIR = PROJECT_ROOT / 'modules'
 WORKERS_CONFIG = PROJECT_ROOT / 'celery_workers.yaml'
-CACHE_DIR = PROJECT_ROOT / 'virtual_env' / 'cache'
+
+from src.config.paths import CACHE_DIR  # noqa: E402
+
 CACHE_FILE = CACHE_DIR / 'celery_queues.bin'
 ROUTES_QUEUES_CACHE_FILE = CACHE_DIR / 'celery_routes_queues.bin'
 WARMUP_LOCK = CACHE_DIR / 'warmup.lock'

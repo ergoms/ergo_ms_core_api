@@ -9,10 +9,12 @@ from src.core.audit.shortcuts import audit_log
 from src.core.cms.adp.admin_users_common import (
     _build_admin_user_detail,
     _build_admin_user_list_item,
-    _get_admin_users_queryset,
+    _get_admin_users_base_queryset,
     _parse_admin_users_pagination,
     _parse_online_only_param,
 )
+from src.core.search.core_indexes import INDEX_USERS
+from src.core.search.service import search_queryset
 from src.core.cms.adp.serializers import (
     AdminCreateUserSerializer,
     AdminUserRoleInfoSerializer,
@@ -53,9 +55,16 @@ class AdminUserRoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
                 required=False,
             ),
             openapi.Parameter(
+                'q',
+                openapi.IN_QUERY,
+                description='Поиск по username, email, имени, фамилии и отчеству (BM25)',
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
                 'search',
                 openapi.IN_QUERY,
-                description='Поиск по словам (через пробел) по username, email, имени, фамилии и отчеству',
+                description='Устаревший alias для q',
                 type=openapi.TYPE_STRING,
                 required=False,
             ),
@@ -72,10 +81,16 @@ class AdminUserRoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     def get(self, request):
         page, page_size, search = _parse_admin_users_pagination(request)
         online_only = _parse_online_only_param(request)
-        users_qs = _get_admin_users_queryset(search, online_only=online_only)
-        total = users_qs.count()
-        offset = (page - 1) * page_size
-        users = list(users_qs[offset:offset + page_size])
+        base_qs = _get_admin_users_base_queryset(online_only=online_only)
+        users_qs, search_result = search_queryset(
+            INDEX_USERS,
+            search,
+            base_qs,
+            page=page,
+            page_size=page_size,
+        )
+        users = list(users_qs)
+        total = search_result.total
         admin_role = PermissionService._get_or_create_admin_role()
         presence_map = presence_service.get_presence_map([user.id for user in users])
 

@@ -19,6 +19,7 @@ from src.core.cms.adp.services.user_deletion import (
     delete_admin_user,
     revoke_user_auth,
 )
+from src.core.search.mixins import parse_search_pagination
 from src.core.cms.adp.services.user_search import apply_user_search
 from src.core.settings.models import UserAvatar
 from src.core.utils.methods import generate_secure_random_password
@@ -190,18 +191,7 @@ def _build_admin_user_list_item(user, user_role=None, admin_role=None, presence_
 
 
 def _parse_admin_users_pagination(request):
-    try:
-        page = max(1, int(request.query_params.get('page', 1)))
-    except (TypeError, ValueError):
-        page = 1
-
-    try:
-        page_size = min(100, max(1, int(request.query_params.get('page_size', 12))))
-    except (TypeError, ValueError):
-        page_size = 12
-
-    search = (request.query_params.get('search') or '').strip()
-    return page, page_size, search
+    return parse_search_pagination(request, default_page_size=12, max_page_size=100)
 
 
 def _parse_online_only_param(request) -> bool:
@@ -209,7 +199,7 @@ def _parse_online_only_param(request) -> bool:
     return raw in ('true', '1', 'yes')
 
 
-def _get_admin_users_queryset(search='', online_only=False):
+def _get_admin_users_base_queryset(online_only=False):
     active_roles_qs = (
         UserRole.objects
         .filter(is_active=True)
@@ -233,7 +223,14 @@ def _get_admin_users_queryset(search='', online_only=False):
             presence__last_seen__gte=cutoff,
         )
 
-    return apply_user_search(users_qs, search)
+    return users_qs
+
+
+def _get_admin_users_queryset(search='', online_only=False):
+    """Обратная совместимость: queryset с фильтром поиска."""
+    from src.core.cms.adp.services.user_search import apply_user_search
+
+    return apply_user_search(_get_admin_users_base_queryset(online_only), search)
 
 
 def _build_admin_user_detail(user):

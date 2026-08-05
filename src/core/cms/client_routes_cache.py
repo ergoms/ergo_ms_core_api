@@ -8,14 +8,14 @@
 import logging
 from pathlib import Path
 
-from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR, SYSTEM_DIR, VIRTUAL_ENV_DIR
+from src.config.paths import CACHE_DIR
+from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR, SYSTEM_DIR
 from src.core.cms.scripts import discover_client_routes_catalog
 from src.core.utils.auto_api.auto_config import ModuleDiscoverer
 from src.core.utils.cache_io import read_bin_cache, write_bin_cache
 
 logger = logging.getLogger('utils')
 
-CACHE_DIR = VIRTUAL_ENV_DIR / 'cache'
 CACHE_FILE = CACHE_DIR / 'client_routes_index.bin'
 
 

@@ -2,6 +2,7 @@
 Утилиты токенизированного поиска пользователей.
 
 Каждое слово из строки поиска должно совпасть хотя бы с одним из полей (AND между словами, OR между полями).
+Для списков с Meilisearch используйте src.core.search.service.search_queryset.
 """
 
 from django.contrib.auth import get_user_model
@@ -52,17 +53,26 @@ def apply_user_search(
     if not tokens:
         return queryset
 
-    for token in tokens:
-        queryset = queryset.filter(
-            build_user_token_q(
-                token,
-                prefix=prefix,
-                fields=fields,
-                extra_fields=extra_fields,
+    if prefix or extra_fields or fields != DEFAULT_USER_SEARCH_FIELDS:
+        for token in tokens:
+            queryset = queryset.filter(
+                build_user_token_q(
+                    token,
+                    prefix=prefix,
+                    fields=fields,
+                    extra_fields=extra_fields,
+                )
             )
-        )
+        return queryset
 
-    return queryset
+    from src.core.search.core_indexes import INDEX_USERS
+    from src.core.search.fallback import apply_ordered_ids
+    from src.core.search.service import search_index
+
+    result = search_index(INDEX_USERS, search, queryset, page=1, page_size=100000)
+    if not result.ids:
+        return queryset.none()
+    return apply_ordered_ids(queryset, result.ids)
 
 
 def build_user_search_q(

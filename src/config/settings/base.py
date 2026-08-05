@@ -15,6 +15,7 @@ from src.config.nginx_runtime import (
     nginx_use_https,
 )
 from src.config.paths import (
+    CACHE_DIR,
     ENV_FILE_PATH,
     MODULES_DIR,
     SYSTEM_DIR,
@@ -96,6 +97,6 @@ MEDIA_API_INTERNAL_KEY = os.getenv('MEDIA_API_INTERNAL_KEY', '').strip()
 
 # Compute-пайплайн (см. core/utils/media_client/pipeline.py, scratch.py)
 # Scratch — эфемерные файлы обработки (никогда в БД и не в signed URL)
-MEDIA_SCRATCH_ROOT = os.getenv('MEDIA_SCRATCH_ROOT', '').strip() or str(VIRTUAL_ENV_DIR / 'cache' / 'scratch')
+MEDIA_SCRATCH_ROOT = os.getenv('MEDIA_SCRATCH_ROOT', '').strip() or str(CACHE_DIR / 'scratch')
 # Cache — локальные копии canonical-файлов при MEDIA_ACCESS_MODE=remote (localize)
-MEDIA_CACHE_ROOT = os.getenv('MEDIA_CACHE_ROOT', '').strip() or str(VIRTUAL_ENV_DIR / 'cache' / 'media')
+MEDIA_CACHE_ROOT = os.getenv('MEDIA_CACHE_ROOT', '').strip() or str(CACHE_DIR / 'media')
