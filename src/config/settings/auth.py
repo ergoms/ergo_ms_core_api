@@ -17,6 +17,11 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from src.config.env import env
+from src.config.security_profile_runtime import (
+    jwt_lifetime_enabled,
+    login_throttle_rate,
+    remember_me_refresh_token_lifetime,
+)
 from src.config.settings.drf import DRF_BROWSABLE_ENABLED
 
 AUTH_USER_MODEL = 'cms_adp.ErgoUser'
@@ -28,7 +33,8 @@ AUTHENTICATION_BACKENDS = [
 # Настройка ограничения запросов для анонимных и аутентифицированных пользователей.
 THROTTLE_RATES_ANON = env.str('API_THROTTLE_RATES_ANON', default='10/minute')
 THROTTLE_RATES_USER = env.str('API_THROTTLE_RATES_USER', default='5000/hour')
-THROTTLE_RATES_LOGIN = env.str('API_THROTTLE_RATES_LOGIN', default='5/minute')
+# Login throttle: unset → профиль ERGO_SECURITY (standard: 5/minute)
+THROTTLE_RATES_LOGIN = login_throttle_rate()
 THROTTLE_RATES_PASSWORD_RESET = env.str(
     'API_THROTTLE_RATES_PASSWORD_RESET',
     default='5/minute',
@@ -72,7 +78,7 @@ REFRESH_TOKEN_LIFETIME = env.int('API_REFRESH_TOKEN_LIFETIME', default=1440)
 # Настройка времени жизни токенов для режима "Запомнить меня" (в минутах).
 # По умолчанию: 3 дня для access, 7 дней для refresh
 REMEMBER_ME_ACCESS_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_ACCESS_TOKEN_LIFETIME', default=4320)
-REMEMBER_ME_REFRESH_TOKEN_LIFETIME = env.int('API_REMEMBER_ME_REFRESH_TOKEN_LIFETIME', default=10080)
+REMEMBER_ME_REFRESH_TOKEN_LIFETIME = remember_me_refresh_token_lifetime()
 
 # Тип развертывания (используется в других частях API, не влияет на JWT)
 from src.config.deploy import get_deploy_type, is_development
@@ -84,7 +90,8 @@ IS_DEVELOPMENT = is_development()
 # true  — используются API_ACCESS_TOKEN_LIFETIME и API_REFRESH_TOKEN_LIFETIME
 # false — срок жизни не ограничивается (значения lifetime игнорируются);
 #         только для development / open-профиля — в production запрещено.
-JWT_LIFETIME_ENABLED = env.bool('API_JWT_LIFETIME_ENABLED', default=True)
+# Unset: standard+ → true из профиля; open — не форсится (дефолт кода True).
+JWT_LIFETIME_ENABLED = jwt_lifetime_enabled()
 
 if not JWT_LIFETIME_ENABLED and not IS_DEVELOPMENT:
     raise ImproperlyConfigured(
