@@ -94,3 +94,12 @@ def media_upload_rate() -> str:
 
 def client_browser_log_enabled() -> bool:
     return security_env_bool('CLIENT_BROWSER_LOG_ENABLED', default=True)
+
+
+def adp_default_view_grants() -> str:
+    """Auto `_view` for default role without groups: granted | denied."""
+    raw = security_env_str('API_ADP_DEFAULT_VIEW_GRANTS', default='granted')
+    mode = raw.strip().lower()
+    if mode in ('granted', 'denied'):
+        return mode
+    return 'granted'

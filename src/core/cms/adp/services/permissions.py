@@ -7,6 +7,7 @@ from django.contrib.auth import get_user_model
 from django.utils.translation import gettext as _
 
 User = get_user_model()
+from src.config.security_profile_runtime import adp_default_view_grants
 from src.core.cms.adp.middleware.permission_request_cache import get_request_permission_cache
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
 from src.core.integrations import bridge
@@ -587,10 +588,11 @@ class PermissionService:
             return (module_name, permission_key) in granted
 
         if user_role.role.name == PermissionService.DEFAULT_ROLE_NAME:
-            # Базовые права просмотра для роли "Пользователь"
-            if permission_key.endswith('_view'):
+            # Базовые права просмотра для роли «Пользователь» без групп —
+            # только при API_ADP_DEFAULT_VIEW_GRANTS=granted (профиль open/standard).
+            if permission_key.endswith('_view') and adp_default_view_grants() == 'granted':
                 return True
-        
+
         return False
     
     @staticmethod
