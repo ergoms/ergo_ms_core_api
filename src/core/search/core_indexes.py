@@ -146,10 +146,11 @@ def _build_module_permission_document(perm) -> dict:
   role_group_name = ''
   if perm.role_group_id:
     role_group_name = getattr(perm.role_group, 'name', '') or ''
+  # Поля модели ModulePermission: permission_name / description (не name / resource_path).
   return {
     'id': str(perm.pk),
-    'name': perm.name or '',
-    'resource_path': perm.resource_path or '',
+    'name': getattr(perm, 'permission_name', None) or getattr(perm, 'name', None) or '',
+    'resource_path': getattr(perm, 'resource_path', None) or getattr(perm, 'description', None) or '',
     'module_name': perm.module_name or '',
     'permission_key': perm.permission_key or '',
     'role_group_name': role_group_name,
