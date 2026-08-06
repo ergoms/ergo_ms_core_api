@@ -103,3 +103,10 @@ def adp_default_view_grants() -> str:
     if mode in ('granted', 'denied'):
         return mode
     return 'granted'
+
+
+def csp_mode() -> str:
+    """CSP mode: as_is | no_unsafe | no_unsafe_plus_externals."""
+    from security.csp_policy import normalize_csp_mode
+
+    return normalize_csp_mode(security_env_str('API_CSP_MODE', default='as_is'))
