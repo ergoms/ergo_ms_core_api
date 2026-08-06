@@ -43,6 +43,7 @@ SETTINGS_MODULES: tuple[str, ...] = (
     'security_headers',
     'search',
     'server',
+    'session_devices',
     'smtp',
     'swagger',
     'templates',

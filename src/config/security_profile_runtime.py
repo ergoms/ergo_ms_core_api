@@ -110,3 +110,13 @@ def csp_mode() -> str:
     from security.csp_policy import normalize_csp_mode
 
     return normalize_csp_mode(security_env_str('API_CSP_MODE', default='as_is'))
+
+
+def auth_lockout_max_attempts() -> int:
+    """0 = lockout выключен; hardened/maximum подставляют 10/5."""
+    return security_env_int('API_AUTH_LOCKOUT_MAX_ATTEMPTS', default=0)
+
+
+def session_device_retention_days() -> int:
+    """0 = без автоочистки; hardened/maximum подставляют 90/30."""
+    return security_env_int('API_SESSION_DEVICE_RETENTION_DAYS', default=0)

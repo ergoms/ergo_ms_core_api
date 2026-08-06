@@ -18,6 +18,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from src.config.env import env
 from src.config.security_profile_runtime import (
+    auth_lockout_max_attempts,
     jwt_lifetime_enabled,
     login_throttle_rate,
     remember_me_refresh_token_lifetime,
@@ -39,6 +40,11 @@ THROTTLE_RATES_PASSWORD_RESET = env.str(
     'API_THROTTLE_RATES_PASSWORD_RESET',
     default='5/minute',
 )
+
+# Блокировка после N неудачных логинов (0 = выкл). Unset → профиль (hardened 10 / maximum 5).
+API_AUTH_LOCKOUT_MAX_ATTEMPTS = auth_lockout_max_attempts()
+API_AUTH_LOCKOUT_WINDOW_SECONDS = env.int('API_AUTH_LOCKOUT_WINDOW_SECONDS', default=900)
+API_AUTH_LOCKOUT_DURATION_SECONDS = env.int('API_AUTH_LOCKOUT_DURATION_SECONDS', default=900)
 
 DEFAULT_RENDERER_CLASSES = [
     'rest_framework.renderers.JSONRenderer',

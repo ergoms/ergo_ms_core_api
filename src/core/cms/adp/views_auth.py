@@ -30,6 +30,11 @@ from src.core.cms.adp.serializers import (
     UserRegistrationSerializer,
     UserRegistrationValidationSerializer,
 )
+from src.core.cms.adp.services.login_lockout import (
+    clear_login_lockout,
+    is_login_locked,
+    register_failed_login,
+)
 from src.core.cms.adp.services.password_reset import PasswordResetService
 from src.core.cms.adp.services.profile_settings import ProfileSettingsService
 from src.core.cms.adp.services.session_devices import (
@@ -402,9 +407,24 @@ class UserAuthorizationView(BaseAPIView):
             password = serializer.validated_data['password']
             remember_me = request.data.get('remember_me', False)
 
+            if is_login_locked(username):
+                audit_log(
+                    'auth.login_failed',
+                    request=request,
+                    severity='security',
+                    meta={'username': username, 'reason': 'lockout'},
+                )
+                return Response(
+                    {
+                        'message': _('Неверные учетные данные.'),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             user = authenticate(request, username=username, password=password)
 
             if user is not None:
+                clear_login_lockout(username)
                 update_last_login(None, user)
                 device = self._create_or_update_device(request, user)
 
@@ -473,11 +493,15 @@ class UserAuthorizationView(BaseAPIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
+            locked = register_failed_login(username)
             audit_log(
                 'auth.login_failed',
                 request=request,
                 severity='security',
-                meta={'username': username},
+                meta={
+                    'username': username,
+                    **({'reason': 'lockout'} if locked else {}),
+                },
             )
             return Response(
                 {
