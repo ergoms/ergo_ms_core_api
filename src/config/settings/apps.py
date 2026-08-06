@@ -46,6 +46,7 @@ MIDDLEWARE = [
     'src.core.utils.middleware.profile_locale_middleware.ProfileLocaleMiddleware',
     'src.core.utils.middleware.session_context_middleware.SessionContextMiddleware',
     'src.core.cms.adp.middleware.permission_request_cache.PermissionRequestCacheMiddleware',
+    'src.core.cms.adp.middleware.api_access_policy.ApiAccessPolicyMiddleware',
     'src.core.audit.context.AuditContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',

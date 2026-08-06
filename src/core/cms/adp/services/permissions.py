@@ -278,16 +278,16 @@ class PermissionService:
         return None
     
     @staticmethod
-    def _get_url_policies_for_user(user: User, user_role: UserRole) -> list:
+    def _get_policies_for_user(user: User, user_role: UserRole, policy_type: str) -> list:
         cache = get_request_permission_cache()
-        cache_key = f'url_policies:{user.pk}'
+        cache_key = f'{policy_type}_policies:{user.pk}'
         if cache_key in cache:
             return cache[cache_key]
 
         policies = list(
             Policy.objects.filter(
                 role=user_role.role,
-                policy_type='url',
+                policy_type=policy_type,
                 is_active=True,
             )
         )
@@ -300,12 +300,20 @@ class PermissionService:
             policies.extend(
                 Policy.objects.filter(
                     role_group_id__in=group_ids,
-                    policy_type='url',
+                    policy_type=policy_type,
                     is_active=True,
                 )
             )
         cache[cache_key] = policies
         return policies
+
+    @staticmethod
+    def _get_url_policies_for_user(user: User, user_role: UserRole) -> list:
+        return PermissionService._get_policies_for_user(user, user_role, 'url')
+
+    @staticmethod
+    def _get_api_policies_for_user(user: User, user_role: UserRole) -> list:
+        return PermissionService._get_policies_for_user(user, user_role, 'api')
 
     @staticmethod
     def _excluded_granted_role_group_ids(role_group_ids: list[int]) -> set[int]:
@@ -410,6 +418,9 @@ class PermissionService:
         policies = PermissionService._get_url_policies_for_user(user, user_role)
 
         for policy in sorted(policies, key=lambda p: p.priority, reverse=True):
+            # API-пути не участвуют в клиентском URL-ACL (даже если попали в старые записи)
+            if PermissionService._is_api_resource_path(policy.resource_path):
+                continue
             if PermissionService._match_url_pattern(url_path, policy.resource_path, policy.is_pattern):
                 # Найдено совпадение — возвращаем результат политики
                 return policy.action == 'allow'
@@ -421,6 +432,44 @@ class PermissionService:
             return True
         
         # Для других ролей — запрещаем по умолчанию
+        return False
+
+    @staticmethod
+    def _is_api_resource_path(path: str) -> bool:
+        value = (path or '').strip()
+        return (
+            value == '/api'
+            or value.startswith('/api/')
+            or value.startswith('/api*')
+        )
+
+    @staticmethod
+    def check_api_access(user: User, api_path: str) -> bool:
+        """
+        Проверить доступ пользователя к API path (Policy policy_type='api').
+
+        Семантика как у check_url_access: admin → allow; match по priority;
+        роль «Пользователь» без match → allow; иначе deny.
+        """
+        if PermissionService.is_admin(user):
+            return True
+
+        user_role = PermissionService.get_user_role(user)
+        if not user_role:
+            return False
+
+        policies = PermissionService._get_api_policies_for_user(user, user_role)
+
+        for policy in sorted(policies, key=lambda p: p.priority, reverse=True):
+            # Клиентские Vue-пути не режут HTTP API
+            if not PermissionService._is_api_resource_path(policy.resource_path):
+                continue
+            if PermissionService._match_url_pattern(api_path, policy.resource_path, policy.is_pattern):
+                return policy.action == 'allow'
+
+        if user_role.role.name == PermissionService.DEFAULT_ROLE_NAME:
+            return True
+
         return False
     
     @staticmethod
@@ -485,6 +534,8 @@ class PermissionService:
         )
         
         for policy in role_policies:
+            if PermissionService._is_api_resource_path(policy.resource_path):
+                continue
             if policy.action == 'allow':
                 allowed_urls.append(policy.resource_path)
             else:
@@ -500,6 +551,8 @@ class PermissionService:
             )
             
             for policy in group_policies:
+                if PermissionService._is_api_resource_path(policy.resource_path):
+                    continue
                 if policy.action == 'allow':
                     allowed_urls.append(policy.resource_path)
                 else:

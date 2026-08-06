@@ -12,9 +12,10 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 from src.core.utils.base.base_views import BaseAPIViewAuthMixin
-from src.core.cms.models import CMSPage
+from src.core.cms.models import CMSPage, ApiEndpoint
 from src.core.settings.models import UserAvatar
 from src.core.cms.scripts import normalize_cms_path, sync_cms_pages
+from src.core.cms.api_endpoints_sync import sync_api_endpoints
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,9 @@ class SyncAllProjectPages(BaseAPIViewAuthMixin):
             return Response(status=status.HTTP_403_FORBIDDEN)
 
         try:
+            from src.core.cms.client_routes_cache import invalidate_client_routes_index_cache
+
+            invalidate_client_routes_index_cache()
             result = sync_cms_pages(remove_orphans=False)
             return Response(sorted(result.paths), status=status.HTTP_200_OK)
         except Exception:
@@ -126,6 +130,85 @@ class GetCMSPages(BaseAPIViewAuthMixin):
                 'type': cms_page.page_type if cms_page else PAGE_TYPE_WITHOUT_LIMITATIONS,
                 'module_name': route_meta.get('module_name', 'core'),
                 'title': route_meta.get('title', ''),
+                'title_key': route_meta.get('title_key', ''),
             })
 
         return Response({'pages': pages_list}, status=status.HTTP_200_OK)
+
+
+class SyncApiEndpointsView(BaseAPIViewAuthMixin):
+    @swagger_auto_schema(
+        operation_description='Синхронизация каталога API-эндпоинтов с Django URLConf',
+        responses={
+            200: 'Эндпоинты синхронизированы',
+            401: 'Пользователь не авторизован',
+            403: 'Нет доступа',
+            400: 'Ошибка синхронизации',
+        },
+    )
+    def post(self, request: Request):
+        if not _has_admin_panel_access(request.user):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            result = sync_api_endpoints(remove_orphans=False)
+            return Response(
+                {
+                    'paths': sorted(result.paths),
+                    'added': sorted(result.added),
+                    'count': len(result.paths),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception:
+            logger.exception('Ошибка синхронизации API-эндпоинтов')
+            return Response(
+                {'error': 'Не удалось синхронизировать API-эндпоинты.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class GetApiEndpointsView(BaseAPIViewAuthMixin):
+    @swagger_auto_schema(
+        operation_description='Каталог API-эндпоинтов для политик доступа',
+        responses={
+            200: 'Список эндпоинтов',
+            401: 'Пользователь не авторизован',
+            403: 'Нет доступа',
+        },
+    )
+    def get(self, request: Request):
+        if not _has_admin_panel_access(request.user):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+        from src.core.cms.api_endpoints_sync import discover_api_endpoints
+
+        discovered = discover_api_endpoints()
+        db_by_path = {
+            ep.path: ep
+            for ep in ApiEndpoint.objects.all()
+        }
+
+        # Показываем discovery + записи из БД (после sync совпадают)
+        all_paths = sorted(set(discovered.keys()) | set(db_by_path.keys()))
+        endpoints = []
+        for path in all_paths:
+            meta = discovered.get(path) or {}
+            db_ep = db_by_path.get(path)
+            endpoints.append({
+                'id': db_ep.id if db_ep else None,
+                'path': path,
+                'name': (db_ep.name if db_ep and db_ep.name else meta.get('name', '')) or '',
+                'module_name': (
+                    db_ep.module_name if db_ep and db_ep.module_name
+                    else meta.get('module_name', 'core')
+                ) or 'core',
+                'title': (db_ep.name if db_ep and db_ep.name else meta.get('name', '')) or path,
+            })
+
+        from src.core.cms.adp.services.permission_catalog import get_modules_catalog
+
+        return Response({
+            'endpoints': endpoints,
+            'modules': get_modules_catalog(),
+        }, status=status.HTTP_200_OK)

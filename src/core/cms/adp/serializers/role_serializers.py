@@ -107,13 +107,39 @@ class PolicySerializer(ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def validate(self, attrs):
-        role = attrs.get('role')
-        role_group = attrs.get('role_group')
+        role = attrs.get('role', getattr(self.instance, 'role', None))
+        role_group = attrs.get('role_group', getattr(self.instance, 'role_group', None))
 
         if not role and not role_group:
             raise ValidationError(_('Политика должна быть привязана к роли или ролевой группе'))
         if role and role_group:
             raise ValidationError(_('Политика не может быть одновременно привязана к роли и ролевой группе'))
+
+        policy_type = attrs.get(
+            'policy_type',
+            getattr(self.instance, 'policy_type', None) or 'url',
+        )
+        resource_path = attrs.get(
+            'resource_path',
+            getattr(self.instance, 'resource_path', None) or '',
+        )
+        path = (resource_path or '').strip()
+        if path:
+            is_api_path = path == '/api' or path.startswith('/api/') or path.startswith('/api*')
+            if policy_type == 'api' and not is_api_path:
+                raise ValidationError({
+                    'resource_path': _(
+                        'Для типа «API» путь должен начинаться с /api/ '
+                        '(например /api/cms/adp/policies/ или /api/**).'
+                    ),
+                })
+            if policy_type == 'url' and is_api_path:
+                raise ValidationError({
+                    'resource_path': _(
+                        'Для типа «URL» нельзя указывать API-пути (/api/…). '
+                        'Используйте тип политики «API».'
+                    ),
+                })
 
         return attrs
 

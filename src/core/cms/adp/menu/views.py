@@ -354,7 +354,11 @@ class MenuSeparatorListView(BaseMenuAPIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        separators = MenuSeparator.objects.all().order_by('before_order')
+        separators = (
+            MenuSeparator.objects.all()
+            .prefetch_related('allowed_roles', 'allowed_role_groups')
+            .order_by('before_order')
+        )
         serializer = MenuSeparatorSerializer(separators, many=True)
         return Response(serializer.data)
     

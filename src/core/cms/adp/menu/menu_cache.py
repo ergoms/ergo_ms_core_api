@@ -7,6 +7,7 @@ import logging
 from django.conf import settings
 from django.core.cache import cache
 
+from src.core.cms.adp.menu.access import MenuAccessChecker
 from src.core.cms.adp.menu.models import MenuSeparator
 from src.core.cms.adp.menu.serializers import MenuSeparatorSerializer
 from src.core.cms.adp.menu.user_menu_builder import build_user_menu_items
@@ -61,15 +62,22 @@ def _menu_cache_key(user, organization_id=None) -> str:
     )
 
 
-def get_active_menu_separators() -> list[dict]:
-    separators = MenuSeparator.objects.filter(is_active=True).order_by('before_order')
+def get_active_menu_separators(user=None, organization_id=None) -> list[dict]:
+    separators = (
+        MenuSeparator.objects.filter(is_active=True)
+        .prefetch_related('allowed_roles', 'allowed_role_groups')
+        .order_by('before_order')
+    )
+    if user is not None:
+        checker = MenuAccessChecker(user, organization_id=organization_id)
+        separators = [sep for sep in separators if checker.can_see_separator(sep)]
     return MenuSeparatorSerializer(separators, many=True).data
 
 
 def _build_user_menu_payload(user, organization_id=None) -> dict:
     return {
         'menu_items': build_user_menu_items(user, organization_id=organization_id),
-        'separators': get_active_menu_separators(),
+        'separators': get_active_menu_separators(user, organization_id=organization_id),
     }
 
 

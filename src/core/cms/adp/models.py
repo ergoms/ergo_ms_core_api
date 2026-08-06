@@ -220,7 +220,7 @@ class Policy(models.Model):
     """
     POLICY_TYPES = [
         ('url', 'Доступ к URL'),
-        ('component', 'Доступ к компоненту'),  # Для будущего использования
+        ('api', 'Доступ к API'),
     ]
     
     ACTION_TYPES = [
@@ -232,7 +232,7 @@ class Policy(models.Model):
     policy_type = models.CharField(max_length=20, choices=POLICY_TYPES, default='url', verbose_name='Тип политики')
     action = models.CharField(max_length=10, choices=ACTION_TYPES, default='allow', verbose_name='Действие')
     
-    # URL или путь к компоненту
+    # URL страницы или API path
     resource_path = models.CharField(max_length=500, verbose_name='Путь к ресурсу')
     
     # Поддержка wildcards для URL (например, /api/users/*)

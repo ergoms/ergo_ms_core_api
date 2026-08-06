@@ -313,6 +313,9 @@ class PolicyListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = PolicySerializer(data=request.data)
         if serializer.is_valid():
             policy = serializer.save()
+            from src.core.cms.adp.menu.menu_cache import invalidate_user_menu_cache
+
+            invalidate_user_menu_cache()
             audit_log('policy.created', request=request, severity='security',
                    entity={'type': 'policy', 'label': str(policy)})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -362,6 +365,9 @@ class PolicyDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = PolicySerializer(policy, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            from src.core.cms.adp.menu.menu_cache import invalidate_user_menu_cache
+
+            invalidate_user_menu_cache()
             audit_log('policy.updated', request=request, severity='security',
                    entity={'type': 'policy', 'label': str(policy)})
             return Response(serializer.data)
@@ -381,6 +387,9 @@ class PolicyDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         
         policy_label = str(policy)
         policy.delete()
+        from src.core.cms.adp.menu.menu_cache import invalidate_user_menu_cache
+
+        invalidate_user_menu_cache()
         audit_log('policy.deleted', request=request, severity='security',
                entity={'type': 'policy', 'label': policy_label})
         return Response(status=status.HTTP_204_NO_CONTENT)
