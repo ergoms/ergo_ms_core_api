@@ -637,16 +637,74 @@ class MenuRestoreView(BaseMenuAPIView):
         from django.core.management import call_command
         from io import StringIO
 
+        from .restore_snapshot import capture_menu_snapshot, store_undo_snapshot
+
         buffer = StringIO()
         try:
+            undo_token = store_undo_snapshot(
+                user_id=request.user.id,
+                snapshot=capture_menu_snapshot(),
+            )
             call_command('restore_menu', stdout=buffer)
             invalidate_user_menu_cache()
             return Response({
                 'message': _('Меню восстановлено из миграций'),
                 'details': buffer.getvalue(),
+                'undo_token': undo_token,
             })
         except Exception as exc:
             return Response(
                 {'error': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
+class MenuRestoreUndoView(BaseMenuAPIView):
+    """Откат восстановления меню из снимка (кнопка «Отменить» в toast)."""
+
+    @swagger_auto_schema(
+        operation_description="Отменить последнее восстановление меню из миграций",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['undo_token'],
+            properties={
+                'undo_token': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='Токен снимка из ответа restore/',
+                ),
+            },
+        ),
+        responses={
+            200: "Меню откачено",
+            400: "Токен недействителен или снимок недоступен",
+            401: "Не авторизован",
+            403: "Нет доступа",
+        },
+        tags=['Menu Admin'],
+    )
+    def post(self, request):
+        if not self.is_admin(request.user):
+            return Response(
+                {'error': _('Доступ запрещён')},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .restore_snapshot import apply_menu_snapshot, pop_undo_snapshot
+
+        token = request.data.get('undo_token')
+        snapshot = pop_undo_snapshot(user_id=request.user.id, token=token)
+        if snapshot is None:
+            return Response(
+                {'error': _('Отмена недоступна: снимок истёк или уже использован')},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            apply_menu_snapshot(snapshot)
+        except Exception as exc:
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({'message': _('Восстановление меню отменено')})
