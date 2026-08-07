@@ -257,6 +257,7 @@ def _merge_stored_module_permissions(modules: List[Dict[str, Any]], *, disabled:
             by_name[module_name] = {
                 'module_name': module_name,
                 'module_label': _resolve_module_label(module_name),
+                'user_description': '',
                 'has_permission_catalog': False,
                 'permissions': {},
                 'disabled': module_name in disabled,
@@ -290,9 +291,16 @@ def get_modules_catalog(*, include_disabled: bool = False) -> List[Dict[str, Any
     for module_name in get_installed_module_names(include_disabled=include_disabled):
         catalog = permission_catalogs.get(module_name)
         permissions = dict(catalog.get('permissions', {})) if catalog else {}
+        raw_description = catalog.get('user_description') if catalog else None
+        user_description = (
+            raw_description.strip()
+            if isinstance(raw_description, str) and raw_description.strip()
+            else ''
+        )
         modules.append({
             'module_name': module_name,
             'module_label': _resolve_module_label(module_name, catalog),
+            'user_description': user_description,
             'has_permission_catalog': bool(catalog and catalog.get('permissions')),
             'permissions': permissions,
             'disabled': module_name in disabled,
