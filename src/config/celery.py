@@ -23,6 +23,7 @@ from src.config.log_format import (
     CELERY_WORKER_TASK_LOG_FORMAT,
 )
 from src.core.utils.auto_api.auto_config import get_env_deploy_type
+from src.core.utils.log_i18n import log_t
 
 # ---------------------------------------------------------------------------
 # БАЗОВАЯ НАСТРОЙКА DJANGO SETTINGS ДЛЯ CELERY
@@ -307,11 +308,13 @@ else:
                 )
                 _django_celery_configured = True
                 logger.info(
-                    'Celery (Django): broker=%s routes=%s (%d/%d)',
-                    celery_app.conf.broker_url,
-                    routes_source,
-                    len(routes),
-                    len(queues),
+                    log_t(
+                        'celery_django_broker_configured',
+                        broker=celery_app.conf.broker_url,
+                        routes_source=routes_source,
+                        routes_count=len(routes),
+                        queues_count=len(queues),
+                    ),
                 )
             except Exception as exc:
-                logger.warning('Celery (Django): не удалось сконфигурировать: %s', exc)
+                logger.warning(log_t('celery_django_configure_failed', error=exc))
