@@ -322,20 +322,18 @@ def populate_core_menu(apps, schema_editor):
         order=10,
         is_admin_only=True,
     )
-    users_menu = cms.create_group(
+    cms.create_group(
         'Пользователи',
         'UsersPanel',
         icon='Users',
         parent=admin_panel,
         order=10,
     )
-    cms.create_routes_batch([
-        ('В сети', 'OnlineUsersPanel'),
-    ], parent=users_menu)
+    # OnlineUsersPanel не создаём: отдельной страницы нет, «В сети» — фильтр на UsersPanel.
     cms.create_routes_batch([
         ('Роли', 'CategoriesPanel'),
         ('Ролевые группы', 'GroupsPanel'),
-        ('Политики и права', 'PermissionsPanel'),
+        ('Управление доступом', 'PermissionsPanel'),
         ('Ограничения', 'LiminationPanel'),
         ('Управление меню', 'MenuPanel'),
     ], parent=admin_panel)
@@ -549,7 +547,7 @@ def restructure_site_settings_menu(apps, schema_editor):
 def _ensure_admin_panel_children(cms, MenuItem, admin_panel):
     users_menu = MenuItem.objects.filter(route_name='UsersPanel', parent=admin_panel).first()
     if not users_menu:
-        users_menu = cms.create_group(
+        cms.create_group(
             'Пользователи',
             'UsersPanel',
             icon='Users',
@@ -558,13 +556,13 @@ def _ensure_admin_panel_children(cms, MenuItem, admin_panel):
             is_admin_only=True,
         )
 
-    if not MenuItem.objects.filter(parent=users_menu, route_name='OnlineUsersPanel').exists():
-        cms.create_route('В сети', 'OnlineUsersPanel', parent=users_menu, is_admin_only=True)
+    # Устаревший seed: маршрута OnlineUsersPanel на клиенте нет.
+    MenuItem.objects.filter(route_name='OnlineUsersPanel').delete()
 
     admin_routes = [
         ('Роли', 'CategoriesPanel'),
         ('Ролевые группы', 'GroupsPanel'),
-        ('Политики и права', 'PermissionsPanel'),
+        ('Управление доступом', 'PermissionsPanel'),
         ('Ограничения', 'LiminationPanel'),
         ('Управление меню', 'MenuPanel'),
     ]
@@ -731,13 +729,13 @@ def consolidate_access_menu(apps, schema_editor):
     if permissions_item is not None:
         preserved_order = permissions_item.order
         preserved_parent = permissions_item.parent
-        permissions_item.name = 'Доступ и права'
+        permissions_item.name = 'Управление доступом'
         permissions_item.route_name = NEW_ROUTE_NAME
         permissions_item.save(update_fields=['name', 'route_name'])
     elif limitations_item is not None:
         preserved_order = limitations_item.order
         preserved_parent = limitations_item.parent
-        limitations_item.name = 'Доступ и права'
+        limitations_item.name = 'Управление доступом'
         limitations_item.route_name = NEW_ROUTE_NAME
         limitations_item.save(update_fields=['name', 'route_name'])
 
@@ -756,7 +754,7 @@ def consolidate_access_menu(apps, schema_editor):
         )['order__max'] or 0
 
         MenuItem.objects.create(
-            name='Доступ и права',
+            name='Управление доступом',
             route_name=NEW_ROUTE_NAME,
             icon='Shield',
             item_type='route',
@@ -775,7 +773,7 @@ def restore_access_menu(apps, schema_editor):
     if access_item is None:
         return
 
-    access_item.name = 'Политики и права'
+    access_item.name = 'Управление доступом'
     access_item.route_name = 'PermissionsPanel'
     access_item.save(update_fields=['name', 'route_name'])
 
