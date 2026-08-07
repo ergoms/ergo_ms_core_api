@@ -83,32 +83,48 @@ class InstallCommand(PoetryCommand):
             return 1
 
         fingerprint = self._python_deps_fingerprint(project_root, extra_groups=extra_groups)
-        if not force and self._python_deps_stamp_matches(project_root, fingerprint):
-            root_data = self._read_toml(project_root / "pyproject.toml")
-            if root_data is not None:
-                module_configs = self._scan_module_configs(project_root)
-                module_only: Dict[str, Any] = {}
-                if module_configs:
-                    merged_deps, _conflicts = self._merge_dependencies(
-                        root_data, module_configs
-                    )
-                    root_deps = self._get_poetry_deps(root_data)
-                    module_only = {
-                        pkg: constraint
-                        for pkg, constraint in merged_deps.items()
-                        if pkg != "python" and pkg not in root_deps
-                    }
-                unsatisfied = (
-                    self._filter_unsatisfied_module_deps(module_only, project_root)
-                    if module_only
-                    else {}
-                )
-                if not unsatisfied:
+        root_data = self._read_toml(project_root / "pyproject.toml")
+        if root_data is None:
+            return 1
+
+        module_configs = self._scan_module_configs(project_root)
+        module_only: Dict[str, Any] = {}
+        if module_configs:
+            merged_deps, _conflicts = self._merge_dependencies(
+                root_data, module_configs
+            )
+            root_deps = self._get_poetry_deps(root_data)
+            module_only = {
+                pkg: constraint
+                for pkg, constraint in merged_deps.items()
+                if pkg != "python" and pkg not in root_deps
+            }
+
+        if not force:
+            unsatisfied = (
+                self._filter_unsatisfied_module_deps(module_only, project_root)
+                if module_only
+                else {}
+            )
+            stamp_ok = self._python_deps_stamp_matches(project_root, fingerprint)
+            # Stamp совпал — достаточно проверки модульных пакетов (быстрый путь).
+            # Stamp отсутствует/устарел — сверить poetry.lock с venv без poetry install.
+            if not unsatisfied and (
+                stamp_ok
+                or self._core_lock_satisfied(project_root, extra_groups=extra_groups)
+            ):
+                self._write_python_deps_stamp(project_root, fingerprint)
+                if stamp_ok:
                     print(
                         "─── Зависимости Python уже актуальны "
                         "(fingerprint совпал) — установка пропущена."
                     )
-                    return 0
+                else:
+                    print(
+                        "─── Зависимости Python уже в окружении "
+                        "(stamp обновлён) — poetry install пропущен."
+                    )
+                return 0
 
         if extra_groups:
             print(
@@ -120,13 +136,6 @@ class InstallCommand(PoetryCommand):
         rc = self._install_core(project_root, extra_groups=extra_groups)
         if rc != 0:
             return rc
-
-        root_data = self._read_toml(project_root / "pyproject.toml")
-        if root_data is None:
-            return 1
-
-        module_configs = self._scan_module_configs(project_root)
-        module_only: Dict[str, Any] = {}
 
         if not module_configs:
             print("Модульных pyproject.toml не найдено.")
@@ -390,6 +399,25 @@ class InstallCommand(PoetryCommand):
         for pkg, constraint in sorted(module_deps.items()):
             lines.append(self._to_pip_requirement(pkg, constraint, project_root))
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _core_lock_satisfied(
+        self,
+        project_root: Path,
+        *,
+        extra_groups: frozenset[str] = frozenset(),
+    ) -> bool:
+        """True, если пакеты из poetry.lock (нужные группы) уже стоят нужных версий."""
+        main_versions = self._parse_poetry_lock(
+            project_root / "poetry.lock",
+            groups=self._lock_groups_for_install(extra_groups),
+        )
+        if not main_versions:
+            return False
+        installed = self._get_installed_versions()
+        return all(
+            self._lock_version_matches_installed(name, version, installed)
+            for name, version in main_versions.items()
+        )
 
     def _sync_main_lock_versions(self, project_root: Path) -> int:
         main_versions = self._parse_poetry_lock(
