@@ -22,6 +22,8 @@ CATEGORY_MENU = 'menu'
 CATEGORY_MENU_LABEL = 'Меню'
 CATEGORY_SETTINGS = 'settings'
 CATEGORY_SETTINGS_LABEL = 'Настройки'
+CATEGORY_UNDO = 'undo'
+CATEGORY_UNDO_LABEL = 'Отмены'
 
 # --- Аутентификация ---
 AUTH_LOGIN = 'auth.login'
@@ -70,6 +72,10 @@ PROFILE_CHANGE_REJECTED = 'profile_change.rejected'
 MENU_ITEM_CREATED = 'menu.item_created'
 MENU_ITEM_UPDATED = 'menu.item_updated'
 MENU_ITEM_DELETED = 'menu.item_deleted'
+
+# --- Отмены (toast Undo) ---
+UNDO_PERFORMED = 'undo.performed'
+THEME_UNDONE = 'theme.undone'  # legacy
 
 # --- Настройки / темы ---
 SETTINGS_CHANGED = 'settings.changed'
@@ -122,6 +128,11 @@ def _menu(action, label, icon, severity=_INFO):
               category_label=CATEGORY_MENU_LABEL, severity=severity)
 
 
+def _undo(action, label, icon='Undo2', severity=_INFO):
+    return _a(action, label, icon=icon, category=CATEGORY_UNDO,
+              category_label=CATEGORY_UNDO_LABEL, severity=severity)
+
+
 CORE_AUDIT_SECTION = {
     'module': MODULE,
     'module_label': MODULE_LABEL,
@@ -167,6 +178,9 @@ CORE_AUDIT_SECTION = {
         _menu(MENU_ITEM_CREATED, 'Пункт меню создан', 'ListPlus'),
         _menu(MENU_ITEM_UPDATED, 'Пункт меню изменён', 'ListTree'),
         _menu(MENU_ITEM_DELETED, 'Пункт меню удалён', 'ListX'),
+
+        _undo(UNDO_PERFORMED, 'Отменено действие'),
+        _undo(THEME_UNDONE, 'Отменено действие с темой'),
     ],
 }
 
@@ -183,5 +197,7 @@ CORE_SETTINGS_SECTION = {
            category=CATEGORY_SETTINGS, category_label=CATEGORY_SETTINGS_LABEL),
         _a(THEME_DELETED, 'Тема удалена', icon='Palette',
            category=CATEGORY_SETTINGS, category_label=CATEGORY_SETTINGS_LABEL),
+        _undo(UNDO_PERFORMED, 'Отменено действие'),
+        _undo(THEME_UNDONE, 'Отменено действие с темой'),
     ],
 }

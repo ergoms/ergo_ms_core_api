@@ -4,6 +4,18 @@ from . import catalog
 from .models import AuditEvent
 
 
+class RecordUndoSerializer(serializers.Serializer):
+    """Тело POST record-undo от клиентского reportUndo."""
+
+    kind = serializers.CharField(max_length=128)
+    label = serializers.CharField(max_length=255)
+    entity_label = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    entity_type = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    entity_ref = serializers.CharField(max_length=128, required=False, allow_blank=True)
+    source_module = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    meta = serializers.DictField(required=False)
+
+
 class _AuditCatalogMixin(serializers.Serializer):
     """Обогащение записи данными каталога действий."""
 
@@ -28,10 +40,7 @@ class _AuditCatalogMixin(serializers.Serializer):
         return self._catalog().get(obj.source_module or '')
 
     def _spec(self, obj):
-        section = self._section(obj)
-        if not section:
-            return None
-        return section['actions'].get(obj.action or '')
+        return catalog.get_action_spec(obj.source_module or '', obj.action or '')
 
     def get_actor_ref(self, obj):
         actor = obj.actor

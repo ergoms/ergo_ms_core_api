@@ -12,6 +12,9 @@
 from django.apps import apps as global_apps
 from django.db import migrations
 
+# Не включать в цепочку restore_menu (одноразовый schema-repair, не populate).
+MENU_RESTORE_SKIP = True
+
 
 def _table_columns(schema_editor, table_name):
     connection = schema_editor.connection

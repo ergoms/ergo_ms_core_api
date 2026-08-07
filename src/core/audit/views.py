@@ -4,7 +4,7 @@ import uuid
 from django.db import connection
 from django.http import HttpResponse
 from django.utils.dateparse import parse_datetime
-from rest_framework import permissions, viewsets
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -20,7 +20,12 @@ from .dimensions import (
 from .models import AuditEvent
 from .pagination import AuditPagination
 from .permissions import CanReadAuditLog
-from .serializers import AuditEventDetailSerializer, AuditEventListSerializer
+from .serializers import (
+    AuditEventDetailSerializer,
+    AuditEventListSerializer,
+    RecordUndoSerializer,
+)
+from .service import AuditService
 
 
 class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
@@ -28,12 +33,18 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
     Доступен глобальному администратору и тем, кому разрешает провайдер
     ``audit.can_read`` в пределах read_guard-измерений scope.
-    Фильтры: модуль, действие, инициатор, важность, период, измерения scope,
-    поиск по объекту/инициатору.
+    Фильтры: модуль, действие / actions / exclude_actions, инициатор, важность,
+    период, измерения scope, поиск по объекту/инициатору.
     """
 
     permission_classes = [permissions.IsAuthenticated, CanReadAuditLog]
     pagination_class = AuditPagination
+
+    def get_permissions(self):
+        # Запись отмены — любой авторизованный (toast Undo), не только читатели журнала.
+        if getattr(self, 'action', None) == 'record_undo':
+            return [permissions.IsAuthenticated()]
+        return super().get_permissions()
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -131,6 +142,12 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(scope__contains={dim['key']: self._coerce_dimension_value(raw)})
         return qs
 
+    @staticmethod
+    def _parse_action_list(raw) -> list[str]:
+        if not raw:
+            return []
+        return [part.strip() for part in str(raw).split(',') if part.strip()]
+
     def _apply_filters(self, qs):
         params = self.request.query_params
 
@@ -138,9 +155,15 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         if source_module:
             qs = qs.filter(source_module=source_module)
 
-        action_value = params.get('action')
-        if action_value:
+        include_actions = self._parse_action_list(params.get('actions'))
+        exclude_actions = self._parse_action_list(params.get('exclude_actions'))
+        action_value = (params.get('action') or '').strip()
+        if include_actions:
+            qs = qs.filter(action__in=include_actions)
+        elif action_value:
             qs = qs.filter(action=action_value)
+        if exclude_actions:
+            qs = qs.exclude(action__in=exclude_actions)
 
         severity = params.get('severity')
         if severity:
@@ -273,7 +296,7 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         for event in qs:
             section = catalog_data.get(event.source_module or '')
             module_label = section['module_label'] if section else event.source_module
-            spec = section['actions'].get(event.action) if section else None
+            spec = catalog.get_action_spec(event.source_module or '', event.action or '')
             action_label = spec['label'] if spec else event.action
             writer.writerow([
                 event.created_at.strftime('%d.%m.%Y %H:%M:%S'),
@@ -286,3 +309,35 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             ])
 
         return response
+
+    @action(detail=False, methods=['post'], url_path='record-undo')
+    def record_undo(self, request):
+        """Записать отмену действия из toast Undo (клиентский reportUndo)."""
+        serializer = RecordUndoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        kind = data['kind']
+        label = data['label']
+        source_module = data.get('source_module') or 'core.cms.adp'
+        entity_label = data.get('entity_label') or label
+        entity_type = data.get('entity_type') or 'action'
+        entity_ref = data.get('entity_ref') or ''
+        meta = dict(data.get('meta') or {})
+        meta.setdefault('kind', kind)
+        meta.setdefault('label', label)
+
+        AuditService.record(
+            action='undo.performed',
+            source_module=source_module,
+            actor=request.user,
+            request=request,
+            entity={
+                'type': entity_type,
+                'ref': entity_ref,
+                'label': entity_label,
+            },
+            meta=meta,
+            severity=AuditEvent.SEVERITY_INFO,
+        )
+        return Response({'ok': True}, status=status.HTTP_201_CREATED)
