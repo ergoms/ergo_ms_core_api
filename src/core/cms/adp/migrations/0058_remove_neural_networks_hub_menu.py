@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Удаляет меню neural_networks_hub, ошибочно засеянное из ядра при restore_menu."""
+"""Удаляет меню модуля, ошибочно засеянное из ядра при restore_menu."""
 
 from django.db import migrations
 
+# Исторический module_source в БД — менять нельзя (уже применённые установки).
 MODULE_SOURCE = 'modules/neural_networks_hub'
 ROLE_GROUP_TEACHER = 'Преподаватель (НН)'
 ROLE_GROUP_STUDENT = 'Студент (НН)'
 
 
-def remove_neural_networks_hub_menu(apps, schema_editor):
+def remove_seeded_module_menu(apps, schema_editor):
     MenuItem = apps.get_model('cms_adp', 'MenuItem')
     MenuSeparator = apps.get_model('cms_adp', 'MenuSeparator')
     RoleGroup = apps.get_model('cms_adp', 'RoleGroup')
@@ -49,7 +50,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.RunPython(
-            remove_neural_networks_hub_menu,
+            remove_seeded_module_menu,
             migrations.RunPython.noop,
         ),
     ]

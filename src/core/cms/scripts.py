@@ -457,7 +457,7 @@ def _extract_catalog_from_client_config() -> dict[str, dict[str, str]]:
 
 
 def _module_name_from_route_key(module_key: str) -> str:
-    """module:lms / module:lms:mct / core:cms → lms / lms / cms."""
+    """module:<name> / module:<name>:<segment> / core:cms → <name> / <name> / cms."""
     parts = module_key.split(':')
     if len(parts) >= 2:
         return parts[1]

@@ -403,25 +403,26 @@ def remove_theme_editor_menu(apps, schema_editor):
     ).delete()
 
 
-def add_neural_networks_hub_menu(apps, schema_editor):
+def add_legacy_seeded_module_menu(apps, schema_editor):
     """
-    Раньше сидел меню neural_networks_hub в ядре.
+    Исторический seed меню внешнего модуля ошибочно жил в ядре.
 
     Seed модуля должен жить только в миграциях самого модуля. Тело — noop:
-    иначе restore_menu снова создаёт пункты (remove_nn_hub_menu он пропускает).
+    иначе restore_menu снова создаёт пункты (парный remove он пропускает).
     """
     return
 
 
-def remove_neural_networks_hub_menu(apps, schema_editor):
-    """Удаляет элементы меню и ролевые группы модуля neural_networks_hub."""
+def remove_legacy_seeded_module_menu(apps, schema_editor):
+    """Удаляет элементы меню и ролевые группы, ошибочно засеянные из ядра."""
     MenuItem = apps.get_model('cms_adp', 'MenuItem')
     RoleGroup = apps.get_model('cms_adp', 'RoleGroup')
+    # Исторический module_source в БД — литерал менять нельзя.
     MenuItem.objects.filter(module_source='modules/neural_networks_hub').delete()
     RoleGroup.objects.filter(name__in=[ROLE_GROUP_TEACHER, ROLE_GROUP_STUDENT]).delete()
 
 
-def remove_nn_hub_menu(apps, schema_editor):
+def remove_legacy_seeded_module_menu_alias(apps, schema_editor):
     MenuItem = apps.get_model('cms_adp', 'MenuItem')
     RoleGroup = apps.get_model('cms_adp', 'RoleGroup')
     MenuItem.objects.filter(module_source='modules/neural_networks_hub').delete()
@@ -440,12 +441,13 @@ def reverse_shortcodes_module_source(apps, schema_editor):
     MenuItem.objects.filter(module_source='cms_shortcodes').update(module_source='core/shortcodes')
 
 
-def update_bi_module_source(apps, schema_editor):
+def update_ex_core_module_source(apps, schema_editor):
     MenuItem = apps.get_model('cms_adp', 'MenuItem')
+    # Исторический module_source при выносе из ядра — литерал менять нельзя.
     MenuItem.objects.filter(module_source='core/bi').update(module_source='modules/bi_analysis')
 
 
-def reverse_bi_module_source(apps, schema_editor):
+def reverse_ex_core_module_source(apps, schema_editor):
     MenuItem = apps.get_model('cms_adp', 'MenuItem')
     MenuItem.objects.filter(module_source='modules/bi_analysis').update(module_source='core/bi')
 
@@ -1166,11 +1168,11 @@ class Migration(migrations.Migration):
             reverse_code=remove_theme_editor_menu,
         ),
         migrations.RunPython(
-            code=add_neural_networks_hub_menu,
-            reverse_code=remove_neural_networks_hub_menu,
+            code=add_legacy_seeded_module_menu,
+            reverse_code=remove_legacy_seeded_module_menu,
         ),
         migrations.RunPython(
-            code=remove_nn_hub_menu,
+            code=remove_legacy_seeded_module_menu_alias,
             reverse_code=django.db.migrations.operations.special.RunPython.noop,
         ),
         migrations.RunPython(
@@ -1178,8 +1180,8 @@ class Migration(migrations.Migration):
             reverse_code=reverse_shortcodes_module_source,
         ),
         migrations.RunPython(
-            code=update_bi_module_source,
-            reverse_code=reverse_bi_module_source,
+            code=update_ex_core_module_source,
+            reverse_code=reverse_ex_core_module_source,
         ),
         migrations.RunPython(
             code=remove_filemanager_menu,

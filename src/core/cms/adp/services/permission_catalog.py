@@ -139,7 +139,7 @@ def _help_yaml_module_title(module_name: str) -> Optional[str]:
 
 
 def canonicalize_module_name(module_name: str) -> str:
-    """Свести вложенный label/сегмент к имени установленного модуля (fgos→parser, mct→lms)."""
+    """Свести вложенный label/сегмент к имени установленного модуля (child→parent по префиксу)."""
     if not module_name:
         return 'core'
     key = module_name.strip()
