@@ -90,8 +90,9 @@ class PoetryCommand:
     def _run_django(self, args_str: str) -> int:
         """Выполнение Django команды."""
         try:
-            self._init_django()
-            
+            if not self._init_django():
+                return 1
+
             from django.core.management import execute_from_command_line
             
             django_args = ['manage.py', self.command_name]
@@ -147,8 +148,8 @@ class PoetryCommand:
             print(f"Ошибка при выполнении команды: {e}")
             return 1
 
-    def _init_django(self):
-        """Инициализация Django."""
+    def _init_django(self) -> bool:
+        """Инициализация Django. False — не продолжать команду (избежать populate() isn't reentrant)."""
         try:
             commands_dir = os.path.dirname(os.path.abspath(__file__))
             api_dir = os.path.dirname(commands_dir)
@@ -177,8 +178,10 @@ class PoetryCommand:
             # в Python 3.12 submodule не подгружается через getattr.
             if not settings.configured:
                 django.setup()
+            return True
         except Exception as e:
-            print(f"Предупреждение: Не удалось инициализировать Django: {e}")
+            print(f"Ошибка: Не удалось инициализировать Django: {e}", file=sys.stderr)
+            return False
 
     def _init_test_settings(self):
         """Инициализация настроек для команды test."""
