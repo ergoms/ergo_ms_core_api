@@ -60,6 +60,7 @@ def _guess_module_name(path: str) -> str:
     core_segments = {
         'cms', 'settings', 'system', 'audit', 'notifications',
         'messenger', 'realtime', 'utils', 'search', 'client_monitor',
+        'internal',
     }
     if segment in core_segments:
         return 'core'
