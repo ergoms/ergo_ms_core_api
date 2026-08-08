@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
+from email.utils import parseaddr
 from typing import Optional, Sequence, Tuple
 
-from django.core.mail import send_mail
+from django.core.mail import EmailMessage
 
 from src.core.utils.smtp_errors import format_smtp_error, sanitize_email_delivery_message
 from src.core.utils.smtp_resolver import EMAIL_DISABLED_MESSAGE, is_email_enabled, resolve_connection_and_from
@@ -60,14 +61,18 @@ def send_plain_email(
         return False, sanitize_email_delivery_message(error_msg)
 
     try:
-        send_mail(
-            subject,
-            body,
-            from_email,
-            normalized,
-            fail_silently=False,
+        message = EmailMessage(
+            subject=subject,
+            body=body,
+            from_email=from_email,
+            to=normalized,
             connection=connection,
         )
+        message.encoding = 'utf-8'
+        _addr_name, addr_email = parseaddr(from_email)
+        if addr_email:
+            message.reply_to = [addr_email]
+        message.send(fail_silently=False)
         return True, None
     except Exception as exc:
         error_msg = format_smtp_error(exc)

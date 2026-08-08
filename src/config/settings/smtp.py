@@ -50,7 +50,12 @@ else:
                 ', '.join(missing),
             )
 
-        DEFAULT_FROM_EMAIL = EMAIL_HOST_USER if EMAIL_HOST_USER else None
+        # Можно задать отображаемое имя: DEFAULT_FROM_EMAIL="ERGOMS <info@example.com>"
+        DEFAULT_FROM_EMAIL = (
+            env.str('DEFAULT_FROM_EMAIL', default='').strip()
+            or EMAIL_HOST_USER
+            or None
+        )
     except ImproperlyConfigured as e:
         logger.error('Ошибка конфигурации SMTP: %s', e)
         logger.warning('Отправка email будет недоступна без правильной конфигурации SMTP')

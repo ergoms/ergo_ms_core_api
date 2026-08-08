@@ -124,13 +124,22 @@ def send_registration_invitation_email(
     ttl_days: int,
 ) -> Tuple[bool, Optional[str]]:
     """Отправляет email с ссылкой-приглашением на регистрацию."""
+    base_url = getattr(settings, 'FRONTEND_BASE_URL', '').rstrip('/')
+    site_host = base_url.removeprefix('https://').removeprefix('http://') or 'ERGOMS'
+    ttl_label = '1 день' if ttl_days == 1 else f'{ttl_days} дн.'
     message = (
-        f'Вас пригласили зарегистрироваться в системе ERGOMS.\n\n'
-        f'Перейдите по ссылке для создания учётной записи:\n{invite_url}\n\n'
-        f'Ссылка действительна {ttl_days} дн.'
+        'Здравствуйте!\n\n'
+        f'Вас пригласили создать учётную запись в системе ERGOMS ({site_host}).\n\n'
+        'Чтобы зарегистрироваться, откройте ссылку ниже в браузере '
+        f'(действует {ttl_label}):\n\n'
+        f'{invite_url}\n\n'
+        'Если вы не ожидали это письмо, просто проигнорируйте его — '
+        'доступ без перехода по ссылке не будет создан.\n\n'
+        'С уважением,\n'
+        'Команда ERGOMS\n'
     )
     return send_plain_email(
-        subject='Приглашение в ERGOMS',
+        subject='Приглашение к регистрации в ERGOMS',
         body=message,
         recipients=[email],
     )
