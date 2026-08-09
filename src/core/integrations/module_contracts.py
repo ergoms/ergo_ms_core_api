@@ -27,6 +27,7 @@ NOTIFICATIONS_EMAIL_TEMPLATES_GROUP = 'notifications.email_templates'
 # --- Ops (bridge.provide_op / call) ---
 
 NOTIFICATIONS_CREATE = 'notifications.create'
+NOTIFICATIONS_RECALL = 'notifications.recall'
 # Динамические ops: f'{PREFIX}{module}'
 NOTIFICATIONS_RENDER_EMAIL_PREFIX = 'notifications.render_email.'
 NOTIFICATIONS_FILTER_EVENTS_PREFIX = 'notifications.filter_events_for_user.'

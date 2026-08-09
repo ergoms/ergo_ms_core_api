@@ -105,6 +105,11 @@ if _session_device_retention_days > 0:
         'schedule': crontab(hour=4, minute=0),
     }
 
+CELERY_BEAT_SCHEDULE['notifications-archive-stale-read'] = {
+    'task': 'core.notifications.archive_stale_read',
+    'schedule': crontab(hour=4, minute=15),
+}
+
 # Дополнительные настройки Beat из модулей
 CELERY_BEAT_ADDITIONAL_CONFIG = beat_module_manager.get_additional_beat_configs()
 
