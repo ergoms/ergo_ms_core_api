@@ -44,6 +44,17 @@ def send_notification_email_task(self, notification_id: int):
     if delivery.status == NotificationEmailDelivery.STATUS_SENT:
         return  # идемпотентность при Celery-retry/повторной постановке
 
+    # Recall за паузу до отправки — письмо не уходит
+    if notification.deleted_at is not None:
+        delivery.status = NotificationEmailDelivery.STATUS_SKIPPED
+        delivery.error_message = 'Отозвано (recall)'
+        delivery.save(update_fields=['status', 'error_message'])
+        logger.info(
+            'send_email: пропуск notification=%s — отозвано (deleted_at)',
+            notification_id,
+        )
+        return
+
     from src.core.utils.smtp_resolver import is_email_enabled
 
     if not is_email_enabled():
