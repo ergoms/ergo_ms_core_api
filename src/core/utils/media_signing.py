@@ -80,15 +80,21 @@ def generate_upload_token(
     max_size: int = None,
     allowed_types: list = None,
     expires_in: int = None,
+    *,
+    quota: str = 'user',
 ) -> str:
     """
     Сгенерировать upload-токен для загрузки файла в media_api.
 
     Параметры валидируются на сервере (нормализация пути, cap размера, whitelist типов).
+    quota: user | admin — класс квоты частоты в media_api.
     """
     target_dir = normalize_target_dir(target_dir)
     max_size = cap_max_size(max_size)
     allowed_types = filter_allowed_types(allowed_types)
+    quota_norm = (quota or 'user').strip().lower()
+    if quota_norm not in ('user', 'admin'):
+        quota_norm = 'user'
 
     if expires_in is None:
         expires_in = getattr(settings, 'MEDIA_UPLOAD_TOKEN_EXPIRATION', 300)
@@ -97,6 +103,7 @@ def generate_upload_token(
         'user_id': user_id,
         'target_dir': target_dir,
         'max_size': max_size,
+        'quota': quota_norm,
     }
     if allowed_types:
         payload['allowed_types'] = allowed_types
@@ -109,6 +116,8 @@ def get_upload_info(
     target_dir: str = '',
     max_size: int = None,
     allowed_types: list = None,
+    *,
+    quota: str = 'user',
 ) -> dict:
     """
     Получить полную информацию для загрузки (URL + токен).
@@ -116,7 +125,13 @@ def get_upload_info(
     Returns:
         Словарь с upload_url и token.
     """
-    token = generate_upload_token(user_id, target_dir, max_size, allowed_types)
+    token = generate_upload_token(
+        user_id,
+        target_dir,
+        max_size,
+        allowed_types,
+        quota=quota,
+    )
     base_url = _get_media_base_url()
     return {
         'upload_url': f"{base_url}/upload/",

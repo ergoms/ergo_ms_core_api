@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 EMAIL_ENABLED = email_mode_enabled()
 
+# Пауза перед письмом notification (сек). 300 = 5 мин; 0 = сразу после commit.
+_raw_email_delay = env.str('NOTIFICATIONS_EMAIL_DELAY_SECONDS', default='300').strip()
+try:
+    NOTIFICATIONS_EMAIL_DELAY_SECONDS = max(0, int(_raw_email_delay)) if _raw_email_delay else 300
+except ValueError:
+    NOTIFICATIONS_EMAIL_DELAY_SECONDS = 300
+
 if not EMAIL_ENABLED:
     EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'
     EMAIL_HOST = ''

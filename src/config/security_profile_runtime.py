@@ -92,6 +92,10 @@ def media_upload_rate() -> str:
     return security_env_str('MEDIA_API_UPLOAD_RATE', default='30/minute')
 
 
+def media_upload_rate_admin() -> str:
+    return security_env_str('MEDIA_API_UPLOAD_RATE_ADMIN', default='120/minute')
+
+
 def client_browser_log_enabled() -> bool:
     return security_env_bool('CLIENT_BROWSER_LOG_ENABLED', default=True)
 

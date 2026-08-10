@@ -26,6 +26,25 @@ def tokenize_search(search: str) -> list[str]:
     return [token for token in normalized.split() if token]
 
 
+def _unicode_icontains_variants(token: str) -> tuple[str, ...]:
+    """Варианты регистра для ORM icontains.
+
+    PostgreSQL с collation C сворачивает в ILIKE только ASCII; Python
+    корректно обрабатывает кириллицу.
+    """
+    if not token:
+        return ()
+    variants = {
+        token,
+        token.lower(),
+        token.upper(),
+        token.casefold(),
+        token.capitalize(),
+        token.title(),
+    }
+    return tuple(variants)
+
+
 def build_user_token_q(
     token: str,
     *,
@@ -34,10 +53,13 @@ def build_user_token_q(
     extra_fields: tuple[str, ...] = (),
 ) -> Q:
     token_filter = Q()
+    variants = _unicode_icontains_variants(token)
     for field in fields:
-        token_filter |= Q(**{f'{prefix}{field}__icontains': token})
+        for variant in variants:
+            token_filter |= Q(**{f'{prefix}{field}__icontains': variant})
     for field in extra_fields:
-        token_filter |= Q(**{f'{field}__icontains': token})
+        for variant in variants:
+            token_filter |= Q(**{f'{field}__icontains': variant})
     return token_filter
 
 
