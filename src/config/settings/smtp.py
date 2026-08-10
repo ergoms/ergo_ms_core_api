@@ -56,6 +56,28 @@ else:
             or EMAIL_HOST_USER
             or None
         )
+        # HELO/EHLO: иначе Django берёт FQDN VPS (*.twc1.net) → DBL_SPAM у провайдеров.
+        EMAIL_LOCAL_HOSTNAME = env.str('EMAIL_LOCAL_HOSTNAME', default='').strip()
+        try:
+            from email.utils import parseaddr
+            from django.core.mail.utils import DNS_NAME
+
+            helo = EMAIL_LOCAL_HOSTNAME
+            if not helo:
+                for candidate in (DEFAULT_FROM_EMAIL, EMAIL_HOST_USER):
+                    if not candidate:
+                        continue
+                    _name, addr = parseaddr(str(candidate))
+                    addr = addr or str(candidate)
+                    if '@' in addr:
+                        helo = addr.rsplit('@', 1)[-1].strip().lower()
+                        break
+            if helo:
+                EMAIL_LOCAL_HOSTNAME = helo
+                # Django 5.2+: CachedDnsName хранит результат в _fqdn
+                DNS_NAME._fqdn = helo
+        except Exception as helo_exc:
+            logger.warning('Не удалось задать SMTP HELO hostname: %s', helo_exc)
     except ImproperlyConfigured as e:
         logger.error('Ошибка конфигурации SMTP: %s', e)
         logger.warning('Отправка email будет недоступна без правильной конфигурации SMTP')

@@ -124,20 +124,38 @@ def send_registration_invitation_email(
     ttl_days: int,
 ) -> Tuple[bool, Optional[str]]:
     """Отправляет email с ссылкой-приглашением на регистрацию."""
+    from urllib.parse import parse_qs, urlparse
+
     base_url = getattr(settings, 'FRONTEND_BASE_URL', '').rstrip('/')
     site_host = base_url.removeprefix('https://').removeprefix('http://') or 'ERGOMS'
+    register_url = f'{base_url}/register' if base_url else '/register'
+    token = (parse_qs(urlparse(invite_url or '').query).get('invite') or [''])[0].strip()
     ttl_label = '1 день' if ttl_days == 1 else f'{ttl_days} дн.'
-    message = (
-        'Здравствуйте!\n\n'
-        f'Вас пригласили создать учётную запись в системе ERGOMS ({site_host}).\n\n'
-        'Чтобы зарегистрироваться, откройте ссылку ниже в браузере '
-        f'(действует {ttl_label}):\n\n'
-        f'{invite_url}\n\n'
-        'Если вы не ожидали это письмо, просто проигнорируйте его — '
-        'доступ без перехода по ссылке не будет создан.\n\n'
-        'С уважением,\n'
-        'Команда ERGOMS\n'
-    )
+
+    # Без URL вида /register?invite=<длинный_токен>: Mail.ru часто режет как phishing/spam,
+    # хотя обычное письмо с того же ящика проходит.
+    if token:
+        message = (
+            'Здравствуйте!\n\n'
+            f'Вас пригласили создать учётную запись в системе ERGOMS ({site_host}).\n\n'
+            'Как зарегистрироваться:\n'
+            f'1. Откройте страницу: {register_url}\n'
+            f'2. Введите код приглашения:\n{token}\n\n'
+            f'Код действует {ttl_label}.\n\n'
+            'Если вы не ожидали это письмо, просто проигнорируйте его — '
+            'доступ без кода не будет создан.\n\n'
+            'С уважением,\n'
+            'Команда ERGOMS\n'
+        )
+    else:
+        message = (
+            'Здравствуйте!\n\n'
+            f'Вас пригласили создать учётную запись в системе ERGOMS ({site_host}).\n\n'
+            f'Откройте страницу регистрации: {register_url}\n\n'
+            f'Ссылка действительна {ttl_label}.\n\n'
+            'С уважением,\n'
+            'Команда ERGOMS\n'
+        )
     return send_plain_email(
         subject='Приглашение к регистрации в ERGOMS',
         body=message,

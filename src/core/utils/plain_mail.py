@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
-from email.utils import parseaddr
+from email.utils import formatdate, make_msgid, parseaddr
 from typing import Optional, Sequence, Tuple
+from urllib.parse import urlparse
 
-from django.core.mail import EmailMessage
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
 
 from src.core.utils.smtp_errors import format_smtp_error, sanitize_email_delivery_message
 from src.core.utils.smtp_resolver import EMAIL_DISABLED_MESSAGE, is_email_enabled, resolve_connection_and_from
@@ -32,15 +34,50 @@ def check_email_enabled() -> SendResult | None:
     return None
 
 
+def _message_id_domain(from_email: str) -> str:
+    """Домен для Message-ID: совпадает с From / FRONTEND_BASE_URL, не hostname VPS."""
+    _name, addr = parseaddr(from_email or '')
+    if '@' in addr:
+        return addr.rsplit('@', 1)[-1].lower()
+    base = getattr(settings, 'FRONTEND_BASE_URL', '') or ''
+    host = urlparse(base).hostname
+    if host:
+        return host.lower()
+    return 'localhost'
+
+
+def _plain_to_simple_html(body: str) -> str:
+    """Простой HTML-альтернатив (ссылки кликабельны) — меньше «голого» spam-сигнала."""
+    escaped = (
+        body.replace('&', '&amp;')
+        .replace('<', '&lt;')
+        .replace('>', '&gt;')
+    )
+    linked = re.sub(
+        r'(https?://[^\s<>"\']+)',
+        r'<a href="\1">\1</a>',
+        escaped,
+    )
+    paragraphs = ''.join(
+        f'<p style="margin:0 0 12px 0;">{block.replace(chr(10), "<br>")}</p>'
+        for block in linked.split('\n\n')
+    )
+    return (
+        '<!DOCTYPE html><html><body style="font-family:sans-serif;font-size:14px;'
+        f'line-height:1.5;color:#222;">{paragraphs}</body></html>'
+    )
+
+
 def send_plain_email(
     *,
     subject: str,
     body: str,
     recipients: Sequence[str],
     fail_log_level: int = logging.ERROR,
+    html_body: str | None = None,
 ) -> SendResult:
     """
-    Отправить plain-text письмо.
+    Отправить plain-text письмо (опционально с HTML-альтернативой).
 
     Returns:
         (True, None) при успехе; (False, сообщение) при ошибке.
@@ -61,7 +98,7 @@ def send_plain_email(
         return False, sanitize_email_delivery_message(error_msg)
 
     try:
-        message = EmailMessage(
+        message = EmailMultiAlternatives(
             subject=subject,
             body=body,
             from_email=from_email,
@@ -72,6 +109,11 @@ def send_plain_email(
         _addr_name, addr_email = parseaddr(from_email)
         if addr_email:
             message.reply_to = [addr_email]
+        # Иначе Django ставит Message-ID с FQDN VPS (*.twc1.net) — Mail.ru часто режет как spam.
+        message.extra_headers['Message-ID'] = make_msgid(domain=_message_id_domain(from_email))
+        message.extra_headers['Date'] = formatdate(localtime=True)
+        html = html_body if html_body is not None else _plain_to_simple_html(body)
+        message.attach_alternative(html, 'text/html')
         message.send(fail_silently=False)
         return True, None
     except Exception as exc:

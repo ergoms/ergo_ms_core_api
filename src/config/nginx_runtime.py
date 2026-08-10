@@ -81,12 +81,17 @@ def nginx_host_policy() -> str:
 
 def nginx_public_base_url() -> str:
     override = env.str('FRONTEND_BASE_URL', default='').strip()
-    if override and not nginx_enabled():
+    if override:
         return override.rstrip('/')
 
     scheme = 'https' if nginx_use_https() else 'http'
     host = nginx_public_host()
-    port = nginx_listen_port()
+    # NGINX_LISTEN_PORT — HTTP-listener (часто :80 с редиректом); для публичных HTTPS-ссылок — TLS-порт.
+    port = (
+        env.str('NGINX_TLS_PORT', default='443').strip() or '443'
+        if scheme == 'https'
+        else nginx_listen_port()
+    )
     if (scheme == 'http' and port == '80') or (scheme == 'https' and port == '443'):
         return f'{scheme}://{host}'
     return f'{scheme}://{host}:{port}'
@@ -128,15 +133,20 @@ def media_api_public_base_url() -> str:
     """
     Публичный base URL для подписанных ссылок (/serve/, /upload/).
 
-    Приоритет: MEDIA_API_URL → автовывод из nginx или MEDIA_API_BIND_PORT.
-  """
+    Приоритет: MEDIA_API_URL → при nginx тот же origin, что SPA (/serve/ в ergo_ms.conf)
+    → иначе MEDIA_API_BIND_PORT на localhost.
+    """
     explicit = env.str('MEDIA_API_URL', default='').strip()
     if explicit:
         return explicit.rstrip('/')
 
+    if nginx_enabled():
+        # NGINX_LISTEN_PORT часто :80 с редиректом на HTTPS; для ссылок — публичный TLS-origin.
+        return nginx_public_base_url()
+
     host = effective_media_public_host('localhost')
     port = effective_media_public_port('8003')
-    protocol = 'https' if nginx_use_https() else env.str('MEDIA_API_PROTOCOL', default='http').strip() or 'http'
+    protocol = env.str('MEDIA_API_PROTOCOL', default='http').strip() or 'http'
     if (protocol == 'http' and str(port) == '80') or (protocol == 'https' and str(port) == '443'):
         return f'{protocol}://{host}'
     return f'{protocol}://{host}:{port}'
