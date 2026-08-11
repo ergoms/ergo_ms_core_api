@@ -56,7 +56,7 @@ class UserProfileChangeRequestListCreateView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: UserProfileChangeRequestSerializer(many=True)},
     )
     def get(self, request):
-        if not ProfileChangeRequestService.is_request_flow_enabled():
+        if not ProfileChangeRequestService.is_request_flow_enabled(request.user):
             return Response({'requests': [], 'request_flow_enabled': False})
 
         queryset = (
@@ -80,7 +80,7 @@ class UserProfileChangeRequestListCreateView(BaseAPIViewAuthMixin, BaseAPIView):
         },
     )
     def post(self, request):
-        if not ProfileChangeRequestService.is_request_flow_enabled():
+        if not ProfileChangeRequestService.is_request_flow_enabled(request.user):
             return Response(
                 {'error': ProfileChangeRequestService.NOT_ALLOWED_MESSAGE},
                 status=status.HTTP_403_FORBIDDEN,
