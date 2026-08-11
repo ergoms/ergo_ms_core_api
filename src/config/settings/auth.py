@@ -32,13 +32,19 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 # Настройка ограничения запросов для анонимных и аутентифицированных пользователей.
-THROTTLE_RATES_ANON = env.str('API_THROTTLE_RATES_ANON', default='10/minute')
+# Anon должен выдерживать F5/boot публичных эндпоинтов; login — отдельный scope 5/min.
+THROTTLE_RATES_ANON = env.str('API_THROTTLE_RATES_ANON', default='60/minute')
 THROTTLE_RATES_USER = env.str('API_THROTTLE_RATES_USER', default='5000/hour')
 # Login throttle: unset → профиль ERGO_SECURITY (standard: 5/minute)
 THROTTLE_RATES_LOGIN = login_throttle_rate()
 THROTTLE_RATES_PASSWORD_RESET = env.str(
     'API_THROTTLE_RATES_PASSWORD_RESET',
     default='5/minute',
+)
+# Восстановление сессии по cookie (F5): отдельный бакет, не общий anon.
+THROTTLE_RATES_TOKEN_REFRESH = env.str(
+    'API_THROTTLE_RATES_TOKEN_REFRESH',
+    default='60/minute',
 )
 
 # Блокировка после N неудачных логинов (0 = выкл). Unset → профиль (hardened 10 / maximum 5).
@@ -71,12 +77,19 @@ REST_FRAMEWORK = {
         'user': THROTTLE_RATES_USER,
         'password_reset': THROTTLE_RATES_PASSWORD_RESET,
         'login': THROTTLE_RATES_LOGIN,
+        'token_refresh': THROTTLE_RATES_TOKEN_REFRESH,
     },
 }
 
-# Установка настроек REST_FRAMEWORK глобально
-if not hasattr(settings, 'REST_FRAMEWORK'):
-    setattr(settings, 'REST_FRAMEWORK', REST_FRAMEWORK)
+# Всегда синхронизируем: иначе после reload view видит новый scope,
+# а django.conf.settings держит старый DEFAULT_THROTTLE_RATES → 500.
+setattr(settings, 'REST_FRAMEWORK', REST_FRAMEWORK)
+try:
+    from rest_framework.settings import api_settings as _drf_api_settings
+
+    _drf_api_settings.reload()
+except Exception:
+    pass
 
 # Настройка время жизни токенов доступа и обновления (стандартные).
 ACCESS_TOKEN_LIFETIME = env.int('API_ACCESS_TOKEN_LIFETIME', default=30)

@@ -14,4 +14,11 @@ def api_exception_handler(exc, context):
     if response is None or not isinstance(exc, Throttled):
         return response
     response.data = {'detail': too_many_requests_message()}
+    # Клиент рисует оверлей и backoff refresh по Retry-After.
+    wait = getattr(exc, 'wait', None)
+    if wait is not None:
+        try:
+            response['Retry-After'] = str(max(int(wait), 1))
+        except (TypeError, ValueError):
+            pass
     return response

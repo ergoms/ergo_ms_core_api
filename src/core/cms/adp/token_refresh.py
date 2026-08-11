@@ -3,8 +3,10 @@ from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext as _
+from django.core.exceptions import ImproperlyConfigured
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
+from rest_framework.throttling import SimpleRateThrottle
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -79,8 +81,29 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
         return data
 
 
+class TokenRefreshRateThrottle(SimpleRateThrottle):
+    """Отдельный бакет для F5/restore; rate из settings или запасной 60/minute."""
+
+    scope = 'token_refresh'
+
+    def get_cache_key(self, request, view):
+        ident = self.get_ident(request)
+        if ident is None:
+            return None
+        return self.cache_format % {'scope': self.scope, 'ident': ident}
+
+    def get_rate(self):
+        try:
+            return super().get_rate()
+        except ImproperlyConfigured:
+            return '60/minute'
+
+
 class DeviceBoundTokenRefreshView(TokenRefreshView):
     serializer_class = DeviceBoundTokenRefreshSerializer
+    # Не AnonRateThrottle: F5 без Bearer иначе делит общий anon-бакет
+    # с гостевыми запросами и выглядит как разлогин.
+    throttle_classes = [TokenRefreshRateThrottle]
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
