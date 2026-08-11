@@ -61,6 +61,7 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_RENDERER_CLASSES': DEFAULT_RENDERER_CLASSES,
+    'EXCEPTION_HANDLER': 'src.core.utils.exception_handler.api_exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',

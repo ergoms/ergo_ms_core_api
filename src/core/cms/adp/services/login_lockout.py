@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 
 from django.conf import settings
 from django.core.cache import cache
@@ -39,7 +40,25 @@ def lockout_duration_seconds() -> int:
 def is_login_locked(login: str) -> bool:
     if lockout_max_attempts() <= 0:
         return False
-    return bool(cache.get(f'{_LOCK_PREFIX}{_key_suffix(login)}'))
+    return cache.get(f'{_LOCK_PREFIX}{_key_suffix(login)}') is not None
+
+
+def login_lock_retry_after(login: str) -> int:
+    """Секунды до снятия блокировки; минимум 1, если блокировка активна."""
+    duration = lockout_duration_seconds()
+    if lockout_max_attempts() <= 0:
+        return duration
+    expiry = cache.get(f'{_LOCK_PREFIX}{_key_suffix(login)}')
+    if expiry is None:
+        return duration
+    try:
+        expiry_ts = float(expiry)
+    except (TypeError, ValueError):
+        return duration
+    # Старые ключи хранили флаг 1, а не unix-время.
+    if expiry_ts < 1_000_000_000:
+        return duration
+    return max(int(expiry_ts - time.time()), 1)
 
 
 def register_failed_login(login: str) -> bool:
@@ -63,7 +82,7 @@ def register_failed_login(login: str) -> bool:
         attempts = 1
 
     if attempts >= max_attempts:
-        cache.set(lock_key, 1, timeout=duration)
+        cache.set(lock_key, time.time() + duration, timeout=duration)
         cache.delete(attempts_key)
         logger.warning('auth lockout: login blocked after %s failed attempts', attempts)
         return True

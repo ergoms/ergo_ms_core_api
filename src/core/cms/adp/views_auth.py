@@ -33,8 +33,10 @@ from src.core.cms.adp.serializers import (
 from src.core.cms.adp.services.login_lockout import (
     clear_login_lockout,
     is_login_locked,
+    login_lock_retry_after,
     register_failed_login,
 )
+from src.core.utils.exception_handler import too_many_requests_message
 from src.core.cms.adp.services.password_reset import PasswordResetService
 from src.core.cms.adp.services.profile_settings import ProfileSettingsService
 from src.core.cms.adp.services.session_devices import (
@@ -57,6 +59,15 @@ from src.config.settings.auth import get_token_lifetime
 from src.core.audit.shortcuts import audit_log
 
 logger = logging.getLogger(__name__)
+
+
+def _too_many_login_attempts_response(username: str) -> Response:
+    retry_after = login_lock_retry_after(username)
+    return Response(
+        {'detail': too_many_requests_message()},
+        status=status.HTTP_429_TOO_MANY_REQUESTS,
+        headers={'Retry-After': str(retry_after)},
+    )
 
 
 class UserRegistrationValidationView(BaseAPIView):
@@ -414,12 +425,7 @@ class UserAuthorizationView(BaseAPIView):
                     severity='security',
                     meta={'username': username, 'reason': 'lockout'},
                 )
-                return Response(
-                    {
-                        'message': _('Неверные учетные данные.'),
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                return _too_many_login_attempts_response(username)
 
             user = authenticate(request, username=username, password=password)
 
@@ -503,6 +509,8 @@ class UserAuthorizationView(BaseAPIView):
                     **({'reason': 'lockout'} if locked else {}),
                 },
             )
+            if locked:
+                return _too_many_login_attempts_response(username)
             return Response(
                 {
                     "message": _("Неверные учетные данные.")
