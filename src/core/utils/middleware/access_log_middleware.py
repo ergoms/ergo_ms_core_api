@@ -1,7 +1,7 @@
 """
 Однострочный HTTP access-лог (единый для development и production).
 
-Формат: "GET /api/foo/ HTTP/1.1" 200
+Формат: "GET /api/foo/ HTTP/1.1" 200 12ms
 Логгер: django.server, уровень INFO.
 Встроенный access daphne/runserver отключён — источник только этот middleware.
 """
@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 logger = logging.getLogger('django.server')
 
@@ -31,6 +32,7 @@ class AccessLogMiddleware:
         _silence_wsgi_runserver_access()
 
     def __call__(self, request):
+        started = time.perf_counter()
         response = self.get_response(request)
         try:
             method = request.method or '-'
@@ -38,7 +40,8 @@ class AccessLogMiddleware:
             path = request.path or '/'
             proto = request.META.get('SERVER_PROTOCOL', 'HTTP/1.1')
             status = getattr(response, 'status_code', '-')
-            logger.info('"%s %s %s" %s', method, path, proto, status)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            logger.info('"%s %s %s" %s %dms', method, path, proto, status, elapsed_ms)
         except Exception:
             # access-лог не должен ломать ответ
             pass

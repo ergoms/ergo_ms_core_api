@@ -25,6 +25,7 @@ from src.core.system.runtime_warmup import warmup_runtime_connections
 
 warmup_runtime_connections()
 
+from asgiref.sync import ThreadSensitiveContext
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.security.websocket import AllowedHostsOriginValidator
@@ -33,8 +34,15 @@ from src.core.messenger.routing import websocket_urlpatterns as messenger_ws
 from src.core.notifications.routing import websocket_urlpatterns as notifications_ws
 from src.core.cms.adp.routing import websocket_urlpatterns as adp_ws
 
+
+async def http_application(scope, receive, send):
+    """Каждый HTTP-запрос — свой thread-sensitive executor (параллельные sync-вьюхи)."""
+    async with ThreadSensitiveContext():
+        await django_asgi_app(scope, receive, send)
+
+
 application = ProtocolTypeRouter({
-    "http": django_asgi_app,
+    "http": http_application,
     "websocket": AllowedHostsOriginValidator(
         AuthMiddlewareStack(
             URLRouter(messenger_ws + notifications_ws + adp_ws)
