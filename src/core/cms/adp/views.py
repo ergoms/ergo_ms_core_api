@@ -54,8 +54,8 @@ def _prev_user_id_from_logout_request(request):
 class LogoutView(BaseAPIView):
     """Отзыв refresh-сессии и очистка HttpOnly cookie (доступно без валидного access)."""
 
-    # Идемпотентная очистка cookie: не режем throttle'ом — иначе шторм 401→logout
-    # получает 429 и refresh-cookie так и не сбрасывается.
+    # Идемпотентная очистка cookie: DRF throttle не ставим — первый logout
+    # должен сбросить cookie. Повторный шторм: nginx zone=ergo_logout + fast-path.
     throttle_classes = []
     # Plain JWT без привязки к устройству: logout должен очищать cookie и после
     # отзыва сессии устройства, когда device-bound access уже недействителен.
@@ -63,13 +63,20 @@ class LogoutView(BaseAPIView):
 
     def post(self, request):
         response = Response(status=status.HTTP_204_NO_CONTENT)
+        refresh_raw = get_refresh_token_from_request(request)
+        actor = request.user if getattr(request.user, 'is_authenticated', False) else None
+
+        # Зависшая вкладка после очистки сессии: без DB/revoke/audit.
+        if not refresh_raw and actor is None:
+            clear_auth_cookies(response)
+            return response
+
         prev_user_id = _prev_user_id_from_logout_request(request)
         # Best-effort: blacklist / revoke устройства до очистки cookie.
         revoke_logout_session(request)
         if prev_user_id is not None:
             set_prev_user_cookie(response, prev_user_id)
         clear_auth_cookies(response)
-        actor = request.user if getattr(request.user, 'is_authenticated', False) else None
         if actor is not None:
             audit_log('auth.logout', request=request, actor=actor)
         return response
