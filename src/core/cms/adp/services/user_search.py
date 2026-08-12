@@ -97,6 +97,25 @@ def apply_user_search(
     return apply_ordered_ids(queryset, result.ids)
 
 
+def apply_last_name_letter_filter(queryset, letter: str, *, prefix: str = ''):
+    """Фильтр по первой букве фамилии (AlphabetFilter).
+
+    Варианты регистра нужны для кириллицы на PostgreSQL с collation C.
+    """
+    normalized = (letter or '').strip()
+    if not normalized:
+        return queryset
+
+    # Одна буква (или короткий префикс); берём первый символ после trim.
+    char = normalized[0]
+    field = f'{prefix}last_name'
+    letter_filter = Q()
+    for variant in _unicode_icontains_variants(char):
+        letter_filter |= Q(**{f'{field}__istartswith': variant})
+        letter_filter |= Q(**{f'{field}__startswith': variant})
+    return queryset.filter(letter_filter)
+
+
 def build_user_search_q(
     search: str,
     *,
