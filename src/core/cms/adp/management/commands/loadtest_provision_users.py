@@ -32,7 +32,7 @@ _USERNAME_PREFIX = 'lt_'
 class Command(BaseCommand):
     help = (
         'Создаёт эфемерных пользователей loadtest с JWT (device-bound) '
-        'или удаляет их по --run-id.'
+        'или удаляет их (--cleanup; опционально по --run-id).'
     )
 
     def add_arguments(self, parser):
@@ -52,12 +52,18 @@ class Command(BaseCommand):
             '--run-id',
             type=str,
             default='',
-            help='Идентификатор прогона (для cleanup обязателен; для provision генерируется).',
+            help=(
+                'Идентификатор прогона (для cleanup ограничивает удаление; '
+                'для provision генерируется).'
+            ),
         )
         parser.add_argument(
             '--cleanup',
             action='store_true',
-            help='Удалить пользователей прогона --run-id.',
+            help=(
+                'Удалить пользователей loadtest: с --run-id — только прогон, '
+                'без --run-id — всех с префиксом lt_.'
+            ),
         )
         parser.add_argument(
             '--out',
@@ -74,14 +80,20 @@ class Command(BaseCommand):
         out_path = (options.get('out') or '').strip()
 
         if cleanup:
-            if not run_id:
-                raise CommandError('Для --cleanup укажите --run-id.')
-            deleted = self._cleanup(run_id)
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f'Удалено пользователей loadtest: {deleted} (run-id={run_id})'
+            if run_id:
+                deleted = self._cleanup(run_id)
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f'Удалено пользователей loadtest: {deleted} (run-id={run_id})'
+                    )
                 )
-            )
+            else:
+                deleted = self._cleanup_all()
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f'Удалено пользователей loadtest: {deleted} (все lt_*)'
+                    )
+                )
             return
 
         if count < 1:
@@ -162,16 +174,33 @@ class Command(BaseCommand):
             'access_tokens': [item['access'] for item in users_out],
         }
 
-    def _cleanup(self, run_id: str) -> int:
-        prefix = f'{_USERNAME_PREFIX}{run_id}_'
-        qs = User.objects.filter(username__startswith=prefix).order_by('id')
+    def _delete_users(self, qs) -> int:
+        total = qs.count()
+        if total == 0:
+            self.stdout.write('Пользователей loadtest для удаления: 0')
+            return 0
+        self.stdout.write(f'К удалению пользователей loadtest: {total}')
+        self.stdout.flush()
         deleted = 0
-        for user in qs:
+        step = 1 if total <= 20 else 10
+        for user in qs.iterator(chunk_size=50):
             try:
                 delete_admin_user(user)
-                deleted += 1
             except UserDeletionBlockedError as exc:
                 raise CommandError(
                     f'Не удалось удалить {user.username}: {exc.detail or exc}'
                 ) from exc
+            deleted += 1
+            if deleted == 1 or deleted == total or deleted % step == 0:
+                self.stdout.write(f'Удалено: {deleted}/{total}')
+                self.stdout.flush()
         return deleted
+
+    def _cleanup(self, run_id: str) -> int:
+        prefix = f'{_USERNAME_PREFIX}{run_id}_'
+        qs = User.objects.filter(username__startswith=prefix).order_by('id')
+        return self._delete_users(qs)
+
+    def _cleanup_all(self) -> int:
+        qs = User.objects.filter(username__startswith=_USERNAME_PREFIX).order_by('id')
+        return self._delete_users(qs)
