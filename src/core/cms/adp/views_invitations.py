@@ -65,6 +65,10 @@ class ValidateInvitationView(BaseAPIView):
         responses={200: ValidateInvitationSerializer()},
     )
     def get(self, request):
+        closed = RegistrationService.reject_if_registration_closed()
+        if closed:
+            return closed
+
         token = (request.query_params.get('token') or '').strip()
         invitation = RegistrationService.get_invitation_by_token(token)
 

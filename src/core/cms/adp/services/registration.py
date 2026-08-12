@@ -38,6 +38,32 @@ class RegistrationService:
         return RegistrationService.get_mode() != RegistrationService.MODE_CLOSED
 
     @staticmethod
+    def registration_disabled_message() -> str:
+        return _('Регистрация в системе отключена.')
+
+    @staticmethod
+    def reject_if_registration_closed():
+        """HTTP 403 Response, если регистрация закрыта; иначе None."""
+        if RegistrationService.is_registration_enabled():
+            return None
+        from rest_framework import status
+        from rest_framework.response import Response
+
+        return Response(
+            {'message': RegistrationService.registration_disabled_message()},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    @staticmethod
+    def ensure_registration_open() -> None:
+        """Для сериализаторов: ValidationError до проверок username/email."""
+        if RegistrationService.is_registration_enabled():
+            return
+        from rest_framework.serializers import ValidationError
+
+        raise ValidationError(RegistrationService.registration_disabled_message())
+
+    @staticmethod
     def requires_invitation() -> bool:
         return RegistrationService.get_mode() == RegistrationService.MODE_INVITATION
 

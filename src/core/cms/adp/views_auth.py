@@ -36,6 +36,7 @@ from src.core.cms.adp.services.login_lockout import (
     login_lock_retry_after,
     register_failed_login,
 )
+from src.core.cms.adp.services.registration import RegistrationService
 from src.core.utils.exception_handler import too_many_requests_message
 from src.core.cms.adp.services.password_reset import PasswordResetService
 from src.core.cms.adp.services.profile_settings import ProfileSettingsService
@@ -71,6 +72,10 @@ def _too_many_login_attempts_response(username: str) -> Response:
 
 
 class UserRegistrationValidationView(BaseAPIView):
+    # ScopedRateThrottle — иначе только общий anon (перебор логинов/email).
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
+    throttle_scope = 'registration'
+
     @swagger_auto_schema(
         operation_description="Регистрация нового пользователя.",
         request_body=openapi.Schema(
@@ -110,6 +115,10 @@ class UserRegistrationValidationView(BaseAPIView):
         },
     )
     def post(self, request):
+        closed = RegistrationService.reject_if_registration_closed()
+        if closed:
+            return closed
+
         serializer = UserRegistrationValidationSerializer(data=request.data)
 
         if serializer.is_valid():
@@ -144,49 +153,53 @@ class SendConfirmationCodeView(BaseAPIView):
 
     @swagger_auto_schema(
         operation_description="Отправка кода подтверждения.",
-    )   
+    )
     def post(self, request):
         purpose = request.data.get('purpose', '')
-        is_password_reset = PasswordResetService.is_password_reset_purpose(purpose)
-        if is_password_reset and not PasswordResetService.is_enabled():
+        if not PasswordResetService.is_password_reset_purpose(purpose):
+            return Response(
+                {'error': _('Укажите purpose=password_reset')},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not PasswordResetService.is_enabled():
             return Response(
                 {'error': PasswordResetService.get_disabled_message()},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        if is_password_reset and not PasswordResetService.is_email_delivery_ready():
+        if not PasswordResetService.is_email_delivery_ready():
             return Response(
                 {'error': PasswordResetService.get_unavailable_message()},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        email = request.data.get("email")
+        email = request.data.get('email')
         if not email:
-            return Response({"error": _("Отсутствует Email")}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': _('Отсутствует Email')}, status=status.HTTP_400_BAD_REQUEST)
 
-        user_exists = User.objects.filter(email=email).exists()
+        # Один ответ для «нет пользователя» / успех / сбой SMTP — без enumeration.
+        generic_ok = Response(
+            {
+                'message': _(
+                    'Если пользователь с таким email существует, код будет отправлен'
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+        user_exists = User.objects.filter(email__iexact=(email or '').strip()).exists()
         if not user_exists:
-            return Response(
-                {"message": _("Если пользователь с таким email существует, код будет отправлен")},
-                status=status.HTTP_200_OK,
-            )
+            return generic_ok
 
         code = PasswordResetService.issue_code(email)
         success, error_message = send_confirmation_email(email, code)
-
         if not success:
-            return Response(
-                {
-                    "error": _("Не удалось отправить письмо с кодом восстановления."),
-                    "detail": error_message or _("Проверьте настройки SMTP."),
-                    "email_sent": False,
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            logger.error(
+                'Не удалось отправить код восстановления пароля на %s: %s',
+                email,
+                error_message or 'unknown',
             )
+        return generic_ok
 
-        return Response(
-            {"message": _("Код подтверждения отправлен"), "email_sent": True},
-            status=status.HTTP_200_OK,
-        )
 
 class VerifyConfirmationCodeView(BaseAPIView):
     throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
@@ -309,6 +322,9 @@ class ResetPasswordView(BaseAPIView):
         )
         
 class UserRegistrationView(BaseAPIView):
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
+    throttle_scope = 'registration'
+
     @swagger_auto_schema(
         operation_description="Проверка регистрации.",
         request_body=openapi.Schema(
@@ -348,6 +364,10 @@ class UserRegistrationView(BaseAPIView):
         },
     )
     def post(self, request):
+        closed = RegistrationService.reject_if_registration_closed()
+        if closed:
+            return closed
+
         serializer = UserRegistrationSerializer(data=request.data)
 
         if serializer.is_valid():
@@ -356,8 +376,7 @@ class UserRegistrationView(BaseAPIView):
             successful_response = Response(
                 {
                     "message": _("Регистрация успешна."),
-                    "user_id": user.id,
-                    "username": user.username
+                    "username": user.username,
                 },
                 status=status.HTTP_201_CREATED
             )

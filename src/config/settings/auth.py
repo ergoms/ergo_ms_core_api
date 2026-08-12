@@ -41,6 +41,10 @@ THROTTLE_RATES_PASSWORD_RESET = env.str(
     'API_THROTTLE_RATES_PASSWORD_RESET',
     default='5/minute',
 )
+THROTTLE_RATES_REGISTRATION = env.str(
+    'API_THROTTLE_RATES_REGISTRATION',
+    default='5/minute',
+)
 # Восстановление сессии по cookie (F5): отдельный бакет, не общий anon.
 THROTTLE_RATES_TOKEN_REFRESH = env.str(
     'API_THROTTLE_RATES_TOKEN_REFRESH',
@@ -76,6 +80,7 @@ REST_FRAMEWORK = {
         'anon': THROTTLE_RATES_ANON,
         'user': THROTTLE_RATES_USER,
         'password_reset': THROTTLE_RATES_PASSWORD_RESET,
+        'registration': THROTTLE_RATES_REGISTRATION,
         'login': THROTTLE_RATES_LOGIN,
         'token_refresh': THROTTLE_RATES_TOKEN_REFRESH,
     },
