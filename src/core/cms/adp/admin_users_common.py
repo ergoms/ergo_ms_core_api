@@ -129,12 +129,14 @@ def _is_manual_password_reset_request(request):
 def _build_admin_user_full_name(user):
     if hasattr(user, 'get_full_name'):
         return user.get_full_name() or user.username
-    name_parts = [user.first_name]
+    name_parts = []
+    if user.last_name:
+        name_parts.append(user.last_name)
+    if user.first_name:
+        name_parts.append(user.first_name)
     middle_name = getattr(user, 'middle_name', None)
     if middle_name:
         name_parts.append(middle_name)
-    if user.last_name:
-        name_parts.append(user.last_name)
     return " ".join(part for part in name_parts if part and str(part).strip()) or user.username
 
 

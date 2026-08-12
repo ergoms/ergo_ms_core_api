@@ -90,13 +90,15 @@ def search_index(
           or result.get('totalHits')
           or len(ids)
         )
-        return SearchResult(
-          ids=ids,
-          total=total,
-          page=page,
-          page_size=page_size,
-          used_meili=True,
-        )
+        # Пустой индекс / устаревшие документы — не маскируем ORM-fallback.
+        if total > 0 or ids:
+          return SearchResult(
+            ids=ids,
+            total=total,
+            page=page,
+            page_size=page_size,
+            used_meili=True,
+          )
       except Exception:
         logger.warning(
           'Meilisearch search failed for %s — fallback',
@@ -121,8 +123,6 @@ def search_queryset(
   **kwargs,
 ) -> tuple[QuerySet, SearchResult]:
   result = search_index(index_uid, query, queryset, **kwargs)
-  if not result.ids and result.total == 0 and normalize_query(query):
+  if not result.ids:
     return queryset.none(), result
-  if not normalize_query(query):
-    return queryset, result
   return apply_ordered_ids(queryset, result.ids), result

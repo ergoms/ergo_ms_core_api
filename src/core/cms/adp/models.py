@@ -61,12 +61,14 @@ class UserProfile(models.Model):
     
     @property
     def full_name(self):
-        """Формат: Имя Отчество Фамилия"""
-        name_parts = [self.user.first_name]
-        if self.user.middle_name:
-            name_parts.append(self.user.middle_name)
+        """Формат: Фамилия Имя Отчество"""
+        name_parts = []
         if self.user.last_name:
             name_parts.append(self.user.last_name)
+        if self.user.first_name:
+            name_parts.append(self.user.first_name)
+        if self.user.middle_name:
+            name_parts.append(self.user.middle_name)
         full_name = " ".join(part for part in name_parts if part and part.strip())
         return full_name or self.user.username
 
