@@ -11,6 +11,7 @@ from src.core.cms.adp.admin_users_common import (
     _build_admin_user_list_item,
     _get_admin_users_base_queryset,
     _parse_admin_users_pagination,
+    _parse_last_name_letter_param,
     _parse_online_only_param,
 )
 from src.core.search.core_indexes import INDEX_USERS
@@ -75,13 +76,27 @@ class AdminUserRoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
                 type=openapi.TYPE_BOOLEAN,
                 required=False,
             ),
+            openapi.Parameter(
+                'letter',
+                openapi.IN_QUERY,
+                description=(
+                    'Первая буква фамилии (кириллица или латиница). '
+                    'Ё учитывается в Е, Й — в И.'
+                ),
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
         ],
         responses={200: AdminUserRoleInfoSerializer(many=True)}
     )
     def get(self, request):
         page, page_size, search = _parse_admin_users_pagination(request)
         online_only = _parse_online_only_param(request)
-        base_qs = _get_admin_users_base_queryset(online_only=online_only)
+        letter = _parse_last_name_letter_param(request)
+        base_qs = _get_admin_users_base_queryset(
+            online_only=online_only,
+            letter=letter,
+        )
         users_qs, search_result = search_queryset(
             INDEX_USERS,
             search,

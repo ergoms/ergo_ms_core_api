@@ -1,6 +1,6 @@
 """Общие хелперы и mixin для админ-управления пользователями."""
 from django.contrib.auth import get_user_model
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.utils.translation import gettext as _
 from rest_framework import status
 from rest_framework.response import Response
@@ -201,7 +201,47 @@ def _parse_online_only_param(request) -> bool:
     return raw in ('true', '1', 'yes')
 
 
-def _get_admin_users_base_queryset(online_only=False):
+# Буквы алфавитного фильтра фамилий (кириллица без Ё/Й/Ъ/Ы/Ь + латиница A–Z).
+_ADMIN_USERS_SURNAME_LETTERS = frozenset(
+    'АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЮЯ'
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+)
+
+
+def _parse_last_name_letter_param(request) -> str | None:
+    """Одна буква фамилии (кириллица/латиница); Ё→Е, Й→И; иначе None."""
+    raw = (request.query_params.get('letter') or '').strip()
+    if not raw:
+        return None
+    letter = raw.upper()
+    if letter == 'Ё':
+        letter = 'Е'
+    elif letter == 'Й':
+        letter = 'И'
+    if letter not in _ADMIN_USERS_SURNAME_LETTERS:
+        return None
+    return letter
+
+
+def _last_name_letter_prefixes(letter: str) -> tuple[str, ...]:
+    """Префиксы startswith с учётом регистра и групп Е/Ё, И/Й."""
+    if letter == 'Е':
+        return ('Е', 'е', 'Ё', 'ё')
+    if letter == 'И':
+        return ('И', 'и', 'Й', 'й')
+    return (letter, letter.lower())
+
+
+def _apply_last_name_letter_filter(queryset, letter: str | None):
+    if not letter:
+        return queryset
+    clause = Q()
+    for prefix in _last_name_letter_prefixes(letter):
+        clause |= Q(last_name__startswith=prefix)
+    return queryset.filter(clause)
+
+
+def _get_admin_users_base_queryset(online_only=False, letter=None):
     active_roles_qs = (
         UserRole.objects
         .filter(is_active=True)
@@ -225,14 +265,17 @@ def _get_admin_users_base_queryset(online_only=False):
             presence__last_seen__gte=cutoff,
         )
 
-    return users_qs
+    return _apply_last_name_letter_filter(users_qs, letter)
 
 
-def _get_admin_users_queryset(search='', online_only=False):
+def _get_admin_users_queryset(search='', online_only=False, letter=None):
     """Обратная совместимость: queryset с фильтром поиска."""
     from src.core.cms.adp.services.user_search import apply_user_search
 
-    return apply_user_search(_get_admin_users_base_queryset(online_only), search)
+    return apply_user_search(
+        _get_admin_users_base_queryset(online_only, letter=letter),
+        search,
+    )
 
 
 def _build_admin_user_detail(user):
