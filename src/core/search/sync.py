@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from .client import get_meili_client, is_meili_available
@@ -13,15 +14,19 @@ from .registry import SearchIndexDefinition, all_indexes, get_index
 logger = logging.getLogger('search')
 
 _INDEX_BOOTSTRAPPED = False
+_INDEX_BOOTSTRAP_LOCK = threading.Lock()
 
 
 def ensure_registry_loaded() -> None:
   global _INDEX_BOOTSTRAPPED
   if _INDEX_BOOTSTRAPPED:
     return
-  register_core_indexes()
-  load_module_search_indexes()
-  _INDEX_BOOTSTRAPPED = True
+  with _INDEX_BOOTSTRAP_LOCK:
+    if _INDEX_BOOTSTRAPPED:
+      return
+    register_core_indexes()
+    load_module_search_indexes()
+    _INDEX_BOOTSTRAPPED = True
 
 
 def _layout_synonyms() -> dict[str, list[str]]:

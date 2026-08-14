@@ -52,7 +52,6 @@ def search_index(
   page_size: int = 20,
   filters: dict[str, Any] | None = None,
 ) -> SearchResult:
-  ensure_registry_loaded()
   page = max(1, int(page or 1))
   page_size = max(1, min(int(page_size or 20), 200))
   q = normalize_query(query)
@@ -62,6 +61,8 @@ def search_index(
     offset = (page - 1) * page_size
     ids = list(queryset.values_list('pk', flat=True)[offset:offset + page_size])
     return SearchResult(ids=ids, total=total, page=page, page_size=page_size, used_meili=False)
+
+  ensure_registry_loaded()
 
   if is_meili_available() and get_index(index_uid):
     client = get_meili_client()

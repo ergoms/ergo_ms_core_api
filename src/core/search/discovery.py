@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+from pathlib import Path
 from typing import Any
 
 from .registry import SearchIndexDefinition, register_index
@@ -31,11 +32,48 @@ def _coerce_definition(raw: dict[str, Any]) -> SearchIndexDefinition | None:
   )
 
 
-def load_module_search_indexes() -> None:
-  from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
+def _module_search_index_paths() -> list[str]:
+  from src.config.settings.base import DJANGO_CORE_DIR, MODULES_DIR
+  from src.core.utils.module_registry import (
+    is_module_loadable_in_process,
+    is_valid_module_dir_name,
+  )
 
-  for app_path in get_discovered_apps():
-    module_path = f'{app_path}.search_indexes'
+  candidates: list[str] = []
+  modules_root = Path(MODULES_DIR)
+  if modules_root.is_dir():
+    for module_dir in modules_root.iterdir():
+      if not module_dir.is_dir() or not is_valid_module_dir_name(module_dir.name):
+        continue
+      if not is_module_loadable_in_process(module_dir.name):
+        continue
+      api_dir = module_dir / 'api'
+      if not api_dir.is_dir():
+        continue
+      for search_file in api_dir.rglob('search_indexes.py'):
+        rel = search_file.relative_to(api_dir)
+        parts = rel.with_suffix('').parts
+        if not parts or parts[-1] != 'search_indexes':
+          continue
+        nested = '.'.join(parts[:-1])
+        suffix = f'.{nested}' if nested else ''
+        candidates.append(f'modules.{module_dir.name}.api{suffix}.search_indexes')
+
+  core_root = Path(DJANGO_CORE_DIR)
+  if core_root.is_dir():
+    for search_file in core_root.rglob('search_indexes.py'):
+      rel = search_file.relative_to(core_root)
+      parts = rel.with_suffix('').parts
+      if not parts or parts[-1] != 'search_indexes':
+        continue
+      nested = '.'.join(parts[:-1])
+      suffix = f'.{nested}' if nested else ''
+      candidates.append(f'src.core{suffix}.search_indexes')
+  return candidates
+
+
+def load_module_search_indexes() -> None:
+  for module_path in _module_search_index_paths():
     try:
       mod = importlib.import_module(module_path)
     except ImportError:
