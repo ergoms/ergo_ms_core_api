@@ -38,12 +38,17 @@ class MessageViewSet(ObjectPermissionMixin, SwaggerSafeMixin, viewsets.ModelView
         object_id = self.request.query_params.get('object_id')
 
         if content_type_name and object_id:
+            from src.core.messenger.access import resolve_messenger_object_pk
+
             ct = get_content_type(content_type_name)
             if ct is None:
                 return Message.objects.none()
-            if not self._has_messenger_access(ct, object_id):
+            object_pk = resolve_messenger_object_pk(content_type_name, object_id)
+            if object_pk is None:
                 return Message.objects.none()
-            filtered = queryset.filter(content_type=ct, object_id=object_id).order_by('created_at')
+            if not self._has_messenger_access(ct, object_pk):
+                return Message.objects.none()
+            filtered = queryset.filter(content_type=ct, object_id=object_pk).order_by('created_at')
             return apply_after_id(filtered, self.request)
 
         return Message.objects.none()
@@ -52,7 +57,7 @@ class MessageViewSet(ObjectPermissionMixin, SwaggerSafeMixin, viewsets.ModelView
         from src.core.messenger.access import has_messenger_access
 
         ct_name = self._get_ct_name_for_group(content_type)
-        return has_messenger_access(self.request.user, ct_name, int(object_id))
+        return has_messenger_access(self.request.user, ct_name, object_id)
 
     def check_object_permission(self, request, obj):
         return self._has_messenger_access(obj.content_type, obj.object_id)

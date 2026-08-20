@@ -13,6 +13,18 @@ MAX_ATTACHMENT_SIZE_MB = 25
 MAX_ATTACHMENT_SIZE_BYTES = MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
 
 
+class MessengerObjectIdField(serializers.Field):
+    """pk или public_id снаружи; в БД хранится integer pk."""
+
+    def to_internal_value(self, data):
+        if isinstance(data, bool) or data in (None, ''):
+            raise serializers.ValidationError(_('Некорректный идентификатор.'))
+        return str(data).strip()
+
+    def to_representation(self, value):
+        return value
+
+
 class MessageAttachmentSerializer(serializers.ModelSerializer):
     file = serializers.FileField(write_only=True, required=False)
     file_path = serializers.CharField(write_only=True, required=False)
@@ -120,7 +132,7 @@ class MessageSerializer(serializers.ModelSerializer):
     author_data = serializers.SerializerMethodField()
     attachments = MessageAttachmentSerializer(many=True, read_only=True)
     content_type_name = serializers.CharField(write_only=True, required=False)
-    object_id = serializers.IntegerField(required=False)
+    object_id = MessengerObjectIdField(required=False)
     reply_to = serializers.PrimaryKeyRelatedField(
         queryset=Message.objects.all(), required=False, allow_null=True,
     )
@@ -152,8 +164,18 @@ class MessageSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if not self.instance and not attrs.get('content_type_name'):
             raise serializers.ValidationError({'content_type_name': 'Обязательное поле при создании.'})
-        if not self.instance and attrs.get('object_id') is None:
+        if not self.instance and attrs.get('object_id') in (None, ''):
             raise serializers.ValidationError({'object_id': 'Обязательное поле при создании.'})
+        if not self.instance:
+            from src.core.messenger.access import resolve_messenger_object_pk
+
+            object_pk = resolve_messenger_object_pk(
+                attrs.get('content_type_name'),
+                attrs.get('object_id'),
+            )
+            if object_pk is None:
+                raise serializers.ValidationError({'object_id': _('Объект не найден.')})
+            attrs['object_id'] = object_pk
         return attrs
 
     def get_author_data(self, obj):
