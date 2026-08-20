@@ -27,6 +27,13 @@ from _common import (
 )
 from src.core.utils.celery.startup_format import format_queues_display
 
+try:
+    from celery_balance.overlay import worker_override
+    from celery_balance.settings import load_settings
+except ImportError:  # pragma: no cover — скрипт без пакета deployment
+    worker_override = None  # type: ignore[assignment]
+    load_settings = None  # type: ignore[assignment]
+
 
 def load_workers_config() -> Dict[str, Any]:
     """Загружает celery_workers.yaml без Django."""
@@ -91,6 +98,9 @@ def build_cmd(
     loglevel: str = 'info',
     concurrency: Optional[int] = None,
     pool: str = 'threads',
+    prefetch_multiplier: Optional[int] = None,
+    autoscale_min: Optional[int] = None,
+    autoscale_max: Optional[int] = None,
 ) -> List[str]:
     """Формирует команду celery worker. queues=None или [] — без -Q (все очереди)."""
     effective_pool = (pool or 'threads').strip().lower()
@@ -101,9 +111,37 @@ def build_cmd(
     ]
     if queues:
         cmd.extend(['-Q', ','.join(queues)])
-    if concurrency:
+    if (
+        effective_pool == 'prefork'
+        and autoscale_min
+        and autoscale_max
+        and autoscale_max >= autoscale_min
+    ):
+        cmd.append(f'--autoscale={autoscale_max},{autoscale_min}')
+    elif concurrency:
         cmd.append(f'--concurrency={concurrency}')
+    if prefetch_multiplier:
+        cmd.append(f'--prefetch-multiplier={prefetch_multiplier}')
     return cmd
+
+
+def _balance_overrides(worker_name: Optional[str]) -> Dict[str, Any]:
+    """Overlay auto-режима: concurrency/prefetch/autoscale. Иначе пусто."""
+    if load_settings is None or worker_override is None:
+        return {}
+    try:
+        settings = load_settings(PROJECT_ROOT)
+        override = worker_override(PROJECT_ROOT, worker_name, mode=settings.mode)
+    except Exception:
+        return {}
+    if override is None:
+        return {}
+    return {
+        'concurrency': override.concurrency,
+        'prefetch_multiplier': override.prefetch_multiplier,
+        'autoscale_min': override.autoscale_min,
+        'autoscale_max': override.autoscale_max,
+    }
 
 
 def main() -> int:
@@ -116,12 +154,20 @@ def main() -> int:
     parser.add_argument('--concurrency', type=int, default=None)
     parser.add_argument('--pool', type=str, default=None, help='пул: threads | prefork | solo')
     parser.add_argument('--loglevel', default='info')
+    parser.add_argument('--module', default='', help='Очередь и PROCESS_MODULES одного модуля')
     parser.add_argument(
         '--verbose',
         action='store_true',
         help='Полные списки очередей и модулей при старте (или ERGO_CELERY_STARTUP_VERBOSE=true)',
     )
     opts = parser.parse_args()
+
+    module_name = (opts.module or '').strip()
+    if module_name:
+        os.environ['ERGO_PROCESS_ROLE'] = f'module:{module_name}'
+        os.environ['PROCESS_MODULES'] = module_name
+        if not opts.queues and not opts.worker:
+            opts.queues = module_name
 
     if opts.verbose:
         os.environ['ERGO_CELERY_STARTUP_VERBOSE'] = 'true'
@@ -178,7 +224,8 @@ def main() -> int:
         w = workers_config[worker_name]
         queues = resolve_queues(w.get('queues'), all_queues)
         hostname = w.get('hostname', f'worker@{worker_name}')
-        concurrency = w.get('concurrency') or concurrency_opt
+        overlay = {} if concurrency_opt else _balance_overrides(worker_name)
+        concurrency = concurrency_opt or overlay.get('concurrency') or w.get('concurrency')
         loglevel = w.get('loglevel') or loglevel_opt
         pool = w.get('pool') or pool_opt
         log.info("Запуск worker'а '%s': %s", worker_name, w.get('description', ''))
@@ -230,19 +277,23 @@ def main() -> int:
                 continue
             queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
             worker_pool = w.get('pool') or default_pool
+            overlay = _balance_overrides(name)
             cmd = build_cmd(
                 queues,
                 hostname,
                 w.get('loglevel', defaults.get('loglevel', 'info')),
-                w.get('concurrency'),
+                overlay.get('concurrency') or w.get('concurrency'),
                 pool=worker_pool,
+                prefetch_multiplier=overlay.get('prefetch_multiplier'),
+                autoscale_min=overlay.get('autoscale_min'),
+                autoscale_max=overlay.get('autoscale_max'),
             )
             log.info(
                 "Запуск '%s' (%s) -> очереди=%s, параллелизм=%s, пул=%s",
                 name,
                 hostname,
                 queues_display,
-                w.get('concurrency') or 'по умолчанию',
+                overlay.get('concurrency') or w.get('concurrency') or 'по умолчанию',
                 worker_pool,
             )
             env = os.environ.copy()
@@ -287,8 +338,20 @@ def main() -> int:
         log.info('Worker %s уже запущен', hostname)
         return 0
 
+    overlay = {} if concurrency_opt else _balance_overrides(worker_name)
+    if overlay.get('concurrency'):
+        concurrency = overlay['concurrency']
     log.info('Запуск %s, очереди: %s, пул=%s', hostname, queues_display, pool)
-    cmd = build_cmd(queues, hostname, loglevel, concurrency, pool=pool)
+    cmd = build_cmd(
+        queues,
+        hostname,
+        loglevel,
+        concurrency,
+        pool=pool,
+        prefetch_multiplier=overlay.get('prefetch_multiplier'),
+        autoscale_min=overlay.get('autoscale_min'),
+        autoscale_max=overlay.get('autoscale_max'),
+    )
     return run_celery_with_timing(
         cmd, str(API_DIR),
         ready_pattern='Connected to',

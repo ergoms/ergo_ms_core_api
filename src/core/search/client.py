@@ -17,6 +17,14 @@ def is_search_enabled() -> bool:
   return bool(getattr(settings, 'ERGO_SEARCH_ENABLED', True))
 
 
+_TEMPLATE_MEILI_KEY = 'ergo_ms_dev_meili_key'
+
+
+def _master_key_is_insecure(key: str) -> bool:
+  stripped = (key or '').strip()
+  return (not stripped) or stripped.lower() == _TEMPLATE_MEILI_KEY
+
+
 def get_meili_client():
   global _client
   if _client is not None:
@@ -26,14 +34,22 @@ def get_meili_client():
   host = getattr(settings, 'MEILI_HOST', '') or ''
   if not host:
     return None
+  api_key = getattr(settings, 'MEILI_MASTER_KEY', '') or ''
+  if _master_key_is_insecure(api_key):
+    from src.config.deploy import is_development
+
+    if not is_development():
+      logger.warning(
+        'MEILI_MASTER_KEY пуст или из шаблона — клиент поиска не подключается'
+      )
+      return None
   try:
     import meilisearch
   except ImportError:
     logger.warning('Пакет meilisearch не установлен — поиск через fallback')
     return None
-  api_key = getattr(settings, 'MEILI_MASTER_KEY', '') or None
   timeout = getattr(settings, 'MEILI_SEARCH_TIMEOUT_SEC', 5.0)
-  _client = meilisearch.Client(host, api_key, timeout=timeout)
+  _client = meilisearch.Client(host, api_key or None, timeout=timeout)
   return _client
 
 

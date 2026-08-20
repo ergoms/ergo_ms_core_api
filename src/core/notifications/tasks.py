@@ -11,7 +11,7 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 
-logger = logging.getLogger('core.notifications')
+logger = logging.getLogger('celery.core.notifications')
 
 TRANSIENT_ERRORS = (ConnectionError, TimeoutError, OSError)
 

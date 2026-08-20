@@ -1,13 +1,13 @@
 """
 Кэш конфигурации Celery: маршруты/очереди и расписание Beat.
 
-- celery_routes_queues.bin — CeleryModuleManager (routes, queues)
+- celery_routes_queues.bin — CeleryModuleManager (routes, queues, limits)
 - celery_beat_schedule.bin — CeleryBeatModuleManager (schedule)
 """
 import logging
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from src.config.paths import CACHE_DIR, MODULES_DIR, SYSTEM_DIR
 
@@ -95,6 +95,8 @@ def _deserialize_schedule(data: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str
 
 CACHE_FILE = CACHE_DIR / 'celery_routes_queues.bin'
 BEAT_SCHEDULE_CACHE_FILE = CACHE_DIR / 'celery_beat_schedule.bin'
+# v2: queue_limits + annotations, чтобы worker не импортировал celery_config.py
+WORKER_CACHE_VERSION = 2
 
 
 def _get_fingerprint() -> Dict[str, float]:
@@ -108,14 +110,24 @@ def _get_fingerprint() -> Dict[str, float]:
 def write_routes_queues_cache(
     routes: Dict[str, Any],
     queues: Dict[str, Any],
+    *,
+    queue_limits: Optional[Dict[str, int]] = None,
+    annotations: Optional[Dict[str, Any]] = None,
+    additional_configs: Optional[Dict[str, Any]] = None,
+    modules: Optional[list] = None,
 ) -> None:
-    """Сохраняет маршруты и очереди в файловый кэш с fingerprint."""
+    """Сохраняет маршруты, очереди и поля worker в файловый кэш."""
     from src.core.utils.cache_io import write_bin_cache
 
     data = {
         'fingerprint': _get_fingerprint(),
+        'cache_version': WORKER_CACHE_VERSION,
         'routes': routes,
         'queues': queues,
+        'queue_limits': queue_limits or {},
+        'annotations': annotations or {},
+        'additional_configs': additional_configs or {},
+        'modules': list(modules or []),
     }
     if write_bin_cache(CACHE_FILE, data):
         logger.debug(
@@ -127,13 +139,16 @@ def write_routes_queues_cache(
 def read_routes_queues_cache(
     *,
     validate_fingerprint: bool = True,
-) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    require_worker_fields: bool = False,
+) -> Optional[Dict[str, Any]]:
     """
-    Читает routes и queues из кэша.
-    Возвращает (routes, queues) или None если кэш отсутствует/невалиден.
+    Читает routes/queues (и поля worker) из кэша.
+    Возвращает dict или None если кэш отсутствует/невалиден.
 
     validate_fingerprint=False — только наличие данных в bin (без обхода
     celery_config.py модулей). Для HTTP-процесса API после warmup_caches.
+    require_worker_fields=True — старый bin без limits/annotations не подходит
+    worker/beat: нужен полный импорт celery_config.py.
     """
     from src.core.utils.cache_io import read_bin_cache
 
@@ -147,9 +162,21 @@ def read_routes_queues_cache(
             return None
     routes = data.get('routes')
     queues = data.get('queues')
-    if routes is not None and queues is not None:
-        return (routes, queues)
-    return None
+    if routes is None or queues is None:
+        return None
+    if require_worker_fields:
+        if int(data.get('cache_version') or 0) < WORKER_CACHE_VERSION:
+            return None
+        if 'queue_limits' not in data:
+            return None
+    return {
+        'routes': routes,
+        'queues': queues,
+        'queue_limits': data.get('queue_limits') or {},
+        'annotations': data.get('annotations') or {},
+        'additional_configs': data.get('additional_configs') or {},
+        'modules': list(data.get('modules') or []),
+    }
 
 
 def write_beat_schedule_cache(schedule: Dict[str, Dict[str, Any]]) -> None:

@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import timedelta
 from typing import Any, Iterable
 
@@ -26,6 +27,43 @@ STALE_READ_ARCHIVE_DAYS = NotificationUserSettings.AUTO_ARCHIVE_DAYS_DEFAULT
 logger = logging.getLogger('core.notifications')
 
 User = get_user_model()
+
+_HANDLER_NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$')
+_FORBIDDEN_HANDLER_PREFIXES = (
+    'adp.',
+    'core.',
+    'session.',
+    'audit.',
+    'menu.',
+    'media.',
+    'notifications.',
+)
+
+
+def is_allowed_notification_action_handler(handler: str) -> bool:
+    """True, если handler — dotted-имя и не привилегированная операция ядра."""
+    if not isinstance(handler, str):
+        return False
+    name = handler.strip()
+    if not name or not _HANDLER_NAME_RE.fullmatch(name):
+        return False
+    return not name.startswith(_FORBIDDEN_HANDLER_PREFIXES)
+
+
+def _sanitize_notification_actions(actions: list) -> list:
+    cleaned = []
+    for item in actions:
+        if not isinstance(item, dict):
+            continue
+        handler = item.get('handler') or ''
+        if handler and not is_allowed_notification_action_handler(handler):
+            logger.warning(
+                'NotificationService.dispatch: отклонён handler %r',
+                handler,
+            )
+            continue
+        cleaned.append(item)
+    return cleaned
 
 
 def _resolve_recipient(recipient: Any):
@@ -96,7 +134,7 @@ class NotificationService:
             )
             return None
 
-        action_list = actions if isinstance(actions, list) else []
+        action_list = _sanitize_notification_actions(actions) if isinstance(actions, list) else []
         defaults = {
             'title': title,
             'body': body or '',
@@ -417,7 +455,7 @@ class NotificationService:
             return {'success': False, 'error': 'invalid_action'}
 
         handler = action_def.get('handler') or ''
-        if not handler or not bridge.has(handler):
+        if not is_allowed_notification_action_handler(handler) or not bridge.has(handler):
             logger.warning(
                 'NotificationService.execute_action: handler %r не зарегистрирован',
                 handler,

@@ -33,6 +33,7 @@ from channels.security.websocket import AllowedHostsOriginValidator
 from src.core.messenger.routing import websocket_urlpatterns as messenger_ws
 from src.core.notifications.routing import websocket_urlpatterns as notifications_ws
 from src.core.cms.adp.routing import websocket_urlpatterns as adp_ws
+from src.core.realtime.transport import is_websocket_transport
 
 
 async def http_application(scope, receive, send):
@@ -41,11 +42,14 @@ async def http_application(scope, receive, send):
         await django_asgi_app(scope, receive, send)
 
 
-application = ProtocolTypeRouter({
+_protocol_apps = {
     "http": http_application,
-    "websocket": AllowedHostsOriginValidator(
+}
+if is_websocket_transport():
+    _protocol_apps["websocket"] = AllowedHostsOriginValidator(
         AuthMiddlewareStack(
             URLRouter(messenger_ws + notifications_ws + adp_ws)
         )
-    ),
-})
+    )
+
+application = ProtocolTypeRouter(_protocol_apps)

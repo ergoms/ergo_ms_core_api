@@ -196,10 +196,25 @@ def redis_password() -> str:
     return str(raw).strip()
 
 
+def redis_username() -> str:
+    """ACL-пользователь Redis из databases.yaml → redis.user (пусто = default)."""
+    section = _load_redis_section()
+    raw = section.get('user', '')
+    if raw is None:
+        return ''
+    return str(raw).strip()
+
+
 def redis_url(db: int) -> str:
     host = redis_host()
     port = redis_port()
     password = redis_password()
+    username = redis_username()
+    if password and username:
+        return (
+            f'redis://{quote(username, safe="")}:{quote(password, safe="")}'
+            f'@{host}:{port}/{db}'
+        )
     if password:
         return f'redis://:{quote(password, safe="")}@{host}:{port}/{db}'
     return f'redis://{host}:{port}/{db}'

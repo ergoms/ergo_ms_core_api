@@ -6,17 +6,20 @@
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import json
 import logging
 from typing import Any
 
 from django.conf import settings
+from django.core.cache import cache
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from src.core.integrations import bridge
+from src.core.utils.request_id import request_id_from_meta
 
 logger = logging.getLogger('integrations.bridge.internal')
 
@@ -34,6 +37,23 @@ def _is_loopback(request: HttpRequest) -> bool:
         return addr.lower() in ('localhost',)
 
 
+def _peer_allowed(request: HttpRequest) -> bool:
+    """Мост не для публичного интернета: loopback; private только в microservice."""
+    addr = (request.META.get('REMOTE_ADDR') or '').strip()
+    if not addr:
+        return False
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return addr.lower() in ('localhost',)
+    if ip.is_loopback:
+        return True
+    runtime = (getattr(settings, 'MODULE_RUNTIME', 'monolith') or 'monolith').strip().lower()
+    if runtime in ('microservice', 'split') and (ip.is_private or ip.is_link_local):
+        return True
+    return False
+
+
 def _token_ok(request: HttpRequest) -> bool:
     expected = (getattr(settings, 'BRIDGE_INTERNAL_TOKEN', '') or '').strip()
     if not expected:
@@ -42,11 +62,46 @@ def _token_ok(request: HttpRequest) -> bool:
             return True
         return False
     got = request.META.get(_TOKEN_HEADER, '') or request.headers.get('X-Bridge-Token', '')
-    return got == expected
+    if not isinstance(got, str):
+        got = str(got)
+    return hmac.compare_digest(got, expected)
 
 
 def _unauthorized() -> JsonResponse:
     return JsonResponse({'detail': 'Unauthorized'}, status=401)
+
+
+def _rate_limited(request: HttpRequest) -> bool:
+    """True, если служебный мост превысил BRIDGE_INTERNAL_RATE."""
+    raw = (getattr(settings, 'BRIDGE_INTERNAL_RATE', '60/minute') or '60/minute').strip()
+    try:
+        count_s, period = raw.split('/', 1)
+        limit = int(count_s)
+    except (TypeError, ValueError):
+        limit, period = 60, 'minute'
+    window = 60 if 'minute' in period else 1
+    addr = (request.META.get('REMOTE_ADDR') or 'unknown').strip()
+    key = f'bridge:rl:{addr}'
+    try:
+        current = cache.get(key)
+        if current is None:
+            cache.set(key, 1, timeout=window)
+            return False
+        if int(current) >= limit:
+            return True
+        cache.incr(key)
+    except Exception:
+        return True
+    return False
+
+
+def _guard(request: HttpRequest):
+    request_id_from_meta(request.META)
+    if not _peer_allowed(request) or not _token_ok(request):
+        return _unauthorized()
+    if _rate_limited(request):
+        return JsonResponse({'detail': 'Too many requests'}, status=429)
+    return None
 
 
 def _json_safe_providers(providers: dict[str, Any]) -> dict[str, Any]:
@@ -77,8 +132,9 @@ def _json_safe_providers(providers: dict[str, Any]) -> dict[str, Any]:
 @csrf_exempt
 @require_POST
 def bridge_call(request: HttpRequest) -> JsonResponse:
-    if not _token_ok(request):
-        return _unauthorized()
+    blocked = _guard(request)
+    if blocked is not None:
+        return blocked
     try:
         body = json.loads(request.body.decode('utf-8') or '{}')
     except json.JSONDecodeError:
@@ -116,8 +172,9 @@ def bridge_call(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_GET
 def bridge_has(request: HttpRequest) -> JsonResponse:
-    if not _token_ok(request):
-        return _unauthorized()
+    blocked = _guard(request)
+    if blocked is not None:
+        return blocked
     op = request.GET.get('op', '').strip()
     if not op:
         return JsonResponse({'detail': 'op is required'}, status=400)
@@ -129,8 +186,9 @@ def bridge_has(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_GET
 def bridge_all(request: HttpRequest) -> JsonResponse:
-    if not _token_ok(request):
-        return _unauthorized()
+    blocked = _guard(request)
+    if blocked is not None:
+        return blocked
     group = request.GET.get('group', '').strip()
     if not group:
         return JsonResponse({'detail': 'group is required'}, status=400)

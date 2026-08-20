@@ -6,6 +6,7 @@
 """
 
 from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
+from src.config.deploy import is_development
 from src.config.env import env
 
 ALL_MODULES = get_discovered_apps(use_cache=True)
@@ -20,21 +21,23 @@ INSTALLED_APPS = ALL_MODULES + [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-    'django_extensions',
-
     'rest_framework',
     'rest_framework_simplejwt.token_blacklist',
     
     'corsheaders',
-    'drf_yasg',
+    'drf_spectacular',
     'django_celery_beat',
 ]
+
+if is_development():
+    INSTALLED_APPS.append('django_extensions')
 
 # CHANNEL_LAYERS — в src.config.settings.channel_layers
 
 # Определяем список middleware
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'src.core.utils.middleware.request_id_middleware.RequestIdMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'src.core.utils.middleware.security_headers_middleware.SecurityHeadersMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

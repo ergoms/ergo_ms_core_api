@@ -11,13 +11,16 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from _common import API_DIR, PROJECT_ROOT, format_console
 
 _DEPLOYMENT_DIR = PROJECT_ROOT / 'core' / 'deployment'
-if str(_DEPLOYMENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_DEPLOYMENT_DIR))
+_SCRIPTS_DIR = _DEPLOYMENT_DIR / 'scripts'
+for _path in (_DEPLOYMENT_DIR, _SCRIPTS_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from project_layout import (  # noqa: E402
     ensure_dir,
@@ -111,6 +114,18 @@ def _start_jupyterlab():
     """Запускает JupyterLab с effective-настройками."""
     from src.config.jupyter_runtime import build_jupyter_server_argv, validate_jupyter_startup
 
+    try:
+        import jupyterlab  # noqa: F401
+    except ImportError:
+        print(
+            format_console(
+                'error',
+                'JupyterLab не установлен. Выполните: ergoms python-install --with jupyter',
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
     startup_error = validate_jupyter_startup()
     if startup_error:
         print(format_console('error', startup_error), file=sys.stderr)
@@ -132,14 +147,43 @@ def _start_jupyterlab():
     env['JUPYTER_DATA_DIR'] = str(data_dir)
     env['JUPYTER_PATH'] = str(data_dir)
 
+    from log_env import log_file_path
+
+    log_path = log_file_path('JUPYTER', PROJECT_ROOT)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = open(log_path, 'a', encoding='utf-8', buffering=1)
+    log_handle.write(
+        f'\n--- jupyter start {time.strftime("%Y-%m-%d %H:%M:%S")} ---\n'
+    )
+    log_handle.flush()
+    proc = None
     try:
-        proc = subprocess.Popen(cmd, env=env)
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+        )
+        if proc.stdout:
+            for line in proc.stdout:
+                log_handle.write(line)
+                log_handle.flush()
+                print(line, end='')
         proc.wait()
         return proc.returncode or 0
     except KeyboardInterrupt:
-        proc.terminate()
-        proc.wait()
+        if proc is not None:
+            proc.terminate()
+            proc.wait()
         return 0
+    finally:
+        try:
+            log_handle.close()
+        except OSError:
+            pass
 
 
 def main():

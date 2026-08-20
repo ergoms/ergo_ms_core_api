@@ -5,7 +5,7 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from src.core.utils.base.base_views import BaseAPIView
+from src.core.utils.base.base_views import BaseAPIViewPublicMixin
 from src.core.cms.adp.auth_cookies import (
     clear_auth_cookies,
     get_refresh_token_from_request,
@@ -22,18 +22,12 @@ def _user_id_from_payload(payload):
 
 
 def _user_id_from_refresh_string(raw: str):
-    """Достаёт USER_ID_CLAIM из refresh; InvalidToken не наследует TokenError."""
+    """Достаёт USER_ID_CLAIM из проверенного refresh. Истёкший токен не читаем."""
     if not raw:
         return None
     try:
         return _user_id_from_payload(RefreshToken(raw).payload)
     except (TokenError, InvalidToken):
-        pass
-    # Истёкший refresh: claims без проверки exp (токен всё равно сбрасываем).
-    try:
-        backend = RefreshToken.get_token_backend()
-        return _user_id_from_payload(backend.decode(raw, verify=False))
-    except Exception:
         return None
 
 
@@ -42,7 +36,7 @@ def _prev_user_id_from_logout_request(request):
     user_id для cookie смены аккаунта.
 
     С Bearer (меню-logout) — request.user через JWTAuthentication.
-    Иначе — refresh cookie (в т.ч. истёкший).
+    Иначе — действующий refresh cookie.
     """
     user = getattr(request, 'user', None)
     if user is not None and getattr(user, 'is_authenticated', False):
@@ -51,7 +45,7 @@ def _prev_user_id_from_logout_request(request):
     return _user_id_from_refresh_string(get_refresh_token_from_request(request))
 
 
-class LogoutView(BaseAPIView):
+class LogoutView(BaseAPIViewPublicMixin):
     """Отзыв refresh-сессии и очистка HttpOnly cookie (доступно без валидного access)."""
 
     # Идемпотентная очистка cookie: DRF throttle не ставим — первый logout

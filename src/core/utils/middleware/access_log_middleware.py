@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 import time
 
+from src.core.utils.request_id import get_request_id
+
 logger = logging.getLogger('django.server')
 
 
@@ -41,7 +43,16 @@ class AccessLogMiddleware:
             proto = request.META.get('SERVER_PROTOCOL', 'HTTP/1.1')
             status = getattr(response, 'status_code', '-')
             elapsed_ms = int((time.perf_counter() - started) * 1000)
-            logger.info('"%s %s %s" %s %dms', method, path, proto, status, elapsed_ms)
+            request_id = get_request_id() or '-'
+            logger.info(
+                '"%s %s %s" %s %dms request_id=%s',
+                method,
+                path,
+                proto,
+                status,
+                elapsed_ms,
+                request_id,
+            )
         except Exception:
             # access-лог не должен ломать ответ
             pass

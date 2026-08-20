@@ -21,10 +21,46 @@ from ..service_map import (
     iter_group_base_urls,
     resolve_op_base_url,
 )
+from src.core.utils.request_id import REQUEST_ID_HEADER, get_request_id
 
 logger = logging.getLogger('integrations.bridge.http')
 
 _TOKEN_HEADER = 'X-Bridge-Token'
+
+
+def _http_send(client: httpx.Client, method: str, url: str, **kwargs):
+    """Повтор только при сетевой ошибке и 5xx; 4xx не повторяем."""
+    last_exc: Exception | None = None
+    attempts = _retries() + 1
+    for attempt in range(attempts):
+        try:
+            response = client.request(method, url, **kwargs)
+            if response.status_code >= 500 and attempt + 1 < attempts:
+                logger.warning(
+                    'Bridge HTTP %s %s -> %s, retry %s/%s',
+                    method,
+                    url,
+                    response.status_code,
+                    attempt + 1,
+                    attempts,
+                )
+                continue
+            return response
+        except httpx.TransportError as exc:
+            last_exc = exc
+            if attempt + 1 >= attempts:
+                raise
+            logger.warning(
+                'Bridge HTTP %s %s transport error, retry %s/%s: %s',
+                method,
+                url,
+                attempt + 1,
+                attempts,
+                exc,
+            )
+    if last_exc:
+        raise last_exc
+    raise RuntimeError('Bridge HTTP: empty retry loop')
 
 
 def _internal_token() -> str:
@@ -37,6 +73,14 @@ def _timeout() -> float:
         return float(raw)
     except (TypeError, ValueError):
         return 10.0
+
+
+def _retries() -> int:
+    raw = getattr(settings, 'BRIDGE_HTTP_RETRIES', 2)
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 2
 
 
 def _self_base_url() -> str | None:
@@ -202,6 +246,9 @@ class HttpTransport:
         token = _internal_token()
         if token:
             headers[_TOKEN_HEADER] = token
+        request_id = get_request_id()
+        if request_id:
+            headers[REQUEST_ID_HEADER] = request_id
         # Compose-имена modules/<name> часто с ``_``; для Django Host это не RFC-hostname.
         if base:
             from urllib.parse import urlparse
@@ -225,7 +272,7 @@ class HttpTransport:
         }
         url = f'{base}/internal/bridge/call'
         with httpx.Client(timeout=_timeout()) as client:
-            response = client.post(url, json=payload, headers=self._headers(base))
+            response = _http_send(client, 'POST', url, json=payload, headers=self._headers(base))
             response.raise_for_status()
             data = response.json()
         if isinstance(data, dict) and 'result' in data:
@@ -235,7 +282,9 @@ class HttpTransport:
     def _remote_has(self, base: str, name: str) -> bool:
         url = f'{base}/internal/bridge/has'
         with httpx.Client(timeout=_timeout()) as client:
-            response = client.get(
+            response = _http_send(
+                client,
+                'GET',
                 url,
                 params={'op': name},
                 headers=self._headers(base),
@@ -247,7 +296,9 @@ class HttpTransport:
     def _remote_all(self, base: str, group: str) -> dict[str, Any]:
         url = f'{base}/internal/bridge/all'
         with httpx.Client(timeout=_timeout()) as client:
-            response = client.get(
+            response = _http_send(
+                client,
+                'GET',
                 url,
                 params={'group': group},
                 headers=self._headers(base),

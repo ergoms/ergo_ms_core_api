@@ -84,6 +84,7 @@ REST_FRAMEWORK = {
         'login': THROTTLE_RATES_LOGIN,
         'token_refresh': THROTTLE_RATES_TOKEN_REFRESH,
     },
+    'DEFAULT_SCHEMA_CLASS': 'src.core.utils.swagger.inspectors.UniqueRefNameAutoSchema',
 }
 
 # Всегда синхронизируем: иначе после reload view видит новый scope,

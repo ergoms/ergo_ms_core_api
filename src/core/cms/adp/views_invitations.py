@@ -2,14 +2,14 @@
 API для приглашений на регистрацию и публичных настроек регистрации.
 """
 
+from django.utils.translation import gettext as _
 from src.core.search.mixins import parse_search_pagination
-from drf_yasg import openapi
-from drf_yasg.utils import swagger_auto_schema
+from src.core.utils.swagger.yasg_compat import swagger_auto_schema, openapi
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle
 
-from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
+from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewGlobalAdminMixin, BaseAPIViewPublicMixin
 from src.core.cms.adp.models import RegistrationInvitation
 from src.core.cms.adp.serializers import (
     RegistrationInvitationSerializer,
@@ -20,7 +20,6 @@ from src.core.cms.adp.serializers import (
     ValidateInvitationSerializer,
 )
 from src.core.cms.adp.services.registration import RegistrationService
-from src.core.cms.adp.services.admin_access import require_global_admin_response
 from src.core.audit.shortcuts import audit_log
 
 def _serialize_invitation(invitation):
@@ -37,7 +36,7 @@ def _parse_pagination(request, default_page_size=12):
     return page, page_size, search, status
 
 
-class RegistrationSettingsView(BaseAPIView):
+class RegistrationSettingsView(BaseAPIViewPublicMixin):
     """Публичные настройки режима регистрации."""
 
     @swagger_auto_schema(
@@ -48,28 +47,32 @@ class RegistrationSettingsView(BaseAPIView):
         return Response(RegistrationService.get_public_settings())
 
 
-class ValidateInvitationView(BaseAPIView):
+class ValidateInvitationView(BaseAPIViewPublicMixin):
     """Проверка токена приглашения (публичный endpoint)."""
+
+    throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
+    throttle_scope = 'registration'
 
     @swagger_auto_schema(
         operation_description='Проверить токен приглашения',
-        manual_parameters=[
-            openapi.Parameter(
-                'token',
-                openapi.IN_QUERY,
-                description='Токен приглашения',
-                type=openapi.TYPE_STRING,
-                required=True,
-            ),
-        ],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'token': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='Токен приглашения',
+                ),
+            },
+            required=['token'],
+        ),
         responses={200: ValidateInvitationSerializer()},
     )
-    def get(self, request):
+    def post(self, request):
         closed = RegistrationService.reject_if_registration_closed()
         if closed:
             return closed
 
-        token = (request.query_params.get('token') or '').strip()
+        token = (request.data.get('token') or '').strip()
         invitation = RegistrationService.get_invitation_by_token(token)
 
         if not invitation:
@@ -89,20 +92,14 @@ class ValidateInvitationView(BaseAPIView):
         })
 
 
-class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
+class RegistrationInvitationListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     """Список и создание приглашений (только глобальные администраторы)."""
-
-    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description='Получить список приглашений',
         responses={200: RegistrationInvitationSerializer(many=True)},
     )
     def get(self, request):
-        forbidden = require_global_admin_response(request)
-        if forbidden:
-            return forbidden
-
         page, page_size, search, status_filter = _parse_pagination(request)
         queryset = RegistrationInvitation.objects.select_related('invited_by').order_by('-created_at')
         queryset = RegistrationService.filter_invitations_queryset_by_status(queryset, status_filter)
@@ -143,10 +140,6 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={201: RegistrationInvitationSerializer()},
     )
     def post(self, request):
-        forbidden = require_global_admin_response(request)
-        if forbidden:
-            return forbidden
-
         serializer = CreateRegistrationInvitationSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -170,9 +163,7 @@ class RegistrationInvitationListView(BaseAPIViewAuthMixin, BaseAPIView):
         return Response(response_data, status=status.HTTP_201_CREATED)
 
 
-class RegistrationInvitationDetailView(BaseAPIViewAuthMixin, BaseAPIView):
-    permission_classes = [IsAuthenticated]
-
+class RegistrationInvitationDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     def _get_invitation(self, invitation_id):
         try:
             return RegistrationInvitation.objects.select_related('invited_by').get(pk=invitation_id)
@@ -184,10 +175,6 @@ class RegistrationInvitationDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={204: 'Приглашение отозвано'},
     )
     def delete(self, request, invitation_id):
-        forbidden = require_global_admin_response(request)
-        if forbidden:
-            return forbidden
-
         invitation = self._get_invitation(invitation_id)
         if not invitation:
             return Response({'error': _('Приглашение не найдено')}, status=status.HTTP_404_NOT_FOUND)
@@ -202,18 +189,12 @@ class RegistrationInvitationDetailView(BaseAPIViewAuthMixin, BaseAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class RegistrationInvitationResendView(BaseAPIViewAuthMixin, BaseAPIView):
-    permission_classes = [IsAuthenticated]
-
+class RegistrationInvitationResendView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     @swagger_auto_schema(
         operation_description='Повторно отправить email с приглашением',
         responses={200: RegistrationInvitationSerializer()},
     )
     def post(self, request, invitation_id):
-        forbidden = require_global_admin_response(request)
-        if forbidden:
-            return forbidden
-
         try:
             invitation = RegistrationInvitation.objects.select_related('invited_by').get(pk=invitation_id)
         except RegistrationInvitation.DoesNotExist:
@@ -226,18 +207,12 @@ class RegistrationInvitationResendView(BaseAPIViewAuthMixin, BaseAPIView):
         return Response(_serialize_invitation(invitation))
 
 
-class RegistrationInvitationBulkCreateView(BaseAPIViewAuthMixin, BaseAPIView):
-    permission_classes = [IsAuthenticated]
-
+class RegistrationInvitationBulkCreateView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     @swagger_auto_schema(
         operation_description='Массовое создание приглашений по списку email',
         request_body=BulkCreateRegistrationInvitationsSerializer,
     )
     def post(self, request):
-        forbidden = require_global_admin_response(request)
-        if forbidden:
-            return forbidden
-
         serializer = BulkCreateRegistrationInvitationsSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -254,10 +229,8 @@ class RegistrationInvitationBulkCreateView(BaseAPIViewAuthMixin, BaseAPIView):
         return Response(result, status=status.HTTP_201_CREATED)
 
 
-class RegistrationInvitationClearView(BaseAPIViewAuthMixin, BaseAPIView):
+class RegistrationInvitationClearView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     """Массовая очистка приглашений (только глобальные администраторы)."""
-
-    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description='Удалить приглашения: inactive — использованные, истёкшие и отозванные; all — все записи',
@@ -265,10 +238,6 @@ class RegistrationInvitationClearView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: 'Количество удалённых записей'},
     )
     def post(self, request):
-        forbidden = require_global_admin_response(request)
-        if forbidden:
-            return forbidden
-
         serializer = ClearRegistrationInvitationsSerializer(data=request.data or {})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -294,18 +263,12 @@ class RegistrationInvitationClearView(BaseAPIViewAuthMixin, BaseAPIView):
         return Response(result)
 
 
-class RegistrationInvitationBulkSendView(BaseAPIViewAuthMixin, BaseAPIView):
-    permission_classes = [IsAuthenticated]
-
+class RegistrationInvitationBulkSendView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     @swagger_auto_schema(
         operation_description='Массовая отправка email с приглашениями',
         request_body=BulkSendRegistrationInvitationsSerializer,
     )
     def post(self, request):
-        forbidden = require_global_admin_response(request)
-        if forbidden:
-            return forbidden
-
         serializer = BulkSendRegistrationInvitationsSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

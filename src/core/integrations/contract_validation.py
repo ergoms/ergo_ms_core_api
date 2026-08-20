@@ -20,6 +20,7 @@ from src.core.integrations import bridge
 from src.core.integrations.module_contracts import (
     AUDIT_ACTION_DEFINITIONS_GROUP,
     AUDIT_SCOPE_DIMENSIONS_GROUP,
+    MEDIA_UPLOAD_QUOTA_POLICIES_GROUP,
     NOTIFICATIONS_EMAIL_CONTEXT_GROUP,
     NOTIFICATIONS_EVENT_DEFINITIONS_GROUP,
     SESSION_CLAIMS_GROUP,
@@ -300,6 +301,65 @@ def _validate_email_context(errors: list[str]) -> None:
         _expect_callable(raw, path, errors, required=True)
 
 
+def _validate_upload_quota_policies(errors: list[str]) -> None:
+    from src.core.utils.media_upload_quota import (
+        RESERVED_QUOTA_CLASSES,
+        is_valid_quota_slug,
+        is_valid_rate_string,
+        normalize_policy_prefix,
+    )
+
+    for key, raw in bridge.all(MEDIA_UPLOAD_QUOTA_POLICIES_GROUP).items():
+        path = _path(MEDIA_UPLOAD_QUOTA_POLICIES_GROUP, str(key))
+        data = _expect_dict(raw, path, errors)
+        if data is None:
+            continue
+
+        prefix = _expect_str(
+            data.get('target_dir_prefix'),
+            f'{path}.target_dir_prefix',
+            errors,
+        )
+        if prefix and not normalize_policy_prefix(prefix):
+            errors.append(
+                f'{path}.target_dir_prefix={prefix!r}: ожидается относительный POSIX-префикс'
+            )
+
+        infix = data.get('path_must_contain')
+        if infix is not None:
+            _expect_str(
+                infix,
+                f'{path}.path_must_contain',
+                errors,
+                required=False,
+            )
+
+        quota = _expect_str(data.get('quota'), f'{path}.quota', errors)
+        if quota:
+            slug = quota.strip().lower()
+            if slug in RESERVED_QUOTA_CLASSES or not is_valid_quota_slug(slug):
+                errors.append(
+                    f'{path}.quota={quota!r}: slug [a-z0-9_]+, не user/admin'
+                )
+
+        rate = data.get('rate')
+        if rate is None:
+            errors.append(f'{path}.rate: обязательное поле отсутствует')
+        elif callable(rate):
+            pass
+        elif isinstance(rate, str):
+            if not is_valid_rate_string(rate):
+                errors.append(
+                    f'{path}.rate={rate!r}: ожидается N/minute (second|hour|day)'
+                )
+        else:
+            errors.append(
+                f'{path}.rate: ожидается str или callable, получено {type(rate).__name__}'
+            )
+
+        _expect_callable(data.get('allows'), f'{path}.allows', errors, required=True)
+
+
 def _validate_session_restore_op(errors: list[str]) -> None:
     if not bridge.has(SESSION_RESTORE_CLAIMS):
         return
@@ -325,6 +385,7 @@ def collect_contract_violations() -> list[str]:
     _validate_audit_dimensions(errors)
     _validate_notification_events(errors)
     _validate_email_context(errors)
+    _validate_upload_quota_policies(errors)
     _validate_session_restore_op(errors)
     return errors
 

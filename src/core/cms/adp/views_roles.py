@@ -4,8 +4,7 @@ Views для управления ролями, политиками и прав
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
+from src.core.utils.swagger.yasg_compat import swagger_auto_schema, openapi
 
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext as _
@@ -23,6 +22,10 @@ from src.core.cms.adp.serializers import (
     UserPermissionsSerializer,
 )
 from src.core.cms.adp.services.permissions import PermissionService, RoleAssignmentError
+from src.core.cms.adp.services.permissions_snapshot_cache import (
+    invalidate_all_permissions_snapshots,
+    invalidate_policy_access_caches,
+)
 from src.core.audit.shortcuts import audit_log
 from src.core.utils.methods import parse_errors_to_dict
 from src.core.search.mixins import parse_search_pagination
@@ -313,9 +316,7 @@ class PolicyListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = PolicySerializer(data=request.data)
         if serializer.is_valid():
             policy = serializer.save()
-            from src.core.cms.adp.menu.menu_cache import invalidate_user_menu_cache
-
-            invalidate_user_menu_cache()
+            invalidate_policy_access_caches()
             audit_log('policy.created', request=request, severity='security',
                    entity={'type': 'policy', 'label': str(policy)})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -365,9 +366,7 @@ class PolicyDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = PolicySerializer(policy, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            from src.core.cms.adp.menu.menu_cache import invalidate_user_menu_cache
-
-            invalidate_user_menu_cache()
+            invalidate_policy_access_caches()
             audit_log('policy.updated', request=request, severity='security',
                    entity={'type': 'policy', 'label': str(policy)})
             return Response(serializer.data)
@@ -387,9 +386,7 @@ class PolicyDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         
         policy_label = str(policy)
         policy.delete()
-        from src.core.cms.adp.menu.menu_cache import invalidate_user_menu_cache
-
-        invalidate_user_menu_cache()
+        invalidate_policy_access_caches()
         audit_log('policy.deleted', request=request, severity='security',
                entity={'type': 'policy', 'label': policy_label})
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -603,12 +600,14 @@ class ModulePermissionListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
                 serializer = ModulePermissionSerializer(existing, data=request.data, partial=True)
                 if serializer.is_valid():
                     serializer.save()
+                    invalidate_all_permissions_snapshots()
                     audit_log('module_permission.updated', request=request, severity='security',
                            entity={'type': 'module_permission', 'label': str(existing)})
                     return Response(serializer.data)
             else:
                 # Создаем новое
                 perm = serializer.save()
+                invalidate_all_permissions_snapshots()
                 audit_log('module_permission.created', request=request, severity='security',
                        entity={'type': 'module_permission', 'label': str(perm)})
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -659,6 +658,7 @@ class ModulePermissionDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         serializer = ModulePermissionSerializer(permission, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            invalidate_all_permissions_snapshots()
             audit_log('module_permission.updated', request=request, severity='security',
                    entity={'type': 'module_permission', 'label': str(permission)})
             return Response(serializer.data)
@@ -678,6 +678,7 @@ class ModulePermissionDetailView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
         
         permission_label = str(permission)
         permission.delete()
+        invalidate_all_permissions_snapshots()
         audit_log('module_permission.deleted', request=request, severity='security',
                entity={'type': 'module_permission', 'label': permission_label})
         return Response(status=status.HTTP_204_NO_CONTENT)

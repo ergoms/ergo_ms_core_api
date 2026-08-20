@@ -32,14 +32,47 @@ _PYTHON_DEPS_STAMP_REL = Path("virtual_env/cache/.ergo-python-deps-ok")
 # Инструменты окружения: не в poetry.lock ядра, но нужны для ergoms/poetry/pip.
 _ENV_TOOL_PACKAGES = frozenset({"pip", "setuptools", "wheel", "poetry"})
 # moviepy 2.2.1 объявляет pillow<12.0, хотя с Pillow 12.x обычно работает (см. Zulko/moviepy#2553).
+# Ставим moviepy через --no-deps; runtime-зависимости — вручную, без pillow (конфликт с ядром).
 _NO_DEPS_PACKAGES = frozenset({"moviepy"})
 _NO_DEPS_RUNTIME_DEPS: Dict[str, List[str]] = {
     "moviepy": [
+        "decorator>=4.0.2,<6.0",
         "imageio>=2.5,<3.0",
         "imageio_ffmpeg>=0.2.0",
+        "numpy>=1.25.0",
         "proglog<=1.0.0",
+        "python-dotenv>=0.10",
     ],
 }
+
+
+def _jupyter_enabled_from_env(project_root: Path) -> bool:
+    env_path = project_root / ".env"
+    if not env_path.is_file():
+        return False
+    try:
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            if key.strip() != "ERGO_JUPYTER":
+                continue
+            token = value.strip().strip("'").strip('"').lower()
+            return token not in ("", "none", "0", "false")
+    except OSError:
+        return False
+    return False
+
+
+def _auto_extra_groups(project_root: Path) -> frozenset[str]:
+    groups: set[str] = set()
+    docker_service = os.environ.get("ERGO_DOCKER_SERVICE_NAME", "").strip()
+    if not docker_service:
+        groups.add("mcp")
+    if docker_service == "jupyter" or _jupyter_enabled_from_env(project_root):
+        groups.add("jupyter")
+    return frozenset(groups)
 
 
 def _parse_with_groups(args: Tuple[Any, ...]) -> frozenset[str]:
@@ -75,12 +108,13 @@ class InstallCommand(PoetryCommand):
 
     def run(self, *args) -> int:
         force = "--force" in args
-        extra_groups = _parse_with_groups(args)
 
         project_root = self._find_project_root()
         if project_root is None:
             print("Ошибка: не удалось найти корневой pyproject.toml.")
             return 1
+
+        extra_groups = _parse_with_groups(args) | _auto_extra_groups(project_root)
 
         fingerprint = self._python_deps_fingerprint(project_root, extra_groups=extra_groups)
         root_data = self._read_toml(project_root / "pyproject.toml")
@@ -252,6 +286,12 @@ class InstallCommand(PoetryCommand):
     ) -> int:
         env = os.environ.copy()
         env["POETRY_VIRTUALENVS_CREATE"] = "false"
+        pip_cache = project_root / "virtual_env" / "cache" / "pip"
+        poetry_cache = project_root / "virtual_env" / "cache" / "poetry"
+        pip_cache.mkdir(parents=True, exist_ok=True)
+        poetry_cache.mkdir(parents=True, exist_ok=True)
+        env["PIP_CACHE_DIR"] = str(pip_cache)
+        env["POETRY_CACHE_DIR"] = str(poetry_cache)
         cmd = [
             "poetry",
             "install",
@@ -482,6 +522,11 @@ class InstallCommand(PoetryCommand):
             req_line = self._to_pip_requirement(pkg, constraint, project_root)
             if not self._requirement_satisfied(req_line, installed):
                 unsatisfied[pkg] = constraint
+                continue
+            for dep_line in _NO_DEPS_RUNTIME_DEPS.get(canonicalize_name(pkg), []):
+                if not self._requirement_satisfied(dep_line, installed):
+                    unsatisfied[pkg] = constraint
+                    break
         return unsatisfied
 
     def _requirement_satisfied(self, req_line: str, installed: Dict[str, str]) -> bool:

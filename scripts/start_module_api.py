@@ -15,6 +15,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 API_DIR = SCRIPT_DIR.parent
 PROJECT_ROOT = API_DIR.parent.parent
+DEPLOYMENT_DIR = PROJECT_ROOT / 'core' / 'deployment'
 
 
 def _ensure_sys_path() -> None:
@@ -22,6 +23,15 @@ def _ensure_sys_path() -> None:
         entry = str(path)
         if entry not in sys.path:
             sys.path.insert(0, entry)
+    deployment = str(DEPLOYMENT_DIR)
+    if deployment not in sys.path:
+        sys.path.insert(0, deployment)
+
+
+def _ensure_api_secret() -> None:
+    from security.ensure_secret import ensure_mode_secrets_for_process
+
+    ensure_mode_secrets_for_process(PROJECT_ROOT)
 
 
 def _build_env(module_name: str) -> dict:
@@ -61,6 +71,7 @@ def main() -> int:
         return 2
 
     _ensure_sys_path()
+    _ensure_api_secret()
 
     from src.config.deploy import (
         build_dev_command,

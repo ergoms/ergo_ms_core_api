@@ -7,6 +7,7 @@ from django.conf import settings
 
 from core.shared.media_hmac import create_upload_token, sign_url
 
+from src.core.utils.media_upload_quota import cap_upload_rate, is_valid_quota_slug
 from src.core.utils.media_upload_validation import (
     cap_max_size,
     filter_allowed_types,
@@ -82,18 +83,24 @@ def generate_upload_token(
     expires_in: int = None,
     *,
     quota: str = 'user',
+    rate: str | None = None,
 ) -> str:
     """
     Сгенерировать upload-токен для загрузки файла в media_api.
 
     Параметры валидируются на сервере (нормализация пути, cap размера, whitelist типов).
-    quota: user | admin — класс квоты частоты в media_api.
+    quota: user | admin | slug модуля. Для slug в токен кладётся rate (после cap).
     """
     target_dir = normalize_target_dir(target_dir)
     max_size = cap_max_size(max_size)
     allowed_types = filter_allowed_types(allowed_types)
     quota_norm = (quota or 'user').strip().lower()
-    if quota_norm not in ('user', 'admin'):
+    payload_rate = None
+    if quota_norm in ('user', 'admin'):
+        pass
+    elif is_valid_quota_slug(quota_norm) and rate:
+        payload_rate = cap_upload_rate(str(rate))
+    else:
         quota_norm = 'user'
 
     if expires_in is None:
@@ -105,6 +112,8 @@ def generate_upload_token(
         'max_size': max_size,
         'quota': quota_norm,
     }
+    if payload_rate:
+        payload['rate'] = payload_rate
     if allowed_types:
         payload['allowed_types'] = allowed_types
 
@@ -118,6 +127,7 @@ def get_upload_info(
     allowed_types: list = None,
     *,
     quota: str = 'user',
+    rate: str | None = None,
 ) -> dict:
     """
     Получить полную информацию для загрузки (URL + токен).
@@ -131,6 +141,7 @@ def get_upload_info(
         max_size,
         allowed_types,
         quota=quota,
+        rate=rate,
     )
     base_url = _get_media_base_url()
     return {

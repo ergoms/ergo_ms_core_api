@@ -51,9 +51,10 @@ def get_bootstrap_logger() -> logging.Logger:
 
 
 def _bootstrap_project_env() -> None:
-    """Подгружает API_SECRET_KEY из .env до django.setup (для подписи кэша)."""
-    from src.core.utils.env_secret import bootstrap_api_secret_key
-    bootstrap_api_secret_key(start=SCRIPT_DIR)
+    """Записывает пустые секреты текущих режимов в .env / env/*.env до django.setup."""
+    from security.ensure_secret import ensure_mode_secrets_for_process
+
+    ensure_mode_secrets_for_process(PROJECT_ROOT)
 
 
 _bootstrap_project_env()

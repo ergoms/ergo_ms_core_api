@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 from typing import FrozenSet, List
 
-from src.config.settings.base import MODULES_DIR, SYSTEM_DIR
+# paths, не settings.base: `commands install` идёт до django-environ / poetry install.
+from src.config.paths import MODULES_DIR, SYSTEM_DIR
 
 _cached_catalog = None
 

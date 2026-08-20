@@ -227,6 +227,13 @@ class ModuleDiscoverer:
             return
         
         for module_name in os.listdir(current_dir):
+            if module_name.startswith('.') or module_name in (
+                '__pycache__',
+                'migrations',
+                'node_modules',
+                'dist',
+            ):
+                continue
             module_path = os.path.join(current_dir, module_name)
             
             if os.path.isdir(module_path):

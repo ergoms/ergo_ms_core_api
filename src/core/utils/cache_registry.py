@@ -129,18 +129,28 @@ def invalidate_modules_env_cache() -> str:
 
 def invalidate_file_caches() -> str:
     deleted = _delete_bin_files(_FILE_BIN_NAMES)
+    try:
+        from src.core.utils.auto_api.discovered_urls_cache import invalidate_discovered_urls_cache
+
+        invalidate_discovered_urls_cache()
+        deleted.append('discovered_urls_*.bin')
+    except Exception:
+        logger.debug('invalidate discovered_urls skipped', exc_info=True)
     return f'Файловые кэши удалены: {", ".join(deleted) or "нет"}'
 
 
 def invalidate_memory_caches() -> str:
     from src.core.cms.adp.services.permission_catalog import clear_cache as clear_permission_catalog
     from src.core.utils.auto_api.discovered_apps_cache import clear_discovered_apps_memory_cache
+    from src.core.utils.auto_api.discovered_urls_cache import clear_discovered_urls_memory_cache
 
     parts: list[str] = []
     clear_permission_catalog()
     parts.append('permission_catalog')
     clear_discovered_apps_memory_cache()
     parts.append('discovered_apps (memory)')
+    clear_discovered_urls_memory_cache()
+    parts.append('discovered_urls (memory)')
     try:
         from src.core.utils.geoip import reset_geoip_reader_cache
 

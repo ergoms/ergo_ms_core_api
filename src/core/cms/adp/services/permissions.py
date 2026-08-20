@@ -209,16 +209,6 @@ class PermissionService:
         return user_role
     
     @staticmethod
-    def _get_active_user_role(user: User) -> Optional[UserRole]:
-        """Активная роль без побочных эффектов (не назначает роль по умолчанию)."""
-        if not user or not getattr(user, 'pk', None):
-            return None
-        return UserRole.objects.select_related('role').filter(
-            user=user,
-            is_active=True,
-        ).first()
-
-    @staticmethod
     def _is_global_admin(user: User) -> bool:
         """
         Глобальный администратор: is_superuser и активная ADP-роль admin синхронизированы
@@ -235,7 +225,7 @@ class PermissionService:
         if getattr(user, 'is_superuser', False):
             cache[cache_key] = True
             return True
-        user_role = PermissionService._get_active_user_role(user)
+        user_role = PermissionService.get_user_role(user)
         result = bool(
             user_role
             and user_role.is_active
@@ -688,10 +678,9 @@ class PermissionService:
             user_role.is_active = True
             user_role.assigned_by = assigned_by
             user_role.save()
-        
-        # Назначаем ролевые группы
-        if role_groups:
-            user_role.role_groups.set(role_groups)
+
+        # Пустой список снимает ранее выданные группы (не оставлять старые grants).
+        user_role.role_groups.set(role_groups or [])
         
         PermissionService._sync_django_admin_flags(
             user,

@@ -159,6 +159,12 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
             'level': 'WARNING',
             'propagate': False,
         },
+        # httpx пишет INFO на каждый HTTP Request — как Daphne, не ниже WARNING.
+        'httpx': {
+            'handlers': api_loggers_common,
+            'level': 'WARNING',
+            'propagate': False,
+        },
         'config': {
             'handlers': api_loggers_common,
             'level': 'DEBUG',
@@ -256,6 +262,29 @@ def build_logging_config(service: str | None = None) -> dict[str, Any]:
         'kombu': {
             'handlers': ['celery_broker_file'] + console,
             'level': file_level_for_key('CELERY_BROKER', SYSTEM_DIR, service_prefix),
+            'propagate': False,
+        },
+        # HTTP и код модулей: в API — api.log, в worker — celery_tasks.log.
+        'modules': {
+            'handlers': (
+                (['celery_tasks_file'] if service == 'celery' else [default_file])
+                + console
+            ),
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        # Задачи ядра (кроме audit / client_monitor — они заданы выше точнее).
+        'celery.core': {
+            'handlers': (
+                (['celery_tasks_file'] if service == 'celery' else [default_file])
+                + console
+            ),
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'celery.concurrency': {
+            'handlers': ['celery_worker_file'] + console,
+            'level': 'DEBUG',
             'propagate': False,
         },
     }

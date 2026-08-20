@@ -24,6 +24,10 @@ NOTIFICATIONS_EVENT_DEFINITIONS_GROUP = 'notifications.event_definitions'
 NOTIFICATIONS_EMAIL_CONTEXT_GROUP = 'notifications.email_context'
 NOTIFICATIONS_EMAIL_TEMPLATES_GROUP = 'notifications.email_templates'
 
+# Политики частоты загрузок media_api: модуль декларирует prefix + класс квоты.
+# Ядро выбирает политику по target_dir; media_api считает по классу из токена.
+MEDIA_UPLOAD_QUOTA_POLICIES_GROUP = 'media.upload_quota_policies'
+
 # --- Ops (bridge.provide_op / call) ---
 
 NOTIFICATIONS_CREATE = 'notifications.create'
@@ -49,6 +53,8 @@ CORE_BULK_USER_CREATE = 'core.bulk_user_create'
 
 # Провайдер возвращает dict session-claims для JWT при логине (или None).
 SESSION_RESTORE_CLAIMS = 'session.restore_claims'
+# Проверка: устройство активно и пользователь is_active (MODULE_AUTH_MODE=jwt_claims).
+SESSION_DEVICE_ACTIVE = 'session.device_active'
 
 MENU_PREPARE_VISIBILITY = 'menu.prepare_visibility'
 MENU_CAN_SEE_ITEM = 'menu.can_see_item'
@@ -62,4 +68,5 @@ CORE_BRIDGE_PREFIXES = (
     'session.',
     'menu.',
     'adp.',
+    'media.',
 )

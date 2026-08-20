@@ -8,8 +8,7 @@ from django.contrib.auth.models import update_last_login
 from django.utils.translation import gettext as _
 
 User = get_user_model()
-from drf_yasg import openapi
-from drf_yasg.utils import swagger_auto_schema
+from src.core.utils.swagger.yasg_compat import swagger_auto_schema, openapi
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.serializers import ValidationError as DRFValidationError
@@ -54,7 +53,7 @@ from src.core.cms.adp.user_agent_utils import (
     detect_device_type,
     get_client_ip,
 )
-from src.core.utils.base.base_views import BaseAPIView
+from src.core.utils.base.base_views import BaseAPIViewPublicMixin
 from src.core.utils.methods import parse_errors_to_dict, send_confirmation_email
 from src.config.settings.auth import get_token_lifetime
 from src.core.audit.shortcuts import audit_log
@@ -71,7 +70,7 @@ def _too_many_login_attempts_response(username: str) -> Response:
     )
 
 
-class UserRegistrationValidationView(BaseAPIView):
+class UserRegistrationValidationView(BaseAPIViewPublicMixin):
     # ScopedRateThrottle — иначе только общий anon (перебор логинов/email).
     throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
     throttle_scope = 'registration'
@@ -134,7 +133,7 @@ class UserRegistrationValidationView(BaseAPIView):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-class PasswordResetSettingsView(BaseAPIView):
+class PasswordResetSettingsView(BaseAPIViewPublicMixin):
     """Публичные настройки восстановления пароля."""
 
     @swagger_auto_schema(
@@ -145,7 +144,7 @@ class PasswordResetSettingsView(BaseAPIView):
         return Response(PasswordResetService.get_public_settings())
 
 
-class SendConfirmationCodeView(BaseAPIView):
+class SendConfirmationCodeView(BaseAPIViewPublicMixin):
     # ScopedRateThrottle — единственный класс, который читает throttle_scope;
     # без него действовал только общий anon-лимит (см. security-audit.md, В1).
     throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
@@ -201,7 +200,7 @@ class SendConfirmationCodeView(BaseAPIView):
         return generic_ok
 
 
-class VerifyConfirmationCodeView(BaseAPIView):
+class VerifyConfirmationCodeView(BaseAPIViewPublicMixin):
     throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
     throttle_scope = 'password_reset'
 
@@ -221,7 +220,7 @@ class VerifyConfirmationCodeView(BaseAPIView):
 
         return Response({"message": _("Код успешно подтвержден")}, status=status.HTTP_200_OK)
 
-class ResetPasswordView(BaseAPIView):
+class ResetPasswordView(BaseAPIViewPublicMixin):
     throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
     throttle_scope = 'password_reset'
 
@@ -321,7 +320,7 @@ class ResetPasswordView(BaseAPIView):
             status=status.HTTP_200_OK
         )
         
-class UserRegistrationView(BaseAPIView):
+class UserRegistrationView(BaseAPIViewPublicMixin):
     throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
     throttle_scope = 'registration'
 
@@ -388,7 +387,7 @@ class UserRegistrationView(BaseAPIView):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-class UserAuthorizationView(BaseAPIView):
+class UserAuthorizationView(BaseAPIViewPublicMixin):
     # ScopedRateThrottle — единственный класс, который читает throttle_scope;
     # без него действовал только общий anon-лимит (см. security-audit.md, В1).
     throttle_classes = [AnonRateThrottle, ScopedRateThrottle]
@@ -421,7 +420,6 @@ class UserAuthorizationView(BaseAPIView):
                     description="Пользователь успешно авторизован.",
                     examples={
                         "application/json": {
-                            "refresh": "your_refresh_token",
                             "access": "your_access_token"
                         }
                     }

@@ -167,10 +167,23 @@ def media_api_internal_base_url() -> str:
     return f'http://{bind_host}:{bind_port}'
 
 
+def inferred_public_origins() -> list[str]:
+    """
+    Публичный origin SPA из runtime, без записи в .env.
+
+    При nginx — nginx_public_origin() (там же FRONTEND_BASE_URL, если задан).
+    Без nginx — только непустой FRONTEND_BASE_URL.
+    """
+    if nginx_enabled():
+        origin = nginx_public_origin()
+        return [origin] if origin else []
+    frontend = env.str('FRONTEND_BASE_URL', default='').strip().rstrip('/')
+    return [frontend] if frontend else []
+
+
 def effective_cors_origins(default_origins: list[str]) -> list[str]:
-    if not nginx_enabled():
-        return default_origins
-    origin = nginx_public_origin()
-    if origin in default_origins:
-        return default_origins
-    return [origin, *default_origins]
+    origins = list(default_origins)
+    for origin in inferred_public_origins():
+        if origin not in origins:
+            origins.append(origin)
+    return origins

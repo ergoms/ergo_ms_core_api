@@ -9,6 +9,7 @@ from src.core.realtime.hub import RealtimeHub
 from src.core.realtime.polling import apply_after_id
 from src.core.realtime.topics import messenger_group, messenger_topic
 from src.core.utils.mixins import SwaggerSafeMixin, MediaApiFileMixin
+from src.core.utils.permissions import ObjectPermissionMixin
 
 from .models import Message, MessageAttachment
 from .serializers import MessageAttachmentSerializer, MessageSerializer
@@ -17,7 +18,7 @@ from .utils import get_content_type
 logger = logging.getLogger('core.messenger')
 
 
-class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
+class MessageViewSet(ObjectPermissionMixin, SwaggerSafeMixin, viewsets.ModelViewSet):
     serializer_class = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
@@ -53,10 +54,13 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
         ct_name = self._get_ct_name_for_group(content_type)
         return has_messenger_access(self.request.user, ct_name, int(object_id))
 
+    def check_object_permission(self, request, obj):
+        return self._has_messenger_access(obj.content_type, obj.object_id)
+
     def get_object(self):
         """Проверяем доступ к родительскому объекту и при retrieve по pk (защита от IDOR)."""
         instance = super().get_object()
-        if not self._has_messenger_access(instance.content_type, instance.object_id):
+        if not self.check_object_permission(self.request, instance):
             raise PermissionDenied('Нет доступа к сообщению.')
         return instance
 
@@ -130,7 +134,7 @@ class MessageViewSet(SwaggerSafeMixin, viewsets.ModelViewSet):
             logger.exception('Broadcast message_deleted failed')
 
 
-class MessageAttachmentViewSet(MediaApiFileMixin, SwaggerSafeMixin, viewsets.ModelViewSet):
+class MessageAttachmentViewSet(ObjectPermissionMixin, MediaApiFileMixin, SwaggerSafeMixin, viewsets.ModelViewSet):
     serializer_class = MessageAttachmentSerializer
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = (JSONParser, MultiPartParser, FormParser)
@@ -149,3 +153,9 @@ class MessageAttachmentViewSet(MediaApiFileMixin, SwaggerSafeMixin, viewsets.Mod
             queryset = queryset.filter(message_id=message_id)
 
         return queryset.order_by('created_at')
+
+    def check_object_permission(self, request, obj):
+        message = getattr(obj, 'message', None)
+        if message is None:
+            return False
+        return message.author_id == getattr(request.user, 'pk', None)
