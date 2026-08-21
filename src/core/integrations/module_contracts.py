@@ -45,6 +45,9 @@ ADP_FILTER_GRANTED_ROLE_GROUP_IDS = 'adp.filter_granted_role_group_ids'
 # Подписчики возвращают list ModulePermission (или совместимых объектов)
 # для обогащения snapshot прав в контексте текущего session-scope.
 ADP_SESSION_SCOPED_MODULE_PERMISSIONS = 'adp.session_scoped_module_permissions'
+# Подписчики возвращают iterable пар (module_name, permission_key), которые
+# нужно вычесть из snapshot прав текущего session-scope.
+ADP_SESSION_SCOPED_DENIED_PERMISSIONS = 'adp.session_scoped_denied_permissions'
 AUDIT_CAN_READ = 'audit.can_read'
 AUDIT_RECORD = 'audit.record'
 

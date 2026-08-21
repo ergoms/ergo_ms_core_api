@@ -176,6 +176,28 @@ class ModulePermissionSerializer(ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
+class SnapshotModulePermissionSerializer(Serializer):
+    """Снимок права: ORM ModulePermission или синтетический объект без группы."""
+    id = IntegerField(read_only=True, allow_null=True, required=False)
+    module_name = CharField(read_only=True)
+    permission_key = CharField(read_only=True)
+    permission_name = CharField(read_only=True, allow_blank=True, allow_null=True)
+    description = CharField(read_only=True, allow_blank=True, allow_null=True, required=False)
+    role_group = IntegerField(source='role_group_id', read_only=True, allow_null=True, required=False)
+    role_group_name = SerializerMethodField()
+    is_granted = BooleanField(read_only=True)
+    granted_via = SerializerMethodField()
+    created_at = DateTimeField(read_only=True, allow_null=True, required=False)
+    updated_at = DateTimeField(read_only=True, allow_null=True, required=False)
+
+    def get_role_group_name(self, obj):
+        group = getattr(obj, 'role_group', None)
+        return getattr(group, 'name', None) if group is not None else None
+
+    def get_granted_via(self, obj):
+        return getattr(obj, 'granted_via', None) or 'group'
+
+
 class UserPermissionsSerializer(Serializer):
     """Сериализатор для получения всех прав пользователя"""
     user_id = CharField(read_only=True)
@@ -185,7 +207,7 @@ class UserPermissionsSerializer(Serializer):
     allowed_urls = ListField(child=CharField(), read_only=True)
     denied_urls = ListField(child=CharField(), read_only=True)
     is_global_admin = BooleanField(read_only=True, default=False)
-    module_permissions = ModulePermissionSerializer(many=True, read_only=True)
+    module_permissions = SnapshotModulePermissionSerializer(many=True, read_only=True)
 
 
 class AdminUserRoleInfoSerializer(Serializer):

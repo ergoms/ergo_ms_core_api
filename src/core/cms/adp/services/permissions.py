@@ -14,6 +14,7 @@ from src.core.integrations import bridge
 from src.core.integrations.module_contracts import (
     ADP_FILTER_GRANTED_ROLE_GROUP_IDS,
     ADP_PERMISSION_CHECK,
+    ADP_SESSION_SCOPED_DENIED_PERMISSIONS,
     ADP_SESSION_SCOPED_MODULE_PERMISSIONS,
 )
 
@@ -350,6 +351,30 @@ class PermissionService:
         return extra
 
     @staticmethod
+    def _session_scoped_denied_permissions(user: User, organization_id: int | None) -> set[tuple[str, str]]:
+        """Пары (module_name, permission_key), которые модули вычитают из snapshot."""
+        denied: set[tuple[str, str]] = set()
+        if not organization_id or not user:
+            return denied
+        for result in bridge.emit(
+            ADP_SESSION_SCOPED_DENIED_PERMISSIONS,
+            user=user,
+            organization_id=organization_id,
+        ):
+            if not result:
+                continue
+            if isinstance(result, (list, tuple, set, frozenset)):
+                for item in result:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        denied.add((item[0], item[1]))
+                    elif isinstance(item, dict):
+                        module_name = item.get('module_name')
+                        permission_key = item.get('permission_key')
+                        if module_name and permission_key:
+                            denied.add((module_name, permission_key))
+        return denied
+
+    @staticmethod
     def _get_granted_module_permission_keys(user: User) -> set[tuple[str, str]]:
         cache = get_request_permission_cache()
         cache_key = f'module_perm_keys:{user.pk}'
@@ -566,7 +591,14 @@ class PermissionService:
         module_permissions.extend(
             PermissionService._session_scoped_module_permissions(user, organization_id)
         )
-        
+
+        denied = PermissionService._session_scoped_denied_permissions(user, organization_id)
+        if denied:
+            module_permissions = [
+                perm for perm in module_permissions
+                if (getattr(perm, 'module_name', None), getattr(perm, 'permission_key', None)) not in denied
+            ]
+
         return {
             'user_id': user.id,
             'username': user.username,
