@@ -104,6 +104,21 @@ def _guard(request: HttpRequest):
     return None
 
 
+def _json_safe_callable(key: str, value: Any) -> dict[str, Any] | tuple[str, Any] | None:
+    """Callable → JSON: spec на функции, либо вызов без аргументов (rate)."""
+    spec = getattr(value, '_bridge_json', None)
+    if isinstance(spec, dict):
+        return spec
+    if key == 'rate':
+        try:
+            resolved = value()
+            json.dumps(resolved)
+            return (key, resolved)
+        except Exception:
+            return None
+    return None
+
+
 def _json_safe_providers(providers: dict[str, Any]) -> dict[str, Any]:
     """Оставляет только JSON-сериализуемые значения группы."""
     safe: dict[str, Any] = {}
@@ -111,15 +126,19 @@ def _json_safe_providers(providers: dict[str, Any]) -> dict[str, Any]:
         try:
             json.dumps(obj, default=None)
         except (TypeError, ValueError):
-            # dict с callables — сериализуем без callables
             if isinstance(obj, dict):
-                trimmed = {}
-                for k, v in obj.items():
-                    if callable(v):
+                trimmed: dict[str, Any] = {}
+                for field, value in obj.items():
+                    if callable(value):
+                        encoded = _json_safe_callable(field, value)
+                        if isinstance(encoded, dict):
+                            trimmed.update(encoded)
+                        elif isinstance(encoded, tuple):
+                            trimmed[encoded[0]] = encoded[1]
                         continue
                     try:
-                        json.dumps(v)
-                        trimmed[k] = v
+                        json.dumps(value)
+                        trimmed[field] = value
                     except (TypeError, ValueError):
                         continue
                 safe[key] = trimmed

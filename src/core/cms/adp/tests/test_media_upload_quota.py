@@ -126,6 +126,26 @@ class ResolveUploadQuotaTests(SimpleTestCase):
         self.assertEqual(resolved, ResolvedUploadQuota(quota='user'))
         self.assertIsNone(resolved.rate)
 
+    def test_http_serialized_allows_module_keys(self):
+        policies = {
+            'lab': _policy(
+                allows=None,
+                allows_module='lab',
+                allows_keys=['view'],
+            ),
+        }
+        with patch(
+            'src.core.utils.media_upload_quota.PermissionService.check_module_permission',
+            return_value=True,
+        ):
+            resolved = self._resolve(
+                policies,
+                user=_user(),
+                target_dir='lab/uploads/a.png',
+            )
+        self.assertEqual(resolved.quota, 'lab_bulk')
+        self.assertEqual(resolved.rate, '100/minute')
+
     def test_unknown_prefix_falls_back_to_user(self):
         resolved = self._resolve(
             {'lab': _policy()},

@@ -29,7 +29,7 @@ _TOKEN_HEADER = 'X-Bridge-Token'
 
 
 def _http_send(client: httpx.Client, method: str, url: str, **kwargs):
-    """Повтор только при сетевой ошибке и 5xx; 4xx не повторяем."""
+    """Повтор при 5xx и TransportError, кроме ConnectError (peer не слушает)."""
     last_exc: Exception | None = None
     attempts = _retries() + 1
     for attempt in range(attempts):
@@ -46,6 +46,9 @@ def _http_send(client: httpx.Client, method: str, url: str, **kwargs):
                 )
                 continue
             return response
+        except httpx.ConnectError:
+            # Peer ещё не слушает — повтор сразу не поможет (django check / старт).
+            raise
         except httpx.TransportError as exc:
             last_exc = exc
             if attempt + 1 >= attempts:

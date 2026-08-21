@@ -2,9 +2,10 @@
 Валидация схем platform-дескрипторов ModuleBridge.
 
 Проверяет объекты, зарегистрированные через ``bridge.provide_many`` /
-``provide_op`` для групп каталога ядра. Битые записи ловятся при
-``django check`` / старте API и в ``ergoms core-rules-check``, а не только
-когда каталог аудита или session-claims молча отбрасывает дескриптор.
+``provide_op`` для групп каталога ядра (локальный реестр процесса,
+без HTTP к peer). Битые записи ловятся при ``django check`` / старте API
+и в ``ergoms core-rules-check``, а не только когда каталог аудита или
+session-claims молча отбрасывает дескриптор.
 
 Режим ``BRIDGE_CONTRACTS``: ``off`` | ``warn`` | ``raise`` (см. settings/bridge.py).
 """
@@ -89,7 +90,7 @@ def _expect_callable(value: Any, path: str, errors: list[str], *, required: bool
 
 
 def _validate_session_claims(errors: list[str]) -> None:
-    for key, raw in bridge.all(SESSION_CLAIMS_GROUP).items():
+    for key, raw in bridge.local_group(SESSION_CLAIMS_GROUP).items():
         path = _path(SESSION_CLAIMS_GROUP, str(key))
         data = _expect_dict(raw, path, errors)
         if data is None:
@@ -122,7 +123,7 @@ def _validate_session_claims(errors: list[str]) -> None:
 
 
 def _validate_audit_actions(errors: list[str]) -> None:
-    for key, raw in bridge.all(AUDIT_ACTION_DEFINITIONS_GROUP).items():
+    for key, raw in bridge.local_group(AUDIT_ACTION_DEFINITIONS_GROUP).items():
         path = _path(AUDIT_ACTION_DEFINITIONS_GROUP, str(key))
         data = _expect_dict(raw, path, errors)
         if data is None:
@@ -178,7 +179,7 @@ def _validate_audit_actions(errors: list[str]) -> None:
 
 def _validate_audit_dimensions(errors: list[str]) -> None:
     seen_keys: dict[str, str] = {}
-    for key, raw in bridge.all(AUDIT_SCOPE_DIMENSIONS_GROUP).items():
+    for key, raw in bridge.local_group(AUDIT_SCOPE_DIMENSIONS_GROUP).items():
         path = _path(AUDIT_SCOPE_DIMENSIONS_GROUP, str(key))
         data = _expect_dict(raw, path, errors)
         if data is None:
@@ -235,7 +236,7 @@ def _validate_notification_channel(raw: Any, path: str, errors: list[str]) -> No
 
 
 def _validate_notification_events(errors: list[str]) -> None:
-    for key, raw in bridge.all(NOTIFICATIONS_EVENT_DEFINITIONS_GROUP).items():
+    for key, raw in bridge.local_group(NOTIFICATIONS_EVENT_DEFINITIONS_GROUP).items():
         path = _path(NOTIFICATIONS_EVENT_DEFINITIONS_GROUP, str(key))
         data = _expect_dict(raw, path, errors)
         if data is None:
@@ -296,7 +297,7 @@ def _validate_notification_events(errors: list[str]) -> None:
 
 
 def _validate_email_context(errors: list[str]) -> None:
-    for key, raw in bridge.all(NOTIFICATIONS_EMAIL_CONTEXT_GROUP).items():
+    for key, raw in bridge.local_group(NOTIFICATIONS_EMAIL_CONTEXT_GROUP).items():
         path = _path(NOTIFICATIONS_EMAIL_CONTEXT_GROUP, str(key))
         _expect_callable(raw, path, errors, required=True)
 
@@ -309,7 +310,7 @@ def _validate_upload_quota_policies(errors: list[str]) -> None:
         normalize_policy_prefix,
     )
 
-    for key, raw in bridge.all(MEDIA_UPLOAD_QUOTA_POLICIES_GROUP).items():
+    for key, raw in bridge.local_group(MEDIA_UPLOAD_QUOTA_POLICIES_GROUP).items():
         path = _path(MEDIA_UPLOAD_QUOTA_POLICIES_GROUP, str(key))
         data = _expect_dict(raw, path, errors)
         if data is None:
@@ -361,9 +362,7 @@ def _validate_upload_quota_policies(errors: list[str]) -> None:
 
 
 def _validate_session_restore_op(errors: list[str]) -> None:
-    if not bridge.has(SESSION_RESTORE_CLAIMS):
-        return
-    # LocalTransport хранит handler; call с sentinel ненадёжен — проверяем через all ops.
+    # Только локальный реестр: has() по HTTP ретраит недоступный peer при django check.
     handler = _resolve_single_provider(SESSION_RESTORE_CLAIMS)
     if handler is not None and not callable(handler):
         errors.append(

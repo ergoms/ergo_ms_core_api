@@ -150,6 +150,23 @@ def _fallback_quota(user) -> ResolvedUploadQuota:
     return ResolvedUploadQuota(quota='user')
 
 
+def _policy_allows(policy: dict[str, Any], user) -> bool:
+    allows = policy.get('allows')
+    if callable(allows):
+        try:
+            return bool(allows(user))
+        except Exception:
+            logger.warning('allows политики квоты загрузки завершился с ошибкой', exc_info=True)
+            return False
+    module = policy.get('allows_module')
+    keys = policy.get('allows_keys')
+    if isinstance(module, str) and module.strip() and isinstance(keys, (list, tuple)):
+        names = [str(key) for key in keys if str(key).strip()]
+        if names:
+            return bool(allows_module_permission(module.strip(), *names)(user))
+    return False
+
+
 def resolve_upload_quota(*, user, target_dir: str | None) -> ResolvedUploadQuota:
     """
     Класс квоты для токена: политика модуля или user/admin.
@@ -177,15 +194,8 @@ def resolve_upload_quota(*, user, target_dir: str | None) -> ResolvedUploadQuota
         chosen = higher_upload_rate(rate, admin_rate)
         return ResolvedUploadQuota(quota=quota, rate=cap_upload_rate(chosen))
 
-    allows = policy.get('allows')
-    if callable(allows):
-        try:
-            allowed = bool(allows(user))
-        except Exception:
-            logger.warning('allows политики квоты загрузки завершился с ошибкой', exc_info=True)
-            allowed = False
-        if allowed:
-            return ResolvedUploadQuota(quota=quota, rate=cap_upload_rate(rate))
+    if _policy_allows(policy, user):
+        return ResolvedUploadQuota(quota=quota, rate=cap_upload_rate(rate))
 
     return _fallback_quota(user)
 
@@ -214,4 +224,8 @@ def allows_module_permission(module_name: str, *permission_keys: str):
             for key in keys
         )
 
+    _allows._bridge_json = {
+        'allows_module': module_name,
+        'allows_keys': list(keys),
+    }
     return _allows
