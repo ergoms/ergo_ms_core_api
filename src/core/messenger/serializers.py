@@ -1,9 +1,11 @@
 from django.contrib.auth import get_user_model
+from django.core.files.storage import default_storage
 from django.utils.translation import gettext as _
 from rest_framework import serializers
 
-from src.core.utils.mixins import validate_media_path
+from src.core.utils.media_signing import get_signed_media_url
 
+from .media_paths import validate_messenger_attachment_path
 from .models import Message, MessageAttachment
 from .utils import get_content_type
 
@@ -26,16 +28,17 @@ class MessengerObjectIdField(serializers.Field):
 
 
 class MessageAttachmentSerializer(serializers.ModelSerializer):
-    file = serializers.FileField(write_only=True, required=False)
-    file_path = serializers.CharField(write_only=True, required=False)
+    file_path = serializers.CharField(write_only=True, max_length=512)
     file_url = serializers.SerializerMethodField()
+    original_filename = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    file_size = serializers.IntegerField(required=False, min_value=0)
+    mime_type = serializers.CharField(required=False, allow_blank=True, max_length=128)
 
     class Meta:
         model = MessageAttachment
         fields = (
             'id',
             'message',
-            'file',
             'file_path',
             'file_url',
             'original_filename',
@@ -43,54 +46,44 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
             'mime_type',
             'created_at',
         )
-        read_only_fields = ('id', 'original_filename', 'file_size', 'mime_type', 'file_url', 'created_at')
-
-    def validate_file_path(self, value):
-        if value:
-            return validate_media_path(value, 'file')
-        return value
+        read_only_fields = ('id', 'file_url', 'created_at')
 
     def validate(self, attrs):
-        if not attrs.get('file') and not attrs.get('file_path'):
-            raise serializers.ValidationError(_('Необходим file или file_path'))
-        return attrs
+        attrs['file_path'] = validate_messenger_attachment_path(attrs['file_path'])
+        name = (attrs.get('original_filename') or '').strip()
+        if not name:
+            name = attrs['file_path'].replace('\\', '/').split('/')[-1]
+        attrs['original_filename'] = name
 
-    def validate_file(self, value):
-        if value and value.size > MAX_ATTACHMENT_SIZE_BYTES:
+        size = int(attrs.get('file_size') or 0)
+        if not size:
+            path = attrs['file_path']
+            size = default_storage.size(path) if default_storage.exists(path) else 0
+        if size > MAX_ATTACHMENT_SIZE_BYTES:
             raise serializers.ValidationError(
                 _('Размер файла не должен превышать %(count)d МБ')
                 % {'count': MAX_ATTACHMENT_SIZE_MB}
             )
-        return value
+        attrs['file_size'] = size
+        attrs['mime_type'] = (attrs.get('mime_type') or '')[:128]
+        return attrs
 
     def get_file_url(self, obj):
-        if obj.file:
-            try:
-                return obj.file.url
-            except Exception:
-                return None
-        return None
+        if not obj.file or not obj.file.name:
+            return None
+        return get_signed_media_url(obj.file.name)
 
     def create(self, validated_data):
-        file_path = validated_data.pop('file_path', None)
-        uploaded_file = validated_data.get('file')
-
-        if file_path:
-            import os
-            from django.core.files.storage import default_storage
-            validated_data.pop('file', None)
-            validated_data['original_filename'] = os.path.basename(file_path)
-            validated_data['file_size'] = default_storage.size(file_path) if default_storage.exists(file_path) else 0
-            validated_data['mime_type'] = ''
-            instance = super().create(validated_data)
-            instance.file.name = file_path
-            instance.save()
-            return instance
-
-        validated_data['original_filename'] = uploaded_file.name
-        validated_data['file_size'] = uploaded_file.size or 0
-        validated_data['mime_type'] = getattr(uploaded_file, 'content_type', '') or ''
-        return super().create(validated_data)
+        file_path = validated_data.pop('file_path')
+        instance = MessageAttachment(
+            message=validated_data['message'],
+            original_filename=validated_data['original_filename'],
+            file_size=validated_data['file_size'],
+            mime_type=validated_data.get('mime_type') or '',
+        )
+        instance.file.name = file_path
+        instance.save()
+        return instance
 
 
 class AuthorSerializer(serializers.Serializer):

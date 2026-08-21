@@ -2,13 +2,13 @@ import logging
 
 from rest_framework import permissions, status, viewsets
 from rest_framework.exceptions import PermissionDenied
-from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+from rest_framework.parsers import JSONParser
 from rest_framework.response import Response
 
 from src.core.realtime.hub import RealtimeHub
 from src.core.realtime.polling import apply_after_id
 from src.core.realtime.topics import messenger_group, messenger_topic
-from src.core.utils.mixins import SwaggerSafeMixin, MediaApiFileMixin
+from src.core.utils.mixins import SwaggerSafeMixin
 from src.core.utils.permissions import ObjectPermissionMixin
 
 from .models import Message, MessageAttachment
@@ -139,10 +139,10 @@ class MessageViewSet(ObjectPermissionMixin, SwaggerSafeMixin, viewsets.ModelView
             logger.exception('Broadcast message_deleted failed')
 
 
-class MessageAttachmentViewSet(ObjectPermissionMixin, MediaApiFileMixin, SwaggerSafeMixin, viewsets.ModelViewSet):
+class MessageAttachmentViewSet(ObjectPermissionMixin, SwaggerSafeMixin, viewsets.ModelViewSet):
     serializer_class = MessageAttachmentSerializer
     permission_classes = [permissions.IsAuthenticated]
-    parser_classes = (JSONParser, MultiPartParser, FormParser)
+    parser_classes = (JSONParser,)
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
 
     def get_queryset(self):
