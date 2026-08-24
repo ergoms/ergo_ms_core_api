@@ -37,6 +37,7 @@ class Command(BaseCommand):
             drop_schema_if_exists,
             list_public_extensions,
             list_schema_relations,
+            merge_django_migrations,
             move_extension_to_schema,
             public_user_object_count,
             relation_exists,
@@ -73,6 +74,24 @@ class Command(BaseCommand):
         )
         skipped_existing = 0
         for relname, relkind in sorted(relations):
+            if (
+                relname == 'django_migrations'
+                and relation_exists(connection, CORE_SCHEMA, relname)
+            ):
+                if dry:
+                    self.stdout.write(
+                        f'would merge django_migrations public -> {CORE_SCHEMA}'
+                    )
+                    continue
+                merged = merge_django_migrations(connection, 'public', CORE_SCHEMA)
+                if merged:
+                    self.stdout.write(
+                        f'merged {merged} django_migrations row(s) '
+                        f'public -> {CORE_SCHEMA}'
+                    )
+                with connection.cursor() as cursor:
+                    cursor.execute('DROP TABLE IF EXISTS public.django_migrations')
+                continue
             if relation_exists(connection, CORE_SCHEMA, relname):
                 skipped_existing += 1
                 continue

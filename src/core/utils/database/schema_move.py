@@ -73,6 +73,29 @@ def schema_exists(connection, schema: str) -> bool:
         return cursor.fetchone() is not None
 
 
+def merge_django_migrations(connection, source: str, dest: str) -> int:
+    """Дописать в dest.django_migrations строки из source, которых ещё нет."""
+    if not relation_exists(connection, source, 'django_migrations'):
+        return 0
+    if not relation_exists(connection, dest, 'django_migrations'):
+        return 0
+    q_src = quote_ident(connection, source)
+    q_dest = quote_ident(connection, dest)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            INSERT INTO {q_dest}.django_migrations (app, name, applied)
+            SELECT p.app, p.name, p.applied
+            FROM {q_src}.django_migrations AS p
+            WHERE NOT EXISTS (
+                SELECT 1 FROM {q_dest}.django_migrations AS c
+                WHERE c.app = p.app AND c.name = p.name
+            )
+            """
+        )
+        return int(cursor.rowcount or 0)
+
+
 def relation_exists(connection, schema: str, relname: str) -> bool:
     with connection.cursor() as cursor:
         cursor.execute(
