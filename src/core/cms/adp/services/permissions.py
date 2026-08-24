@@ -520,18 +520,24 @@ class PermissionService:
             True если URL соответствует шаблону
         """
         if not is_pattern:
-            # Точное совпадение
             return url_path == pattern
-        
-        # Преобразуем wildcard шаблон в regex
-        # * заменяется на [^/]+ (любые символы кроме /)
-        # ** заменяется на .* (любые символы)
-        regex_pattern = pattern.replace('**', '<<<DOUBLE_STAR>>>') \
-                               .replace('*', '[^/]+') \
-                               .replace('<<<DOUBLE_STAR>>>', '.*')
-        regex_pattern = f'^{regex_pattern}$'
-        
+
+        # Пресет «весь модуль» — `/path/**`. Иначе `**` → `/.*` и хаб `/path` не закрывается.
+        if pattern.endswith('/**'):
+            stem = PermissionService._wildcard_to_regex_body(pattern[:-3])
+            regex_pattern = f'^{stem}(?:/.*)?$'
+        else:
+            regex_pattern = f'^{PermissionService._wildcard_to_regex_body(pattern)}$'
+
         return bool(re.match(regex_pattern, url_path))
+
+    @staticmethod
+    def _wildcard_to_regex_body(pattern: str) -> str:
+        return (
+            pattern.replace('**', '<<<DOUBLE_STAR>>>')
+            .replace('*', '[^/]+')
+            .replace('<<<DOUBLE_STAR>>>', '.*')
+        )
     
     @staticmethod
     def get_user_permissions(user: User, organization_id: int | None = None) -> Dict:
