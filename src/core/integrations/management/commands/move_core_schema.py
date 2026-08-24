@@ -31,7 +31,7 @@ class Command(BaseCommand):
             self.stdout.write('skip: not PostgreSQL')
             return
 
-        from django.db.utils import ProgrammingError
+        from django.db.utils import DatabaseError, ProgrammingError
 
         from src.core.utils.database.schema_move import (
             drop_schema_if_exists,
@@ -39,6 +39,7 @@ class Command(BaseCommand):
             list_schema_relations,
             move_extension_to_schema,
             public_user_object_count,
+            relation_exists,
             revoke_create_on_public,
             schema_exists,
             set_relation_schema,
@@ -63,14 +64,18 @@ class Command(BaseCommand):
             if not dry:
                 try:
                     move_extension_to_schema(connection, extname, CORE_SCHEMA)
-                except ProgrammingError as exc:
+                except DatabaseError as exc:
                     self.stderr.write(f'extension {extname}: {exc}')
                     continue
 
         relations = list_schema_relations(
             connection, 'public', ('r', 'v', 'm', 'p', 'S'),
         )
+        skipped_existing = 0
         for relname, relkind in sorted(relations):
+            if relation_exists(connection, CORE_SCHEMA, relname):
+                skipped_existing += 1
+                continue
             self.stdout.write(f'{relname} -> {CORE_SCHEMA}')
             moved += 1
             if dry:
@@ -80,9 +85,13 @@ class Command(BaseCommand):
                     set_relation_schema(
                         connection, relname, relkind, 'public', CORE_SCHEMA,
                     )
-            except ProgrammingError as exc:
+            except DatabaseError as exc:
                 self.stderr.write(f'{relname}: {exc}')
                 continue
+        if skipped_existing:
+            self.stdout.write(
+                f'skipped {skipped_existing} relation(s) already in {CORE_SCHEMA}'
+            )
 
         if dry:
             self.stdout.write(self.style.SUCCESS(f'moved {moved} relation(s)'))

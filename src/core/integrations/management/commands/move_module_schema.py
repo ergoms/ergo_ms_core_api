@@ -152,6 +152,7 @@ class Command(BaseCommand):
         sources: list[str],
     ) -> list[tuple[str, str]]:
         from src.core.utils.database.module_schema import owner_app_label
+        from src.core.utils.database.schema_move import _OWNED_SEQUENCE_PREDICATE
 
         if not labels or not sources:
             return []
@@ -164,12 +165,7 @@ class Command(BaseCommand):
                 JOIN pg_namespace n ON n.oid = c.relnamespace
                 WHERE n.nspname IN ({placeholders})
                   AND c.relkind IN ('r', 'v', 'm', 'p', 'S')
-                  AND NOT (
-                      c.relkind = 'S' AND EXISTS (
-                          SELECT 1 FROM pg_depend d
-                          WHERE d.objid = c.oid AND d.deptype = 'a'
-                      )
-                  )
+                  AND NOT ({_OWNED_SEQUENCE_PREDICATE})
                 """,
                 sources,
             )

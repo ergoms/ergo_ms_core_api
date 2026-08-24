@@ -10,6 +10,15 @@ _RELKIND_SQL = {
     'S': 'ALTER SEQUENCE {src}.{name} SET SCHEMA {dest}',
 }
 
+# SERIAL — deptype 'a'; IDENTITY (Django 5+) — 'i'. PostgreSQL не даёт
+# отдельно переносить такую последовательность: она уходит вместе с таблицей.
+_OWNED_SEQUENCE_PREDICATE = """
+    c.relkind = 'S' AND EXISTS (
+        SELECT 1 FROM pg_depend d
+        WHERE d.objid = c.oid AND d.deptype IN ('a', 'i')
+    )
+"""
+
 
 def quote_ident(connection, name: str) -> str:
     return connection.ops.quote_name(name)
@@ -34,12 +43,7 @@ def list_schema_relations(connection, schema: str, relkinds: Iterable[str]) -> l
                   JOIN pg_extension e ON d.refobjid = e.oid
                   WHERE d.objid = c.oid AND d.deptype = 'e'
               )
-              AND NOT (
-                  c.relkind = 'S' AND EXISTS (
-                      SELECT 1 FROM pg_depend d
-                      WHERE d.objid = c.oid AND d.deptype = 'a'
-                  )
-              )
+              AND NOT ({_OWNED_SEQUENCE_PREDICATE})
             """,
             [schema, *kinds],
         )
@@ -65,6 +69,19 @@ def schema_exists(connection, schema: str) -> bool:
         cursor.execute(
             'SELECT 1 FROM pg_namespace WHERE nspname = %s',
             [schema],
+        )
+        return cursor.fetchone() is not None
+
+
+def relation_exists(connection, schema: str, relname: str) -> bool:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT 1 FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = %s AND c.relname = %s
+            """,
+            [schema, relname],
         )
         return cursor.fetchone() is not None
 
