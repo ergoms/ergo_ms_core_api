@@ -96,6 +96,76 @@ def merge_django_migrations(connection, source: str, dest: str) -> int:
         return int(cursor.rowcount or 0)
 
 
+def table_row_count(connection, schema: str, relname: str) -> int:
+    if not relation_exists(connection, schema, relname):
+        return 0
+    q_schema = quote_ident(connection, schema)
+    q_name = quote_ident(connection, relname)
+    with connection.cursor() as cursor:
+        cursor.execute(f'SELECT COUNT(*) FROM {q_schema}.{q_name}')
+        return int(cursor.fetchone()[0])
+
+
+def _column_names(connection, schema: str, relname: str) -> list[str]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT a.attname
+            FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = %s AND c.relname = %s
+              AND a.attnum > 0 AND NOT a.attisdropped
+            ORDER BY a.attnum
+            """,
+            [schema, relname],
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+def copy_rows_if_dest_empty(connection, source: str, dest: str, relname: str) -> int:
+    """Если dest-таблица пустая — скопировать строки из source (общие колонки)."""
+    if table_row_count(connection, dest, relname) > 0:
+        return 0
+    source_count = table_row_count(connection, source, relname)
+    if source_count == 0:
+        return 0
+    source_cols = _column_names(connection, source, relname)
+    dest_cols = set(_column_names(connection, dest, relname))
+    cols = [name for name in source_cols if name in dest_cols]
+    if not cols:
+        return 0
+    q_src = quote_ident(connection, source)
+    q_dest = quote_ident(connection, dest)
+    q_rel = quote_ident(connection, relname)
+    q_cols = ', '.join(quote_ident(connection, name) for name in cols)
+    with connection.cursor() as cursor:
+        # Пустые таблицы в dest часто ссылаются друг на друга: без replica
+        # порядок INSERT упирается в FK.
+        cursor.execute("SET session_replication_role = 'replica'")
+        try:
+            cursor.execute(
+                f'INSERT INTO {q_dest}.{q_rel} ({q_cols}) '
+                f'SELECT {q_cols} FROM {q_src}.{q_rel}'
+            )
+            inserted = int(cursor.rowcount or 0)
+        finally:
+            cursor.execute("SET session_replication_role = 'origin'")
+        if 'id' in cols:
+            cursor.execute(
+                'SELECT pg_get_serial_sequence(%s, %s)',
+                [f'{dest}.{relname}', 'id'],
+            )
+            seq_row = cursor.fetchone()
+            seq_name = seq_row[0] if seq_row else None
+            if seq_name:
+                cursor.execute(
+                    f'SELECT setval(%s, COALESCE((SELECT MAX(id) FROM {q_dest}.{q_rel}), 1), true)',
+                    [seq_name],
+                )
+        return inserted
+
+
 def relation_exists(connection, schema: str, relname: str) -> bool:
     with connection.cursor() as cursor:
         cursor.execute(

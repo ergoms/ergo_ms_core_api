@@ -34,6 +34,7 @@ class Command(BaseCommand):
         from django.db.utils import DatabaseError, ProgrammingError
 
         from src.core.utils.database.schema_move import (
+            copy_rows_if_dest_empty,
             drop_schema_if_exists,
             list_public_extensions,
             list_schema_relations,
@@ -44,6 +45,7 @@ class Command(BaseCommand):
             revoke_create_on_public,
             schema_exists,
             set_relation_schema,
+            table_row_count,
         )
         from src.core.utils.database.schema_runtime import ensure_pg_schemas
 
@@ -72,8 +74,10 @@ class Command(BaseCommand):
         relations = list_schema_relations(
             connection, 'public', ('r', 'v', 'm', 'p', 'S'),
         )
+        # auth_user раньше дочерних таблиц: иначе INSERT упрётся в пустой FK.
+        relations.sort(key=lambda item: (item[0] != 'auth_user', item[0]))
         skipped_existing = 0
-        for relname, relkind in sorted(relations):
+        for relname, relkind in relations:
             if (
                 relname == 'django_migrations'
                 and relation_exists(connection, CORE_SCHEMA, relname)
@@ -93,6 +97,26 @@ class Command(BaseCommand):
                     cursor.execute('DROP TABLE IF EXISTS public.django_migrations')
                 continue
             if relation_exists(connection, CORE_SCHEMA, relname):
+                if relkind == 'r':
+                    source_n = table_row_count(connection, 'public', relname)
+                    dest_n = table_row_count(connection, CORE_SCHEMA, relname)
+                    if dest_n == 0 and source_n > 0:
+                        if dry:
+                            self.stdout.write(
+                                f'would copy {source_n} row(s) into empty '
+                                f'{CORE_SCHEMA}.{relname}'
+                            )
+                            continue
+                        copied = copy_rows_if_dest_empty(
+                            connection, 'public', CORE_SCHEMA, relname,
+                        )
+                        if copied:
+                            self.stdout.write(
+                                f'copied {copied} row(s) into empty '
+                                f'{CORE_SCHEMA}.{relname}'
+                            )
+                            moved += 1
+                            continue
                 skipped_existing += 1
                 continue
             self.stdout.write(f'{relname} -> {CORE_SCHEMA}')
