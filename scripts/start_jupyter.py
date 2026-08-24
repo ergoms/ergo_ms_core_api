@@ -22,11 +22,7 @@ for _path in (_DEPLOYMENT_DIR, _SCRIPTS_DIR):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from project_layout import (  # noqa: E402
-    ensure_dir,
-    jupyter_dir,
-    jupyter_kernels_dir,
-)
+from project_layout import ensure_dir, jupyter_dir  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 KERNEL_NAME = 'ergo_django'
@@ -35,8 +31,22 @@ KERNEL_LAUNCHER = SCRIPT_DIR / 'jupyter_django_kernel.py'
 NOTEBOOKS_DIR = PROJECT_ROOT / 'notebooks'
 
 
+def _jupyter_data_dir() -> Path:
+    explicit = (os.environ.get('JUPYTER_DATA_DIR') or '').strip()
+    if explicit:
+        return Path(explicit)
+    return jupyter_dir(PROJECT_ROOT)
+
+
+def _notebooks_dir() -> Path:
+    explicit = (os.environ.get('JUPYTER_NOTEBOOKS_DIR') or '').strip()
+    if explicit:
+        return Path(explicit)
+    return NOTEBOOKS_DIR
+
+
 def _install_django_kernel():
-    """Создаёт Django-aware IPython kernel spec в virtual_env/jupyter/kernels."""
+    """Создаёт Django-aware IPython kernel spec в JUPYTER_DATA_DIR/kernels."""
     python_exe = sys.executable.replace('\\', '/')
     launcher_path = str(KERNEL_LAUNCHER).replace('\\', '/')
 
@@ -49,7 +59,7 @@ def _install_django_kernel():
         },
     }
 
-    dest = ensure_dir(jupyter_kernels_dir(PROJECT_ROOT) / KERNEL_NAME)
+    dest = ensure_dir(_jupyter_data_dir() / 'kernels' / KERNEL_NAME)
     kernel_json_path = dest / 'kernel.json'
     kernel_json_path.write_text(
         json.dumps(kernel_spec, indent=2, ensure_ascii=False) + '\n',
@@ -64,7 +74,11 @@ def _ensure_venv_commonjs():
     не наследовал "type": "module" из package.json корня или virtual_env/npm.
     Без этого JupyterLab's node-version-check.js падает с ReferenceError
     т.к. require() недоступен в ESM-контексте.
+
+    Если задан JUPYTER_DATA_DIR (изолированный прогон), проектный virtual_env не трогаем.
     """
+    if (os.environ.get('JUPYTER_DATA_DIR') or '').strip():
+        return
     venv_pkg = PROJECT_ROOT / 'virtual_env' / 'package.json'
     if not venv_pkg.exists():
         venv_pkg.parent.mkdir(parents=True, exist_ok=True)
@@ -131,19 +145,24 @@ def _start_jupyterlab():
         print(format_console('error', startup_error), file=sys.stderr)
         return 1
 
-    NOTEBOOKS_DIR.mkdir(parents=True, exist_ok=True)
+    notebooks = _notebooks_dir()
+    notebooks.mkdir(parents=True, exist_ok=True)
     _ensure_venv_commonjs()
 
-    data_dir = ensure_dir(jupyter_dir(PROJECT_ROOT))
-    cmd = [sys.executable, '-m', 'jupyterlab', *build_jupyter_server_argv(str(NOTEBOOKS_DIR))]
+    data_dir = ensure_dir(_jupyter_data_dir())
+    cmd = [sys.executable, '-m', 'jupyterlab', *build_jupyter_server_argv(str(notebooks))]
 
     print(format_console('info', 'Запуск JupyterLab...'))
-    print(format_console('info', f'Каталог блокнотов: {NOTEBOOKS_DIR}'))
+    print(format_console('info', f'Каталог блокнотов: {notebooks}'))
     _print_startup_info()
 
     env = os.environ.copy()
     existing_pythonpath = env.get('PYTHONPATH', '')
-    env['PYTHONPATH'] = str(PROJECT_ROOT) + (os.pathsep + existing_pythonpath if existing_pythonpath else '')
+    parts = [item for item in existing_pythonpath.split(os.pathsep) if item]
+    root_s = str(PROJECT_ROOT)
+    if root_s not in parts:
+        parts.append(root_s)
+    env['PYTHONPATH'] = os.pathsep.join(parts)
     env['JUPYTER_DATA_DIR'] = str(data_dir)
     env['JUPYTER_PATH'] = str(data_dir)
 

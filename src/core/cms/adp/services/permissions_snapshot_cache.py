@@ -66,6 +66,11 @@ def get_user_permissions_payload(
     if user is None or not getattr(user, 'pk', None):
         return _build_payload(user, organization_id)
 
+    from src.core.cms.adp.dev_tools.preview import get_active_preview
+
+    if get_active_preview() is not None:
+        return _build_payload(user, organization_id)
+
     ttl = get_permissions_snapshot_ttl()
     if ttl <= 0:
         return _build_payload(user, organization_id)

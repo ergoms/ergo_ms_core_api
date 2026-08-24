@@ -29,6 +29,7 @@ _EXEMPT_PREFIXES = (
     '/api/cms/adp/registration-settings/',
     '/api/cms/adp/invitations/validate/',
     '/api/cms/adp/profile-settings/',
+    '/api/cms/adp/dev-tools/',
     '/api/system/ready/',
     '/api/system/maintenance-status/',
 )

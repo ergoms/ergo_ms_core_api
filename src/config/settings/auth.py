@@ -112,6 +112,9 @@ from src.config.deploy import get_deploy_type, is_development
 DEPLOY_TYPE = get_deploy_type()
 IS_DEVELOPMENT = is_development()
 
+# Overlay прав глобального админа (глазик). В production всегда выключен.
+DEV_TOOLS_ENABLED = bool(env.bool('ERGO_DEV_TOOLS', default=False) and IS_DEVELOPMENT)
+
 # Ограничение срока жизни JWT (true/false, не зависит от API_DEPLOY_TYPE).
 # true  — используются API_ACCESS_TOKEN_LIFETIME и API_REFRESH_TOKEN_LIFETIME
 # false — срок жизни не ограничивается (значения lifetime игнорируются);

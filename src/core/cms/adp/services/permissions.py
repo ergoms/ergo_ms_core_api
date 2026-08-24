@@ -37,10 +37,23 @@ class PermissionService:
     ADMIN_ROLE_DESCRIPTION = 'Системная роль с полным доступом'
     
     @staticmethod
-    def get_user_role(user: User) -> Optional[UserRole]:
+    def get_user_role(user: User, *, honor_preview: bool = True) -> Optional[UserRole]:
         """Получить активную роль пользователя (без побочных save на read-path)."""
         if not user or not getattr(user, 'pk', None):
             return None
+
+        if honor_preview:
+            from src.core.cms.adp.dev_tools.preview import try_preview_user_role
+
+            preview_role = try_preview_user_role(
+                user,
+                lookup=lambda target: PermissionService.get_user_role(
+                    target,
+                    honor_preview=False,
+                ),
+            )
+            if preview_role is not None:
+                return preview_role
 
         cache = get_request_permission_cache()
         cache_key = f'user_role:{user.pk}'
@@ -210,13 +223,19 @@ class PermissionService:
         return user_role
     
     @staticmethod
-    def _is_global_admin(user: User) -> bool:
+    def _is_global_admin(user: User, *, honor_preview: bool = True) -> bool:
         """
         Глобальный администратор: is_superuser и активная ADP-роль admin синхронизированы
         (_sync_django_admin_flags). Проверяем оба источника для устойчивости.
         """
         if not user or not getattr(user, 'is_authenticated', False):
             return False
+
+        if honor_preview:
+            from src.core.cms.adp.dev_tools.preview import preview_suppresses_admin
+
+            if preview_suppresses_admin():
+                return False
 
         cache = get_request_permission_cache()
         cache_key = f'is_global_admin:{user.pk}'
@@ -226,7 +245,7 @@ class PermissionService:
         if getattr(user, 'is_superuser', False):
             cache[cache_key] = True
             return True
-        user_role = PermissionService.get_user_role(user)
+        user_role = PermissionService.get_user_role(user, honor_preview=False)
         result = bool(
             user_role
             and user_role.is_active
@@ -588,16 +607,23 @@ class PermissionService:
             )
             module_permissions.extend(perms)
 
+        from src.core.cms.adp.dev_tools.preview import resolve_effective_user
+
+        permission_user = resolve_effective_user(user)
         module_permissions.extend(
-            PermissionService._session_scoped_module_permissions(user, organization_id)
+            PermissionService._session_scoped_module_permissions(permission_user, organization_id)
         )
 
-        denied = PermissionService._session_scoped_denied_permissions(user, organization_id)
+        denied = PermissionService._session_scoped_denied_permissions(permission_user, organization_id)
         if denied:
             module_permissions = [
                 perm for perm in module_permissions
                 if (getattr(perm, 'module_name', None), getattr(perm, 'permission_key', None)) not in denied
             ]
+
+        from src.core.cms.adp.dev_tools.preview import apply_preview_module_permissions
+
+        module_permissions = apply_preview_module_permissions(module_permissions)
 
         return {
             'user_id': user.id,
@@ -635,6 +661,14 @@ class PermissionService:
         Returns:
             True если доступ разрешен
         """
+        from src.core.cms.adp.dev_tools.preview import preview_permission_override
+
+        override = preview_permission_override(module_name, permission_key)
+        if override is False:
+            return False
+        if override is True:
+            return True
+
         # Администраторы имеют доступ ко всему
         if PermissionService.is_admin(user):
             return True
