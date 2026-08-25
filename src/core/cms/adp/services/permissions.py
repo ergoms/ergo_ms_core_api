@@ -4,6 +4,7 @@
 import re
 from typing import List, Dict, Optional
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.utils.translation import gettext as _
 
 User = get_user_model()
@@ -560,6 +561,42 @@ class PermissionService:
         )
     
     @staticmethod
+    def _denied_api_paths_for_role(user_role, role_groups) -> list:
+        group_ids = [group.id for group in role_groups]
+        query = Q(is_active=True, policy_type='api', action='deny') & (
+            Q(role=user_role.role) | Q(role_group_id__in=group_ids)
+        )
+        paths = []
+        for path in Policy.objects.filter(query).values_list('resource_path', flat=True):
+            if PermissionService._is_api_resource_path(path):
+                paths.append(path)
+        return paths
+
+    @staticmethod
+    def _api_deny_covers_module(user_role, role_groups, module_name: str) -> bool:
+        """True, если deny policy_type=api закрывает /api/<module>/."""
+        slug = (module_name or '').strip('/')
+        if not slug:
+            return False
+        api_path = f'/api/{slug}/'
+        for deny_path in PermissionService._denied_api_paths_for_role(user_role, role_groups):
+            is_pattern = '*' in (deny_path or '')
+            if PermissionService._match_url_pattern(api_path, deny_path, is_pattern):
+                return True
+        return False
+
+    @staticmethod
+    def _default_role_can_view_module(user_role, module_name: str) -> bool:
+        """
+        _view для роли «Пользователь» без групп.
+
+        granted — все модули. denied — только те, которые ACL API не закрыл.
+        """
+        if adp_default_view_grants() == 'granted':
+            return True
+        return not PermissionService._api_deny_covers_module(user_role, [], module_name)
+
+    @staticmethod
     def get_user_permissions(user: User, organization_id: int | None = None) -> Dict:
         """
         Получить все права пользователя.
@@ -568,7 +605,8 @@ class PermissionService:
         и доп. effective ModulePermission от модулей.
         """
         user_role = PermissionService.get_user_role(user)
-        
+        default_view_grants = adp_default_view_grants()
+
         if not user_role:
             is_global_admin = PermissionService.is_admin(user)
             return {
@@ -578,6 +616,8 @@ class PermissionService:
                 'role_groups': [],
                 'allowed_urls': [],
                 'denied_urls': [],
+                'denied_api': [],
+                'default_view_grants': default_view_grants,
                 'module_permissions': [],
                 'is_global_admin': is_global_admin,
             }
@@ -663,6 +703,10 @@ class PermissionService:
             'role_groups': role_groups,
             'allowed_urls': allowed_urls,
             'denied_urls': denied_urls,
+            'denied_api': PermissionService._denied_api_paths_for_role(
+                user_role, role_groups
+            ),
+            'default_view_grants': default_view_grants,
             'module_permissions': module_permissions,
             'is_global_admin': PermissionService.is_admin(user),
         }
@@ -680,8 +724,10 @@ class PermissionService:
         Иерархия прав:
         1. Администратор → полный доступ
         2. Хуки модулей → контекстная проверка (например, доменные права модуля)
-        3. Ролевые группы пользователя → явно настроенные права (is_granted=True)
-        4. Базовая роль "Пользователь" без групп → базовый просмотр (_view права)
+        3. Ролевые группы пользователя → явно настроенные права (is_granted=True);
+           `_view` роли «Пользователь» при этом не отбирается у модуля без API-deny
+        4. Базовая роль "Пользователь" без групп → `_view`: все модули при
+           API_ADP_DEFAULT_VIEW_GRANTS=granted, иначе только модули без API-deny
         
         Args:
             user: Пользователь
@@ -725,12 +771,26 @@ class PermissionService:
 
         if role_groups:
             granted = PermissionService._get_granted_module_permission_keys(user)
-            return (module_name, permission_key) in granted
+            if (module_name, permission_key) in granted:
+                return True
+            if (
+                user_role.role.name == PermissionService.DEFAULT_ROLE_NAME
+                and permission_key.endswith('_view')
+                and not PermissionService._api_deny_covers_module(
+                    user_role, role_groups, module_name
+                )
+            ):
+                return PermissionService._default_role_can_view_module(
+                    user_role,
+                    module_name,
+                )
+            return False
 
         if user_role.role.name == PermissionService.DEFAULT_ROLE_NAME:
-            # Базовые права просмотра для роли «Пользователь» без групп —
-            # только при API_ADP_DEFAULT_VIEW_GRANTS=granted (профиль open/standard).
-            if permission_key.endswith('_view') and adp_default_view_grants() == 'granted':
+            if permission_key.endswith('_view') and PermissionService._default_role_can_view_module(
+                user_role,
+                module_name,
+            ):
                 return True
 
         return False

@@ -206,6 +206,8 @@ class UserPermissionsSerializer(Serializer):
     role_groups = RoleGroupSerializer(many=True, read_only=True)
     allowed_urls = ListField(child=CharField(), read_only=True)
     denied_urls = ListField(child=CharField(), read_only=True)
+    denied_api = ListField(child=CharField(), read_only=True)
+    default_view_grants = CharField(read_only=True)
     is_global_admin = BooleanField(read_only=True, default=False)
     module_permissions = SnapshotModulePermissionSerializer(many=True, read_only=True)
 

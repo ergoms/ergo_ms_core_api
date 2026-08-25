@@ -16,11 +16,18 @@ def collect_default_view_pairs(user_role, *, default_role_name: str) -> set[tupl
     )
     if has_groups:
         return set()
-    if adp_default_view_grants() != 'granted':
-        return set()
     from src.core.cms.adp.services.permission_catalog import get_view_permission_pairs
 
-    return get_view_permission_pairs()
+    pairs = get_view_permission_pairs()
+    if adp_default_view_grants() == 'granted':
+        return pairs
+    from src.core.cms.adp.services.permissions import PermissionService
+
+    return {
+        (module_name, permission_key)
+        for module_name, permission_key in pairs
+        if not PermissionService._api_deny_covers_module(user_role, [], module_name)
+    }
 
 
 def append_default_view_permissions(
