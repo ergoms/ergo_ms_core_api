@@ -394,6 +394,25 @@ class PermissionService:
         return denied
 
     @staticmethod
+    def _default_view_permission_pairs(user_role) -> set[tuple[str, str]]:
+        from src.core.cms.adp.services.default_view_permissions import collect_default_view_pairs
+
+        return collect_default_view_pairs(
+            user_role,
+            default_role_name=PermissionService.DEFAULT_ROLE_NAME,
+        )
+
+    @staticmethod
+    def _append_default_view_permissions(user_role, module_permissions: list) -> list:
+        from src.core.cms.adp.services.default_view_permissions import append_default_view_permissions
+
+        return append_default_view_permissions(
+            user_role,
+            module_permissions,
+            default_role_name=PermissionService.DEFAULT_ROLE_NAME,
+        )
+
+    @staticmethod
     def _get_granted_module_permission_keys(user: User) -> set[tuple[str, str]]:
         cache = get_request_permission_cache()
         cache_key = f'module_perm_keys:{user.pk}'
@@ -411,7 +430,8 @@ class PermissionService:
             if group.is_active
         ])
         if not group_ids:
-            cache[cache_key] = set()
+            result = PermissionService._default_view_permission_pairs(user_role)
+            cache[cache_key] = result
             return cache[cache_key]
 
         rows = ModulePermission.objects.filter(
@@ -626,6 +646,11 @@ class PermissionService:
                 perm for perm in module_permissions
                 if (getattr(perm, 'module_name', None), getattr(perm, 'permission_key', None)) not in denied
             ]
+
+        module_permissions = PermissionService._append_default_view_permissions(
+            user_role,
+            module_permissions,
+        )
 
         from src.core.cms.adp.dev_tools.preview import apply_preview_module_permissions
 

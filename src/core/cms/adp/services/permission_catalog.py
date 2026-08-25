@@ -69,6 +69,16 @@ def get_all_permission_keys() -> Dict[str, str]:
     return dict(_get_cache()['all_keys'])
 
 
+def get_view_permission_pairs() -> set[tuple[str, str]]:
+    """Пары (module_name, permission_key) для прав просмотра из каталогов."""
+    pairs: set[tuple[str, str]] = set()
+    for module_name, catalog in _get_cache()['catalogs'].items():
+        for key in catalog.get('permissions') or {}:
+            if module_name and str(key).endswith('_view'):
+                pairs.add((module_name, str(key)))
+    return pairs
+
+
 def get_module_names() -> List[str]:
     """Список имён модулей, у которых есть каталог прав."""
     return list(_get_cache()['catalogs'].keys())

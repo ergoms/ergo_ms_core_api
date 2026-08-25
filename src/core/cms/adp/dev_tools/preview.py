@@ -176,17 +176,28 @@ def reset_active_preview(token: Token) -> None:
     _preview_var.reset(token)
 
 
+def preview_role_is_admin(preview: DevToolsPreview | None) -> bool:
+    """True, если overlay явно ставит административную роль."""
+    if preview is None or not preview.role_name:
+        return False
+    from src.core.cms.adp.models import Role
+    from src.core.cms.adp.services.permissions import PermissionService
+
+    role = Role.objects.filter(name=preview.role_name).first()
+    return bool(role and PermissionService._is_admin_role(role))
+
+
 def preview_suppresses_admin() -> bool:
     preview = get_active_preview()
     if preview is None or not preview.is_active():
         return False
-    if preview.view_as_regular:
-        return True
-    if preview.role_name:
-        from src.core.cms.adp.services.permissions import PermissionService
-
-        return preview.role_name != PermissionService.ADMIN_ROLE_NAME
-    return False
+    if preview_role_is_admin(preview):
+        return False
+    return bool(
+        preview.view_as_regular
+        or preview.as_user_public_id
+        or preview.role_name
+    )
 
 
 def resolve_effective_user(user):
@@ -286,41 +297,57 @@ def apply_preview_module_permissions(module_permissions: list) -> list:
     return result
 
 
-def permission_pairs_for_preview(user, preview: DevToolsPreview | None, *, include_overrides: bool) -> list[dict]:
-    """Права роли/сущности с overlay или без extra_grants/denies."""
+def permission_pairs_for_preview(user, preview: DevToolsPreview | None) -> list[dict]:
+    """Выданные ключи роли/сущности без extra_grants/denies и без URL-политик."""
     if preview is None or not preview.is_active():
         return []
+    if preview_role_is_admin(preview):
+        return []
 
-    active = preview
-    if not include_overrides:
-        active = DevToolsPreview(
-            view_as_regular=preview.view_as_regular,
-            as_user_public_id=preview.as_user_public_id,
-            as_user_label=preview.as_user_label,
-            role_name=preview.role_name,
-        )
-        if not active.is_active():
-            return []
+    active = DevToolsPreview(
+        view_as_regular=preview.view_as_regular,
+        as_user_public_id=preview.as_user_public_id,
+        as_user_label=preview.as_user_label,
+        role_name=preview.role_name,
+    )
+    if not active.is_active():
+        return []
 
     token = set_active_preview(active)
     try:
         from src.core.cms.adp.services.permissions import PermissionService
 
-        data = PermissionService.get_user_permissions(user)
-        pairs = []
-        seen: set[tuple[str, str]] = set()
-        for perm in data.get('module_permissions') or []:
-            if not getattr(perm, 'is_granted', True):
-                continue
-            module_name = getattr(perm, 'module_name', None)
-            permission_key = getattr(perm, 'permission_key', None)
-            if not module_name or not permission_key:
-                continue
-            pair = (module_name, permission_key)
-            if pair in seen:
-                continue
-            seen.add(pair)
-            pairs.append({'module_name': module_name, 'permission_key': permission_key})
-        return pairs
+        keys = PermissionService._get_granted_module_permission_keys(user)
+        return [
+            {'module_name': module_name, 'permission_key': permission_key}
+            for module_name, permission_key in sorted(keys)
+        ]
     finally:
         reset_active_preview(token)
+
+
+def effective_permission_pairs_for_preview(
+    user,
+    preview: DevToolsPreview | None,
+) -> tuple[list[dict], list[dict], bool]:
+    """base, effective и флаг администратора overlay."""
+    is_admin = preview_role_is_admin(preview)
+    if preview is None or not preview.is_active():
+        return [], [], False
+    if is_admin:
+        return [], [], True
+    base = permission_pairs_for_preview(user, preview)
+    effective = {
+        (item['module_name'], item['permission_key'])
+        for item in base
+    }
+    effective.update(preview.extra_grants)
+    effective.difference_update(preview.extra_denies)
+    return (
+        base,
+        [
+            {'module_name': module_name, 'permission_key': permission_key}
+            for module_name, permission_key in sorted(effective)
+        ],
+        False,
+    )

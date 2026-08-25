@@ -1,28 +1,25 @@
 """API режима разработчика: overlay прав без записи ролей в БД."""
 
 from django.contrib.auth import get_user_model
+from django.db.models import Prefetch, Q
 from django.utils.translation import gettext as _
 from rest_framework import status
-from rest_framework.response import Response
-
-from src.core.cms.adp.admin_users_common import (
-    _build_admin_user_list_item,
-    _get_admin_users_base_queryset,
-)
 from rest_framework.exceptions import NotFound
+from rest_framework.response import Response
 
 from src.core.cms.adp.dev_tools.preview import (
     clear_preview,
+    effective_permission_pairs_for_preview,
     load_preview,
-    permission_pairs_for_preview,
     preview_from_payload,
     save_preview,
 )
 from src.core.cms.adp.dev_tools.runtime import is_dev_tools_enabled
-from src.core.cms.adp.models import Role
+from src.core.cms.adp.models import Role, UserRole
 from src.core.cms.adp.services.permission_catalog import get_modules_catalog
 from src.core.cms.adp.services.permissions import PermissionService
 from src.core.search.core_indexes import INDEX_USERS
+from src.core.search.fallback import apply_ordered_ids, fallback_search
 from src.core.search.service import search_queryset
 from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewGlobalAdminMixin
 from src.core.utils.swagger.yasg_compat import swagger_auto_schema
@@ -47,6 +44,7 @@ def _empty_preview_payload() -> dict:
         'extra_denies': [],
         'base_permissions': [],
         'effective_permissions': [],
+        'effective_is_admin': False,
     }
 
 
@@ -54,16 +52,10 @@ def _preview_state(user, preview) -> dict:
     if preview is None or not preview.is_active():
         return _empty_preview_payload()
     payload = preview.to_payload()
-    payload['base_permissions'] = permission_pairs_for_preview(
-        user,
-        preview,
-        include_overrides=False,
-    )
-    payload['effective_permissions'] = permission_pairs_for_preview(
-        user,
-        preview,
-        include_overrides=True,
-    )
+    base, effective, is_admin = effective_permission_pairs_for_preview(user, preview)
+    payload['base_permissions'] = base
+    payload['effective_permissions'] = effective
+    payload['effective_is_admin'] = is_admin
     return payload
 
 
@@ -130,6 +122,33 @@ class DevToolsSessionView(_DevToolsEnabledMixin, BaseAPIViewGlobalAdminMixin, Ba
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+def _dev_tools_users_queryset():
+    admin_role = PermissionService._get_or_create_admin_role()
+    return (
+        User.objects.filter(is_active=True)
+        .exclude(
+            Q(is_superuser=True)
+            | Q(user_roles__role=admin_role, user_roles__is_active=True)
+        )
+        .distinct()
+        .order_by('last_name', 'first_name', 'username')
+    )
+
+
+def _dev_tools_user_item(user) -> dict | None:
+    public_id = getattr(user, 'public_id', None)
+    if not public_id:
+        return None
+    active_roles = getattr(user, '_active_roles', None) or []
+    role = active_roles[0].role if active_roles else None
+    return {
+        'public_id': str(public_id),
+        'username': user.username or '',
+        'full_name': _user_label(user),
+        'role_name': getattr(role, 'name', None),
+    }
+
+
 class DevToolsUsersView(_DevToolsEnabledMixin, BaseAPIViewGlobalAdminMixin, BaseAPIView):
     """Быстрый поиск пользователей для подмены прав."""
 
@@ -140,27 +159,40 @@ class DevToolsUsersView(_DevToolsEnabledMixin, BaseAPIViewGlobalAdminMixin, Base
             or request.query_params.get('search')
             or ''
         ).strip()
+        base_qs = _dev_tools_users_queryset()
         users_qs, search_result = search_queryset(
             INDEX_USERS,
             search,
-            _get_admin_users_base_queryset(),
+            base_qs,
             page=1,
             page_size=12,
         )
+        if search and not users_qs.exists():
+            ids, total = fallback_search(
+                INDEX_USERS,
+                search,
+                base_qs,
+                page=1,
+                page_size=12,
+            )
+            users_qs = apply_ordered_ids(base_qs, ids)
+            search_result.total = total
+        users_qs = users_qs.prefetch_related(
+            Prefetch(
+                'user_roles',
+                queryset=(
+                    UserRole.objects
+                    .filter(is_active=True)
+                    .select_related('role')
+                ),
+                to_attr='_active_roles',
+            )
+        )
         items = []
         for user in users_qs:
-            row = _build_admin_user_list_item(user)
-            public_id = row.get('public_id')
-            if not public_id:
-                continue
-            if PermissionService._is_global_admin(user, honor_preview=False):
-                continue
-            items.append({
-                'public_id': public_id,
-                'username': row.get('username') or '',
-                'full_name': row.get('full_name') or '',
-                'role_name': (row.get('role') or {}).get('name') if isinstance(row.get('role'), dict) else getattr(row.get('role'), 'name', None),
-            })
+            row = _dev_tools_user_item(user)
+            if row is not None:
+                items.append(row)
         return Response({
             'users': items,
             'total': search_result.total,
