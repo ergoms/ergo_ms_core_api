@@ -49,7 +49,8 @@ class LogoutView(BaseAPIViewPublicMixin):
     """Отзыв refresh-сессии и очистка HttpOnly cookie (доступно без валидного access)."""
 
     # Идемпотентная очистка cookie: DRF throttle не ставим — первый logout
-    # должен сбросить cookie. Повторный шторм: nginx zone=ergo_logout + fast-path.
+    # должен сбросить cookie. Повторный шторм: nginx zone=ergo_logout
+    # (избыток → 204 без прокси) + fast-path без cookie.
     throttle_classes = []
     # Plain JWT без привязки к устройству: logout должен очищать cookie и после
     # отзыва сессии устройства, когда device-bound access уже недействителен.
