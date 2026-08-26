@@ -400,6 +400,10 @@ class HttpTransport:
             response.raise_for_status()
             if _is_bridge_stream_response(response):
                 return _iter_ndjson_chunks(client, response)
+            # stream=True: httpx не кладёт тело в .content, пока не вызвать read().
+            # Иначе обычный JSON (session.device_active и др.) даёт ResponseNotRead,
+            # jwt_claims принимает это за мёртвую сессию и отвечает 401.
+            response.read()
             data = response.json()
         except Exception:
             if response is not None:
