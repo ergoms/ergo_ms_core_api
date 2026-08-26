@@ -10,11 +10,12 @@ import hmac
 import ipaddress
 import json
 import logging
+from collections.abc import Iterator
 from typing import Any
 
 from django.conf import settings
 from django.core.cache import cache
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -151,9 +152,36 @@ def _json_safe_providers(providers: dict[str, Any]) -> dict[str, Any]:
     return safe
 
 
+def _is_bridge_iterator(value: Any) -> bool:
+    if isinstance(value, (str, bytes, bytearray, dict, list, tuple)):
+        return False
+    return isinstance(value, Iterator)
+
+
+def _stream_bridge_result(result: Iterator[Any]) -> StreamingHttpResponse:
+    def event_stream():
+        try:
+            for item in result:
+                try:
+                    json.dumps(item)
+                except (TypeError, ValueError):
+                    logger.exception('internal bridge stream chunk is not JSON')
+                    yield json.dumps({'error': 'Handler result is not JSON-serializable'}) + '\n'
+                    return
+                yield json.dumps({'chunk': item}, ensure_ascii=False) + '\n'
+            yield json.dumps({'done': True}, ensure_ascii=False) + '\n'
+        except Exception:
+            logger.exception('internal bridge stream failed')
+            yield json.dumps({'error': 'Handler error'}) + '\n'
+
+    response = StreamingHttpResponse(event_stream(), content_type='application/x-ndjson')
+    response['X-Bridge-Stream'] = '1'
+    return response
+
+
 @csrf_exempt
 @require_POST
-def bridge_call(request: HttpRequest) -> JsonResponse:
+def bridge_call(request: HttpRequest) -> HttpResponse:
     blocked = _guard(request)
     if blocked is not None:
         return blocked
@@ -182,6 +210,9 @@ def bridge_call(request: HttpRequest) -> JsonResponse:
     except Exception:
         logger.exception('internal bridge call failed for %s', op)
         return JsonResponse({'detail': 'Handler error'}, status=500)
+
+    if _is_bridge_iterator(result):
+        return _stream_bridge_result(result)
 
     try:
         json.dumps(result)

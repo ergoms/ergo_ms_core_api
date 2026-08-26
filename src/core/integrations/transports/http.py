@@ -7,9 +7,10 @@ RPC на сервис-владелец через /internal/bridge/*.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import httpx
 from django.conf import settings
@@ -29,13 +30,20 @@ logger = logging.getLogger('integrations.bridge.http')
 _TOKEN_HEADER = 'X-Bridge-Token'
 
 
-def _http_send(client: httpx.Client, method: str, url: str, **kwargs):
+_STREAM_READ_TIMEOUT = 300.0
+
+
+def _http_send(client: httpx.Client, method: str, url: str, *, stream: bool = False, **kwargs):
     """Повтор при 5xx и TransportError, кроме ConnectError (peer не слушает)."""
     last_exc: Exception | None = None
     attempts = _retries() + 1
     for attempt in range(attempts):
         try:
-            response = client.request(method, url, **kwargs)
+            if stream:
+                request = client.build_request(method, url, **kwargs)
+                response = client.send(request, stream=True)
+            else:
+                response = client.request(method, url, **kwargs)
             if response.status_code >= 500 and attempt + 1 < attempts:
                 logger.warning(
                     'Bridge HTTP %s %s -> %s, retry %s/%s',
@@ -45,6 +53,7 @@ def _http_send(client: httpx.Client, method: str, url: str, **kwargs):
                     attempt + 1,
                     attempts,
                 )
+                response.close()
                 continue
             return response
         except httpx.ConnectError:
@@ -67,6 +76,51 @@ def _http_send(client: httpx.Client, method: str, url: str, **kwargs):
     raise RuntimeError('Bridge HTTP: empty retry loop')
 
 
+def _stream_timeout() -> httpx.Timeout:
+    base = _timeout()
+    return httpx.Timeout(
+        connect=min(30.0, base),
+        read=max(base, _STREAM_READ_TIMEOUT),
+        write=base,
+        pool=base,
+    )
+
+
+def _is_bridge_stream_response(response: httpx.Response) -> bool:
+    ctype = (response.headers.get('content-type') or '').lower()
+    if 'ndjson' in ctype:
+        return True
+    return (response.headers.get('X-Bridge-Stream') or '').strip() == '1'
+
+
+def _iter_ndjson_chunks(client: httpx.Client, response: httpx.Response) -> Iterator[Any]:
+    def chunks() -> Iterator[Any]:
+        try:
+            for raw in response.iter_lines():
+                if not raw:
+                    continue
+                if isinstance(raw, bytes):
+                    raw = raw.decode('utf-8')
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                if data.get('done'):
+                    break
+                error = data.get('error')
+                if error:
+                    raise RuntimeError(str(error))
+                if 'chunk' in data:
+                    yield data['chunk']
+        finally:
+            response.close()
+            client.close()
+
+    return chunks()
+
+
 def _internal_token() -> str:
     return (getattr(settings, 'BRIDGE_INTERNAL_TOKEN', '') or '').strip()
 
@@ -87,10 +141,13 @@ def _retries() -> int:
         return 2
 
 
-def _http_client() -> httpx.Client:
+def _http_client(timeout: float | httpx.Timeout | None = None) -> httpx.Client:
     # trust_env=False: http_proxy/HTTP_PROXY не должны перехватывать
     # /internal/bridge/* на private LAN (иначе ReadTimeout через прокси).
-    return httpx.Client(timeout=_timeout(), trust_env=False)
+    return httpx.Client(
+        timeout=_timeout() if timeout is None else timeout,
+        trust_env=False,
+    )
 
 
 def _self_base_url() -> str | None:
@@ -329,10 +386,28 @@ class HttpTransport:
             'kwargs': _json_kwargs(kwargs),
         }
         url = f'{base}/internal/bridge/call'
-        with _http_client() as client:
-            response = _http_send(client, 'POST', url, json=payload, headers=self._headers(base))
+        client = _http_client(timeout=_stream_timeout())
+        response = None
+        try:
+            response = _http_send(
+                client,
+                'POST',
+                url,
+                json=payload,
+                headers=self._headers(base),
+                stream=True,
+            )
             response.raise_for_status()
+            if _is_bridge_stream_response(response):
+                return _iter_ndjson_chunks(client, response)
             data = response.json()
+        except Exception:
+            if response is not None:
+                response.close()
+            client.close()
+            raise
+        response.close()
+        client.close()
         if isinstance(data, dict) and 'result' in data:
             return data['result']
         return data
