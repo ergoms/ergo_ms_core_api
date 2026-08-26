@@ -23,6 +23,14 @@ from typing import Any, Callable
 from src.core.integrations import bridge
 from src.core.integrations.module_contracts import SESSION_CLAIMS_GROUP
 
+
+def _process_is_module() -> bool:
+    """Процесс модуля не ходит по HTTP за чужими session-claim."""
+    from django.conf import settings
+
+    role = (getattr(settings, 'ERGO_PROCESS_ROLE', '') or '').strip().lower()
+    return role.startswith('module:')
+
 __all__ = (
     'SESSION_CLAIMS_GROUP',
     'get_session_claim_descriptors',
@@ -56,15 +64,10 @@ def _normalize_descriptor(key: str, raw: Any) -> dict | None:
     }
 
 
-def get_session_claim_descriptors() -> list[dict]:
-    """Все session-claim дескрипторы из контракта session_context.claims."""
-    global _descriptors_cache
-    if _descriptors_cache is not None:
-        return _descriptors_cache
-
+def _merge_descriptors(providers: dict[str, Any]) -> list[dict]:
+    """Сырые провайдеры группы → список канонических дескрипторов."""
     by_claim: dict[str, dict] = {}
-
-    for key, raw in bridge.all(SESSION_CLAIMS_GROUP).items():
+    for key, raw in providers.items():
         descriptor = _normalize_descriptor(str(key), raw)
         if descriptor is None:
             continue
@@ -78,8 +81,25 @@ def get_session_claim_descriptors() -> list[dict]:
             existing['resolve'] = descriptor['resolve']
         if descriptor.get('required_guard'):
             existing['required_guard'] = True
+    return list(by_claim.values())
 
-    _descriptors_cache = list(by_claim.values())
+
+def get_session_claim_descriptors(*, local_only: bool = False) -> list[dict]:
+    """Дескрипторы session-claim.
+
+    На ядре ``bridge.all`` один раз собирает группу с процессов модулей.
+    Процесс модуля и запрос ``/internal/`` смотрят только локальный реестр:
+    иначе каждый ``/internal/bridge/all`` снова обходит все URL и зацикливает мост.
+    """
+    global _descriptors_cache
+    if local_only and not _process_is_module():
+        return _merge_descriptors(bridge.local_group(SESSION_CLAIMS_GROUP))
+    if _descriptors_cache is not None:
+        return _descriptors_cache
+    if local_only or _process_is_module():
+        _descriptors_cache = _merge_descriptors(bridge.local_group(SESSION_CLAIMS_GROUP))
+        return _descriptors_cache
+    _descriptors_cache = _merge_descriptors(bridge.all(SESSION_CLAIMS_GROUP))
     return _descriptors_cache
 
 

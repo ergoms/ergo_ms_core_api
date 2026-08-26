@@ -41,7 +41,9 @@ class SessionContextMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        descriptors = get_session_claim_descriptors()
+        path = getattr(request, 'path', '') or ''
+        local_only = path.startswith('/internal/')
+        descriptors = get_session_claim_descriptors(local_only=local_only)
 
         request._session_entity_cache = {}
         request._session_entity_resolvers = {}
@@ -49,7 +51,7 @@ class SessionContextMiddleware:
         for descriptor in descriptors:
             setattr(request, descriptor['request_attr'], None)
 
-        self._extract_session_claims_from_token(request)
+        self._extract_session_claims_from_token(request, descriptors)
 
         for descriptor in descriptors:
             entity_key = descriptor.get('entity_key')
@@ -85,12 +87,12 @@ class SessionContextMiddleware:
             return None
 
     @staticmethod
-    def _extract_session_claims_from_token(request) -> None:
+    def _extract_session_claims_from_token(request, descriptors: list) -> None:
         payload = SessionContextMiddleware._access_token_payload(request)
         if payload is None:
             return
         try:
-            for descriptor in get_session_claim_descriptors():
+            for descriptor in descriptors:
                 claim = descriptor['claim']
                 request_attr = descriptor['request_attr']
                 value = payload.get(claim)
