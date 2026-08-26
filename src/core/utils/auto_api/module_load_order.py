@@ -26,12 +26,22 @@ from src.core.utils.auto_api.module_integrations import (
 logger = logging.getLogger('utils')
 
 
-def _microservice_peer_names() -> frozenset[str]:
-    """Имена модулей из MICROSERVICE_MODULES (доступны в другом процессе через мост)."""
+def _remote_peer_names() -> frozenset[str]:
+    """Модули в другом процессе: MICROSERVICE_MODULES и ключи BRIDGE_SERVICE_URLS."""
     import os
 
+    names: set[str] = set()
     raw = os.environ.get('MICROSERVICE_MODULES', '') or ''
-    return frozenset(m.strip() for m in raw.split(',') if m.strip())
+    names.update(item.strip() for item in raw.split(',') if item.strip())
+    urls = os.environ.get('BRIDGE_SERVICE_URLS', '') or ''
+    for part in urls.split(','):
+        part = part.strip()
+        if not part or '=' not in part:
+            continue
+        name = part.split('=', 1)[0].strip()
+        if name:
+            names.add(name)
+    return frozenset(names)
 
 
 def module_name_from_app(app_path: str) -> str | None:
@@ -66,7 +76,7 @@ def _topo_sort_modules(
     исходный порядок (стабильность).
     """
     name_set = set(module_names)
-    remote_peers = _microservice_peer_names()
+    remote_peers = _remote_peer_names()
     excluded: set[str] = set()
     changed = True
     while changed:

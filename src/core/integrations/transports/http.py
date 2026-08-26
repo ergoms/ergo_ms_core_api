@@ -15,6 +15,7 @@ import httpx
 from django.conf import settings
 
 from ..exceptions import DuplicateProvider
+from .bind_kwargs import kwargs_accepted_by_handler
 from ..service_map import (
     all_remote_base_urls,
     build_service_map,
@@ -120,6 +121,34 @@ def _json_safe(value: Any) -> Any:
     )
 
 
+def _json_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Оставляет только JSON-примитивы. Объект user и callback по HTTP не едут."""
+    safe: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        try:
+            safe[str(key)] = _json_safe(value)
+        except TypeError:
+            logger.debug(
+                'Bridge HTTP: пропуск kwargs %s (%s)',
+                key,
+                type(value).__name__,
+            )
+    return safe
+
+
+def _json_kwargs_list(args: tuple[Any, ...]) -> list[Any]:
+    safe: list[Any] = []
+    for value in args:
+        try:
+            safe.append(_json_safe(value))
+        except TypeError:
+            logger.debug(
+                'Bridge HTTP: пропуск args (%s)',
+                type(value).__name__,
+            )
+    return safe
+
+
 class HttpTransport:
     """
     Hybrid: local provide/call, иначе HTTP к владельцу операции.
@@ -191,7 +220,7 @@ class HttpTransport:
         with self._lock:
             handler = self._providers.get(name)
         if handler is not None:
-            return handler(*args, **kwargs)
+            return handler(*args, **kwargs_accepted_by_handler(handler, kwargs))
 
         base = resolve_op_base_url(name)
         if not base:
@@ -270,8 +299,8 @@ class HttpTransport:
     ) -> Any:
         payload = {
             'op': name,
-            'args': _json_safe(list(args)),
-            'kwargs': _json_safe(kwargs),
+            'args': _json_kwargs_list(args),
+            'kwargs': _json_kwargs(kwargs),
         }
         url = f'{base}/internal/bridge/call'
         with httpx.Client(timeout=_timeout()) as client:

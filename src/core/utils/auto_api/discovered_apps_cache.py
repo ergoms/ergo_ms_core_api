@@ -105,7 +105,8 @@ def get_discovery_dirs_fingerprint() -> dict:
     """
     Fingerprint для кэша discovered_apps / discovered_urls.
     Учитывает mtime директорий, apps.py и integrations.yaml.
-    Также включает DISABLED_MODULES — при изменении списка кэш инвалидируется.
+    Также включает DISABLED_MODULES, MICROSERVICE_MODULES и BRIDGE_SERVICE_URLS —
+    при изменении списка или карты соседей кэш инвалидируется.
     """
     result = {}
     core_path = Path(DJANGO_CORE_DIR)
@@ -138,6 +139,8 @@ def get_discovery_dirs_fingerprint() -> dict:
         result['modules_dir'] = 0
         result['modules_apps'] = 0
     result['disabled_modules'] = os.getenv('DISABLED_MODULES', '')
+    result['microservice_modules'] = os.getenv('MICROSERVICE_MODULES', '')
+    result['bridge_service_urls'] = os.getenv('BRIDGE_SERVICE_URLS', '')
     try:
         from src.core.utils.module_registry import get_process_filter_fingerprint
 
@@ -145,7 +148,7 @@ def get_discovery_dirs_fingerprint() -> dict:
     except Exception:
         result['process_filter'] = ''
     # Инвалидация кэша при смене алгоритма порядка (integrations.yaml)
-    result['module_load_order'] = 2
+    result['module_load_order'] = 3
     # Узкий обход вместо Path.rglob
     result['fingerprint_algo'] = 3
     return result

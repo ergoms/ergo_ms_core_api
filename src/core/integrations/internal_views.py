@@ -19,6 +19,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from src.core.integrations import bridge
+from src.core.integrations.transports.bind_kwargs import kwargs_accepted_by_handler
 from src.core.utils.request_id import request_id_from_meta
 
 logger = logging.getLogger('integrations.bridge.internal')
@@ -38,7 +39,7 @@ def _is_loopback(request: HttpRequest) -> bool:
 
 
 def _peer_allowed(request: HttpRequest) -> bool:
-    """Мост не для публичного интернета: loopback; private только в microservice."""
+    """Мост не для публичного интернета: loopback; private при HTTP-мосте или microservice."""
     addr = (request.META.get('REMOTE_ADDR') or '').strip()
     if not addr:
         return False
@@ -49,7 +50,9 @@ def _peer_allowed(request: HttpRequest) -> bool:
     if ip.is_loopback:
         return True
     runtime = (getattr(settings, 'MODULE_RUNTIME', 'monolith') or 'monolith').strip().lower()
-    if runtime in ('microservice', 'split') and (ip.is_private or ip.is_link_local):
+    transport = (getattr(settings, 'BRIDGE_TRANSPORT', 'local') or 'local').strip().lower()
+    peer_http = runtime in ('microservice', 'split') or transport == 'http'
+    if peer_http and (ip.is_private or ip.is_link_local):
         return True
     return False
 
@@ -175,7 +178,7 @@ def bridge_call(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'detail': f'Provider {op!r} not found locally'}, status=404)
 
     try:
-        result = handler(*args, **kwargs)
+        result = handler(*args, **kwargs_accepted_by_handler(handler, kwargs))
     except Exception:
         logger.exception('internal bridge call failed for %s', op)
         return JsonResponse({'detail': 'Handler error'}, status=500)
