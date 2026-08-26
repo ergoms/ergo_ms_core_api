@@ -106,6 +106,26 @@ def _self_base_url() -> str | None:
     return None
 
 
+def _same_base(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    return left.rstrip('/') == right.rstrip('/')
+
+
+def _prefer_local_provider(base: str | None) -> bool:
+    """Локальный handler только если этот процесс — владелец op.
+
+    На ``module:<name>`` ядро всё равно регистрирует ``session.device_active``
+    (и другие ops ядра): пользователи и устройства живут на ядре, не в БД модуля.
+    """
+    role = (getattr(settings, 'ERGO_PROCESS_ROLE', '') or '').strip().lower()
+    if not role.startswith('module:'):
+        return True
+    if not base:
+        return True
+    return _same_base(base, _self_base_url())
+
+
 def _remote_bases_for_group(group: str) -> list[str]:
     self_url = (_self_base_url() or '').rstrip('/')
     bases = iter_group_base_urls(group) or all_remote_base_urls()
@@ -225,10 +245,10 @@ class HttpTransport:
     ) -> Any:
         with self._lock:
             handler = self._providers.get(name)
-        if handler is not None:
+        base = resolve_op_base_url(name)
+        if handler is not None and _prefer_local_provider(base):
             return handler(*args, **kwargs_accepted_by_handler(handler, kwargs))
 
-        base = resolve_op_base_url(name)
         if not base:
             return default
         try:
