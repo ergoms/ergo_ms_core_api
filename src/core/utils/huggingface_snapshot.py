@@ -6,6 +6,18 @@ import sys
 from pathlib import Path
 
 
+def is_huggingface_repo_id(repo_id: str) -> bool:
+    """True для снимка Hub org/name (не имя библиотеки Ollama и не hf.co/…)."""
+    raw = (repo_id or '').strip()
+    if not raw:
+        return False
+    lowered = raw.lower()
+    if lowered.startswith('hf.co/') or lowered.startswith('huggingface.co/'):
+        return False
+    parts = raw.split('/')
+    return len(parts) == 2 and all(parts) and ':' not in parts[0]
+
+
 def resolve_huggingface_source(repo_id: str, *, root: Path | None = None) -> str:
     """Путь к готовому снимку или исходный org/name, если весов ещё нет."""
     from src.core.utils.database.module_schema import project_root
