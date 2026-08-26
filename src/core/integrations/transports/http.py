@@ -87,6 +87,12 @@ def _retries() -> int:
         return 2
 
 
+def _http_client() -> httpx.Client:
+    # trust_env=False: http_proxy/HTTP_PROXY не должны перехватывать
+    # /internal/bridge/* на private LAN (иначе ReadTimeout через прокси).
+    return httpx.Client(timeout=_timeout(), trust_env=False)
+
+
 def _self_base_url() -> str | None:
     """URL этого процесса в карте сервисов — не звать сам себя по HTTP."""
     role = (getattr(settings, 'ERGO_PROCESS_ROLE', '') or '').strip().lower()
@@ -303,7 +309,7 @@ class HttpTransport:
             'kwargs': _json_kwargs(kwargs),
         }
         url = f'{base}/internal/bridge/call'
-        with httpx.Client(timeout=_timeout()) as client:
+        with _http_client() as client:
             response = _http_send(client, 'POST', url, json=payload, headers=self._headers(base))
             response.raise_for_status()
             data = response.json()
@@ -313,7 +319,7 @@ class HttpTransport:
 
     def _remote_has(self, base: str, name: str) -> bool:
         url = f'{base}/internal/bridge/has'
-        with httpx.Client(timeout=_timeout()) as client:
+        with _http_client() as client:
             response = _http_send(
                 client,
                 'GET',
@@ -327,7 +333,7 @@ class HttpTransport:
 
     def _remote_all(self, base: str, group: str) -> dict[str, Any]:
         url = f'{base}/internal/bridge/all'
-        with httpx.Client(timeout=_timeout()) as client:
+        with _http_client() as client:
             response = _http_send(
                 client,
                 'GET',
