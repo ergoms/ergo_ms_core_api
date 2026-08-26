@@ -39,6 +39,10 @@ NOTIFICATIONS_FILTER_EVENTS_PREFIX = 'notifications.filter_events_for_user.'
 # --- Events (bridge.subscribe_to / emit / emit_first) ---
 
 ADP_PERMISSION_CHECK = 'adp.permission_check'
+# Процесс модуля (MODULE_AUTH_MODE=jwt_claims) не читает cms_adp_* у себя.
+ADP_IS_ADMIN = 'adp.is_admin'
+ADP_CHECK_API_ACCESS = 'adp.check_api_access'
+ADP_CHECK_MODULE_PERMISSION = 'adp.check_module_permission'
 # Подписчики возвращают iterable id RoleGroup, которые нельзя учитывать
 # в глобальной агрегации ModulePermission (session-scoped системные группы и т.п.).
 ADP_FILTER_GRANTED_ROLE_GROUP_IDS = 'adp.filter_granted_role_group_ids'

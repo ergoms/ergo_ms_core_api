@@ -77,6 +77,12 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
 
         access = active_refresh.access_token
         access['device_id'] = device_id
+        public_id = active_refresh.payload.get('user_public_id')
+        if public_id:
+            access['user_public_id'] = public_id
+        username = active_refresh.payload.get('username')
+        if username:
+            access['username'] = username
         data['access'] = str(access)
         return data
 

@@ -12,6 +12,13 @@ from src.config.security_profile_runtime import adp_default_view_grants
 from src.core.cms.adp.middleware.permission_request_cache import get_request_permission_cache
 from src.core.cms.adp.models import Role, RoleGroup, Policy, UserRole, ModulePermission
 from src.core.integrations import bridge
+from src.core.cms.adp.services.jwt_claims_permissions import (
+    jwt_claims_on_module,
+    remote_check_api_access,
+    remote_check_module_permission,
+    remote_is_admin,
+    user_pk,
+)
 from src.core.integrations.module_contracts import (
     ADP_FILTER_GRANTED_ROLE_GROUP_IDS,
     ADP_PERMISSION_CHECK,
@@ -40,7 +47,8 @@ class PermissionService:
     @staticmethod
     def get_user_role(user: User, *, honor_preview: bool = True) -> Optional[UserRole]:
         """Получить активную роль пользователя (без побочных save на read-path)."""
-        if not user or not getattr(user, 'pk', None):
+        pk = user_pk(user)
+        if not user or pk is None:
             return None
 
         if honor_preview:
@@ -57,7 +65,7 @@ class PermissionService:
                 return preview_role
 
         cache = get_request_permission_cache()
-        cache_key = f'user_role:{user.pk}'
+        cache_key = f'user_role:{pk}'
         if cache_key in cache:
             return cache[cache_key]
 
@@ -65,7 +73,7 @@ class PermissionService:
             UserRole.objects
             .select_related('role')
             .prefetch_related('role_groups')
-            .filter(user=user, is_active=True)
+            .filter(user_id=pk, is_active=True)
             .first()
         )
 
@@ -231,6 +239,8 @@ class PermissionService:
         """
         if not user or not getattr(user, 'is_authenticated', False):
             return False
+        if jwt_claims_on_module():
+            return remote_is_admin(user)
 
         if honor_preview:
             from src.core.cms.adp.dev_tools.preview import preview_suppresses_admin
@@ -506,6 +516,8 @@ class PermissionService:
         Семантика как у check_url_access: admin → allow; match по priority;
         роль «Пользователь» без match → allow; иначе deny.
         """
+        if jwt_claims_on_module():
+            return remote_check_api_access(user, api_path)
         if PermissionService.is_admin(user):
             return True
 
@@ -745,6 +757,14 @@ class PermissionService:
             return False
         if override is True:
             return True
+
+        if jwt_claims_on_module():
+            return remote_check_module_permission(
+                user,
+                module_name,
+                permission_key,
+                kwargs,
+            )
 
         # Администраторы имеют доступ ко всему
         if PermissionService.is_admin(user):

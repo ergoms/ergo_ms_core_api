@@ -97,4 +97,6 @@ class DeviceBoundJWTAuthentication(JWTAuthentication):
             pk=pk,
             public_id=pid,
             username=str(validated_token.get('username') or ''),
+            is_superuser=bool(validated_token.get('is_superuser')),
+            is_staff=bool(validated_token.get('is_staff')),
         )

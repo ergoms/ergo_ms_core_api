@@ -471,10 +471,17 @@ class UserAuthorizationView(BaseAPIViewPublicMixin):
                     user,
                     **restore_claims,
                 )
+                public_id = getattr(user, 'public_id', None)
+                if public_id is not None:
+                    refresh['user_public_id'] = str(public_id)
+                refresh['username'] = user.get_username()
                 refresh.set_exp(lifetime=refresh_lifetime)
 
                 access_token = refresh.access_token
                 access_token.set_exp(lifetime=access_lifetime)
+                if 'user_public_id' in refresh:
+                    access_token['user_public_id'] = refresh['user_public_id']
+                access_token['username'] = refresh['username']
                 bind_device_to_refresh_token(device, refresh)
                 attach_device_to_refresh_token(refresh, device)
                 attach_device_claim(access_token, device)

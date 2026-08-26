@@ -28,7 +28,11 @@ class _PublicIdLookupMixin:
         user = self.get_safe_user()
         if user is None:
             return qs
-        return qs.filter(**{owner_field: user})
+        pk = getattr(user, 'pk', None)
+        if pk is None:
+            return qs.none()
+        lookup = owner_field if str(owner_field).endswith('_id') else f'{owner_field}_id'
+        return qs.filter(**{lookup: pk})
 
 
 class BaseViewSet(AuthenticatedAPIMixin, viewsets.ViewSet):
