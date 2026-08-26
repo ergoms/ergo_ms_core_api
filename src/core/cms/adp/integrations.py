@@ -33,7 +33,17 @@ def _session_device_active(*, user_id=None, device_id=None, user_public_id=None,
     user = _resolve_user(user_id=user_id, user_public_id=user_public_id)
     if user is None:
         return False
-    return bool(is_device_session_active(user, device_id))
+    if not is_device_session_active(user, device_id):
+        return False
+    # Снимок для jwt_claims: в токене старого логина может не быть user_public_id.
+    public_id = getattr(user, 'public_id', None)
+    return {
+        'active': True,
+        'user_public_id': str(public_id) if public_id else '',
+        'username': str(getattr(user, 'username', '') or ''),
+        'is_superuser': bool(getattr(user, 'is_superuser', False)),
+        'is_staff': bool(getattr(user, 'is_staff', False)),
+    }
 
 
 @bridge.provide_op(ADP_IS_ADMIN)
