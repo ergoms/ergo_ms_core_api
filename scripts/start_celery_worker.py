@@ -20,9 +20,9 @@ from _common import (
     PROJECT_ROOT,
     WORKERS_CONFIG,
     ensure_caches,
+    exec_celery,
     is_celery_process,
     read_queues_cache,
-    run_celery_with_timing,
     setup_celery_script_logging,
 )
 from src.core.utils.celery.startup_format import format_queues_display
@@ -352,12 +352,7 @@ def main() -> int:
         autoscale_min=overlay.get('autoscale_min'),
         autoscale_max=overlay.get('autoscale_max'),
     )
-    return run_celery_with_timing(
-        cmd, str(API_DIR),
-        ready_pattern='Connected to',
-        service_name='Celery worker',
-        start=start_time,
-    )
+    return exec_celery(cmd, str(API_DIR))
 
 
 if __name__ == '__main__':

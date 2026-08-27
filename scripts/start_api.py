@@ -6,9 +6,10 @@
 """
 
 import os
-import subprocess
 import sys
 from pathlib import Path
+
+from _replace_process import replace_current_process
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 API_DIR = SCRIPT_DIR.parent
@@ -75,7 +76,7 @@ def main() -> int:
         cmd = build_dev_command(sys.executable)
         print(f'API (разработка): runserver на {host}, порт {port}')
 
-    return subprocess.call(cmd, cwd=str(API_DIR), env=run_env)
+    return replace_current_process(cmd, cwd=str(API_DIR), env=run_env)
 
 
 if __name__ == '__main__':

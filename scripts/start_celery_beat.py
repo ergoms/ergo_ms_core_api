@@ -7,7 +7,6 @@
 import argparse
 import os
 import sys
-import time
 from typing import List
 
 import psutil
@@ -15,8 +14,8 @@ import psutil
 from _common import (
     API_DIR,
     ensure_caches,
+    exec_celery,
     is_celery_process,
-    run_celery_with_timing,
     setup_celery_script_logging,
 )
 
@@ -37,7 +36,6 @@ def find_celery_beat() -> bool:
 
 
 def main() -> int:
-    start_time = time.time()
     parser = argparse.ArgumentParser(description='Запуск Celery beat')
     parser.add_argument(
         '--verbose',
@@ -72,12 +70,7 @@ def main() -> int:
         f'--loglevel={loglevel}',
     ]
     log.info('Запуск Celery beat (уровень логов=%s)...', loglevel)
-    return run_celery_with_timing(
-        cmd, str(API_DIR),
-        ready_pattern='beat: Starting',
-        service_name='Celery beat',
-        start=start_time,
-    )
+    return exec_celery(cmd, str(API_DIR))
 
 
 if __name__ == '__main__':

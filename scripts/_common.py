@@ -259,6 +259,19 @@ def ensure_caches(*, verbose: Optional[bool] = None) -> List[str]:
     return []
 
 
+def exec_celery(cmd: List[str], cwd: str) -> int:
+    """Заменяет процесс на celery — systemd/NSSM держат уже worker/beat."""
+    from _replace_process import replace_current_process
+
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUTF8'] = '1'
+    project_root = str(PROJECT_ROOT)
+    existing = env.get('PYTHONPATH', '')
+    env['PYTHONPATH'] = project_root + (os.pathsep + existing if existing else '')
+    return replace_current_process(cmd, cwd=cwd, env=env)
+
+
 def run_celery_with_timing(
     cmd: List[str],
     cwd: str,

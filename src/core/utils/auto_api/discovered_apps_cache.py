@@ -179,7 +179,12 @@ def _collect_core_apps_fast() -> List[str]:
     """Собирает приложения из core/."""
     result: List[str] = []
     _recursively_find_apps_fast(str(DJANGO_CORE_DIR), 'src.core', result)
-    return result
+    try:
+        from src.core.utils.module_registry import filter_core_apps_for_process
+
+        return filter_core_apps_for_process(result)
+    except Exception:
+        return result
 
 
 def _collect_module_apps_fast() -> List[str]:
@@ -247,6 +252,12 @@ def _run_discovery() -> List[str]:
     discoverer = ModuleDiscoverer()
     core_apps: List[str] = []
     discoverer._recursively_find_apps(str(DJANGO_CORE_DIR), 'src.core', core_apps)
+    try:
+        from src.core.utils.module_registry import filter_core_apps_for_process
+
+        core_apps = filter_core_apps_for_process(core_apps)
+    except Exception:
+        pass
     module_apps: List[str] = []
     discoverer._find_modules_apps(str(MODULES_DIR), module_apps)
     return _finalize_discovered_apps(core_apps + module_apps)

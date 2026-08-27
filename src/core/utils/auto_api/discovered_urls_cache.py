@@ -55,7 +55,13 @@ def _url_fingerprint() -> dict:
     fingerprint['modules_urls'] = modules_named_mtime(
         MODULES_DIR, 'urls.py', under_api=True
     )
-    fingerprint['urls_algo'] = 1
+    fingerprint['urls_algo'] = 2
+    try:
+        from src.core.utils.module_registry import get_process_filter_fingerprint
+
+        fingerprint['process_filter'] = get_process_filter_fingerprint()
+    except Exception:
+        fingerprint['process_filter'] = fingerprint.get('process_filter', '')
     return fingerprint
 
 
@@ -77,6 +83,13 @@ def _collect_core_url_entries(current_dir: str, current_prefix: str, current_rou
         module_full_path = f'{current_prefix}.{module_name}' if current_prefix else module_name
         new_route = f'{current_route}{module_name}/'
         if os.path.exists(os.path.join(module_path, 'urls.py')):
+            try:
+                from src.core.utils.module_registry import allow_core_url_route
+
+                if not allow_core_url_route(new_route):
+                    continue
+            except Exception:
+                pass
             out.append((new_route, f'{module_full_path}.urls', 'core'))
         _collect_core_url_entries(module_path, module_full_path, new_route, out)
 

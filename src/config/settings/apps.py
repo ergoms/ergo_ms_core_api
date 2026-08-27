@@ -5,16 +5,16 @@
 сохраняется в файл и пересчитывается только при изменении core/ или modules/.
 """
 
-from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
 from src.config.deploy import is_development
 from src.config.env import env
+from src.core.utils.auto_api.discovered_apps_cache import get_discovered_apps
+from src.core.utils.module_registry import is_slim_module_process
 
 ALL_MODULES = get_discovered_apps(use_cache=True)
+_SLIM_MODULE = is_slim_module_process()
 
-# Определяем список установленных приложений
 INSTALLED_APPS = ALL_MODULES + [
     'daphne',
-    'channels',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -26,8 +26,11 @@ INSTALLED_APPS = ALL_MODULES + [
     
     'corsheaders',
     'drf_spectacular',
-    'django_celery_beat',
 ]
+
+if not _SLIM_MODULE:
+    INSTALLED_APPS.insert(1, 'channels')
+    INSTALLED_APPS.append('django_celery_beat')
 
 if is_development():
     INSTALLED_APPS.append('django_extensions')
