@@ -5,6 +5,7 @@
 - celery_beat_schedule.bin — CeleryBeatModuleManager (schedule)
 """
 import logging
+import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -99,6 +100,14 @@ BEAT_SCHEDULE_CACHE_FILE = CACHE_DIR / 'celery_beat_schedule.bin'
 WORKER_CACHE_VERSION = 2
 
 
+def process_scoped_celery_cache() -> bool:
+    """Процесс модуля не должен затирать общий кэш routes/schedule."""
+    if os.environ.get('PROCESS_MODULES', '').strip():
+        return True
+    role = os.environ.get('ERGO_PROCESS_ROLE', '').strip().lower()
+    return role.startswith('module:')
+
+
 def _get_fingerprint() -> Dict[str, float]:
     """Fingerprint на основе mtime конфигурационных файлов модулей."""
     from src.core.utils.cache_fingerprint import get_celery_config_fingerprint
@@ -117,6 +126,9 @@ def write_routes_queues_cache(
     modules: Optional[list] = None,
 ) -> None:
     """Сохраняет маршруты, очереди и поля worker в файловый кэш."""
+    if process_scoped_celery_cache():
+        logger.debug('celery_routes_queues.bin: пропуск записи из процесса модуля')
+        return
     from src.core.utils.cache_io import write_bin_cache
 
     data = {
@@ -181,6 +193,9 @@ def read_routes_queues_cache(
 
 def write_beat_schedule_cache(schedule: Dict[str, Dict[str, Any]]) -> None:
     """Сохраняет расписание Beat в файловый кэш с fingerprint."""
+    if process_scoped_celery_cache():
+        logger.debug('celery_beat_schedule.bin: пропуск записи из процесса модуля')
+        return
     from src.core.utils.cache_io import write_bin_cache
 
     serialized = _serialize_schedule(schedule)

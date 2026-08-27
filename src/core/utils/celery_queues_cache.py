@@ -23,6 +23,11 @@ def _get_modules_config_mtime() -> float:
 
 def write_queues_cache(queues: Dict[str, Any]) -> None:
     """Записывает список очередей и mtime для валидации скриптами запуска."""
+    from src.core.utils.celery_config_cache import process_scoped_celery_cache
+
+    if process_scoped_celery_cache():
+        logger.debug('celery_queues.bin: пропуск записи из процесса модуля')
+        return
     from src.core.utils.cache_io import write_bin_cache
 
     queue_names = sorted(queues.keys()) if queues else []

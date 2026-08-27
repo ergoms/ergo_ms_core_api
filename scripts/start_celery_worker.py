@@ -163,11 +163,7 @@ def main() -> int:
     opts = parser.parse_args()
 
     module_name = (opts.module or '').strip()
-    if module_name:
-        os.environ['ERGO_PROCESS_ROLE'] = f'module:{module_name}'
-        os.environ['PROCESS_MODULES'] = module_name
-        if not opts.queues and not opts.worker:
-            opts.queues = module_name
+    user_queues = bool(opts.queues)
 
     if opts.verbose:
         os.environ['ERGO_CELERY_STARTUP_VERBOSE'] = 'true'
@@ -179,6 +175,22 @@ def main() -> int:
     default_pool = defaults.get('pool', 'threads')
     log.info('Подготовка Celery worker: читаем кэш очередей (warmup_celery при необходимости)...')
     all_queues = ensure_caches(verbose=opts.verbose)
+    if module_name:
+        os.environ['ERGO_PROCESS_ROLE'] = f'module:{module_name}'
+        os.environ['PROCESS_MODULES'] = module_name
+    if module_name and not user_queues and not opts.worker:
+        from src.core.utils.celery.module_queues import queues_for_module
+        from src.core.utils.celery_config_cache import read_routes_queues_cache
+
+        cached = read_routes_queues_cache(
+            validate_fingerprint=False,
+            require_worker_fields=False,
+        ) or {}
+        module_queues = queues_for_module(
+            module_name,
+            routes=cached.get('routes') or {},
+        )
+        opts.queues = ','.join(module_queues or [module_name])
 
     if opts.list_workers:
         if not workers_config:
@@ -241,7 +253,7 @@ def main() -> int:
     elif queues_opt or hostname_opt:
         if queues_opt:
             queue_list = [q.strip() for q in queues_opt.split(',')]
-            if all_queues:
+            if all_queues and not module_name:
                 invalid = set(queue_list) - set(all_queues) - {'default'}
                 if invalid:
                     from src.core.utils.celery.startup_format import format_name_list
@@ -252,7 +264,9 @@ def main() -> int:
             queues = queue_list
         else:
             queues = resolve_queues(None, all_queues)
-        hostname = hostname_opt or f"worker@{'_'.join(queues or ['all'])[:50]}"
+        hostname = hostname_opt or (
+            f'worker@{module_name}' if module_name else f"worker@{'_'.join(queues or ['all'])[:50]}"
+        )
         concurrency = concurrency_opt
         loglevel = loglevel_opt
         pool = pool_opt
