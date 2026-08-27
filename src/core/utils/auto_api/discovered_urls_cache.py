@@ -181,6 +181,24 @@ def _entries_to_pairs(entries) -> List[Tuple[str, str]]:
     return [(route, dotted) for route, dotted, _source in entries]
 
 
+def iter_top_level_module_prefixes(
+    entries: List[Tuple[str, str]] | None = None,
+) -> List[str]:
+    """Имена модулей из discovered URL (первый сегмент ``<name>/…``)."""
+    pairs = entries if entries is not None else get_discovered_url_entries()
+    seen: set[str] = set()
+    names: List[str] = []
+    for route, dotted in pairs:
+        if not str(dotted).startswith('modules.'):
+            continue
+        name = str(route).strip('/').split('/')[0]
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
 def get_discovered_url_entries() -> List[Tuple[str, str]]:
     """
     Список (route, dotted_module) для path(route, include(dotted)).

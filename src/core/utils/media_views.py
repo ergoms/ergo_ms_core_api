@@ -11,6 +11,7 @@ class MediaUploadTokenView(APIView):
     Генерирует upload-токен для загрузки файла в media_api.
 
     POST /api/utils/media/upload-token/
+    На процессе модуля также: POST /api/<name>/media/upload-token/
     Body: {target_dir, max_size?, allowed_types?}
     Response: {upload_url, token}
 
