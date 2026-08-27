@@ -310,8 +310,13 @@ class HttpTransport:
             return default
         try:
             return self._remote_call(base, name, args, kwargs)
-        except Exception:
-            logger.exception("Bridge HTTP call failed for '%s' via %s", name, base)
+        except Exception as exc:
+            status = getattr(getattr(exc, 'response', None), 'status_code', None)
+            if status == 429:
+                # Лимит на ядре — ожидаемо при jwt_claims на каждый запрос; не traceback.
+                logger.warning("Bridge HTTP call limited for '%s' via %s", name, base)
+            else:
+                logger.exception("Bridge HTTP call failed for '%s' via %s", name, base)
             return default
 
     def all(self, group: str) -> dict[str, Any]:

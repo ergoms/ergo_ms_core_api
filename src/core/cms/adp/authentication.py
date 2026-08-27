@@ -5,12 +5,25 @@ from __future__ import annotations
 from types import SimpleNamespace
 from uuid import UUID
 
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import APIException, AuthenticationFailed
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from src.core.cms.adp.services.jwt_claims_cache import (
+    drop_device_snapshot,
+    get_device_snapshot,
+    set_device_snapshot,
+)
 from src.core.cms.adp.services.session_devices import is_device_session_active
 from src.core.integrations import bridge
 from src.core.integrations.module_contracts import SESSION_DEVICE_ACTIVE
+
+
+class SessionCheckUnavailable(APIException):
+    """Мост ядра не ответил: это не отзыв сессии, клиент не должен выходить."""
+
+    status_code = 503
+    default_detail = 'Не удалось проверить сессию. Повторите запрос.'
+    default_code = 'session_check_unavailable'
 
 
 def _jwt_claims_mode() -> bool:
@@ -65,8 +78,9 @@ class DeviceBoundJWTAuthentication(JWTAuthentication):
 
     MODULE_AUTH_MODE=orm (по умолчанию) — пользователь из БД ядра.
     MODULE_AUTH_MODE=jwt_claims — principal из claims, устройство и активность
-    пользователя только через мост ``session.device_active``. Без ответа моста —
-    отказ, без запасного чтения ORM.
+    пользователя через мост ``session.device_active``. Успешный снимок кэшируется,
+    чтобы не ходить на ядро на каждый запрос. Обрыв моста (429/сеть) — 503,
+    не «сессия завершена». False от ядра — отзыв, без запасного ORM.
     """
 
     def authenticate(self, request):
@@ -97,18 +111,33 @@ class DeviceBoundJWTAuthentication(JWTAuthentication):
         if user_id is None and not public_id:
             raise AuthenticationFailed('Сессия завершена. Войдите снова.')
 
-        snapshot = _device_active_snapshot(
-            bridge.call(
-                SESSION_DEVICE_ACTIVE,
-                user_id=user_id,
-                device_id=device_id,
-                user_public_id=str(public_id) if public_id else '',
-                default=None,
-            )
+        public_id_str = str(public_id) if public_id else ''
+        cached = get_device_snapshot(user_id, device_id, public_id_str)
+        if isinstance(cached, dict):
+            return self._principal_from_snapshot(validated_token, user_id, public_id, cached)
+
+        raw = bridge.call(
+            SESSION_DEVICE_ACTIVE,
+            user_id=user_id,
+            device_id=device_id,
+            user_public_id=public_id_str,
+            default=None,
         )
-        if snapshot is None:
+        snapshot = _device_active_snapshot(raw) if raw is not None else None
+        if snapshot is not None:
+            set_device_snapshot(user_id, device_id, public_id_str, snapshot)
+            return self._principal_from_snapshot(validated_token, user_id, public_id, snapshot)
+
+        if raw is False or (isinstance(raw, dict) and not raw.get('active', True)):
+            drop_device_snapshot(user_id, device_id, public_id_str)
             raise AuthenticationFailed('Сессия завершена. Войдите снова.')
 
+        stale = get_device_snapshot(user_id, device_id, public_id_str)
+        if isinstance(stale, dict):
+            return self._principal_from_snapshot(validated_token, user_id, public_id, stale)
+        raise SessionCheckUnavailable()
+
+    def _principal_from_snapshot(self, validated_token, user_id, public_id, snapshot):
         pk = int(user_id) if user_id is not None else 0
         pid = _as_uuid(public_id) or _as_uuid(snapshot.get('user_public_id'))
         username = str(validated_token.get('username') or snapshot.get('username') or '')

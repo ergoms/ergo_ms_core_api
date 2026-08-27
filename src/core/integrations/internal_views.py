@@ -20,8 +20,22 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from src.core.integrations import bridge
+from src.core.integrations.module_contracts import (
+    ADP_CHECK_API_ACCESS,
+    ADP_CHECK_MODULE_PERMISSION,
+    ADP_IS_ADMIN,
+    SESSION_DEVICE_ACTIVE,
+)
 from src.core.integrations.transports.bind_kwargs import kwargs_accepted_by_handler
 from src.core.utils.request_id import request_id_from_meta
+
+# jwt_claims на каждом запросе модуля: не режем служебный вход лимитом общего моста.
+_RATE_EXEMPT_OPS = frozenset({
+    SESSION_DEVICE_ACTIVE,
+    ADP_IS_ADMIN,
+    ADP_CHECK_API_ACCESS,
+    ADP_CHECK_MODULE_PERMISSION,
+})
 
 logger = logging.getLogger('integrations.bridge.internal')
 
@@ -95,14 +109,28 @@ def _rate_limited(request: HttpRequest) -> bool:
             return True
         cache.incr(key)
     except Exception:
-        return True
+        # Сломанный кэш не должен глушить мост: токен уже проверен.
+        return False
     return False
+
+
+def _call_op_name(request: HttpRequest) -> str:
+    if request.method != 'POST':
+        return ''
+    try:
+        body = json.loads(request.body.decode('utf-8') or '{}')
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return ''
+    op = body.get('op')
+    return op if isinstance(op, str) else ''
 
 
 def _guard(request: HttpRequest):
     request_id_from_meta(request.META)
     if not _peer_allowed(request) or not _token_ok(request):
         return _unauthorized()
+    if _call_op_name(request) in _RATE_EXEMPT_OPS:
+        return None
     if _rate_limited(request):
         return JsonResponse({'detail': 'Too many requests'}, status=429)
     return None

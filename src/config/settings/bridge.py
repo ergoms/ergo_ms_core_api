@@ -42,7 +42,9 @@ BRIDGE_CORE_URL = env.str('BRIDGE_CORE_URL', default='').strip()
 BRIDGE_HTTP_TIMEOUT = env.float('BRIDGE_HTTP_TIMEOUT', default=10.0)
 BRIDGE_HTTP_RETRIES = env.int('BRIDGE_HTTP_RETRIES', default=2)
 BRIDGE_REDIS_DB = env.int('BRIDGE_REDIS_DB', default=4)
-BRIDGE_INTERNAL_RATE = env.str('BRIDGE_INTERNAL_RATE', default='60/minute')
+# jwt_claims: несколько процессов модуля с одного IP бьют session.device_active
+# на каждый запрос. 60/minute на ядре даёт 429 и ложный «сессия завершена».
+BRIDGE_INTERNAL_RATE = env.str('BRIDGE_INTERNAL_RATE', default='600/minute')
 
 # orm — пользователь из БД ядра; jwt_claims — principal из JWT (уровень 3)
 MODULE_AUTH_MODE = env.str('MODULE_AUTH_MODE', default='orm').strip().lower()

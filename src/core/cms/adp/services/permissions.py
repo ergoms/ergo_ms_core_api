@@ -240,7 +240,13 @@ class PermissionService:
         if not user or not getattr(user, 'is_authenticated', False):
             return False
         if jwt_claims_on_module():
-            return remote_is_admin(user)
+            req_cache = get_request_permission_cache()
+            cache_key = f'is_global_admin:{getattr(user, "pk", None)}'
+            if cache_key in req_cache:
+                return req_cache[cache_key]
+            result = remote_is_admin(user)
+            req_cache[cache_key] = result
+            return result
 
         if honor_preview:
             from src.core.cms.adp.dev_tools.preview import preview_suppresses_admin
@@ -517,7 +523,13 @@ class PermissionService:
         роль «Пользователь» без match → allow; иначе deny.
         """
         if jwt_claims_on_module():
-            return remote_check_api_access(user, api_path)
+            req_cache = get_request_permission_cache()
+            cache_key = f'api_access:{getattr(user, "pk", None)}:{api_path}'
+            if cache_key in req_cache:
+                return req_cache[cache_key]
+            result = remote_check_api_access(user, api_path)
+            req_cache[cache_key] = result
+            return result
         if PermissionService.is_admin(user):
             return True
 
@@ -759,12 +771,23 @@ class PermissionService:
             return True
 
         if jwt_claims_on_module():
-            return remote_check_module_permission(
+            from src.core.cms.adp.services.jwt_claims_cache import extra_fingerprint
+
+            req_cache = get_request_permission_cache()
+            cache_key = (
+                f'module_perm:{getattr(user, "pk", None)}:'
+                f'{module_name}:{permission_key}:{extra_fingerprint(kwargs)}'
+            )
+            if cache_key in req_cache:
+                return req_cache[cache_key]
+            result = remote_check_module_permission(
                 user,
                 module_name,
                 permission_key,
                 kwargs,
             )
+            req_cache[cache_key] = result
+            return result
 
         # Администраторы имеют доступ ко всему
         if PermissionService.is_admin(user):
