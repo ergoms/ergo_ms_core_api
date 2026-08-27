@@ -172,16 +172,18 @@ def media_api_public_base_url() -> str:
     """
     Публичный base URL для подписанных ссылок (/serve/, /upload/).
 
-    Приоритет: MEDIA_API_URL → при nginx тот же origin, что SPA (/serve/ в ergo_ms.conf)
+    Приоритет: MEDIA_API_URL (CDN) → за nginx пустая строка (тот же origin, что SPA)
     → иначе MEDIA_API_BIND_PORT на localhost.
+
+    Не подставляем NGINX_PUBLIC_HOST: на хосте модулей это IP пира, и браузер
+    уходит с публичного сайта на ``http://<ip>/``.
     """
     explicit = env.str('MEDIA_API_URL', default='').strip()
     if explicit:
         return explicit.rstrip('/')
 
     if nginx_enabled():
-        # NGINX_LISTEN_PORT часто :80 с редиректом на HTTPS; для ссылок — публичный TLS-origin.
-        return nginx_public_base_url()
+        return ''
 
     host = effective_media_public_host('localhost')
     port = effective_media_public_port('8003')

@@ -47,14 +47,15 @@ def get_signed_media_url(
         as_attachment: если True — media_api отдаёт Content-Disposition: attachment
 
     Returns:
-        Полный подписанный URL для media_api.
+        Подписанный URL для media_api (за nginx — относительный ``/serve/...``).
     """
     if expires_in is None:
         expires_in = getattr(settings, 'MEDIA_URL_EXPIRATION', 3600)
 
     signature, expires = sign_url(file_path, _get_secret_key(), expires_in)
     base_url = _get_media_base_url()
-    url = f"{base_url}/serve/{file_path}?signature={signature}&expires={expires}"
+    path = f"/serve/{file_path}?signature={signature}&expires={expires}"
+    url = f"{base_url}{path}" if base_url else path
     if as_attachment:
         url += '&download=1'
     return url
