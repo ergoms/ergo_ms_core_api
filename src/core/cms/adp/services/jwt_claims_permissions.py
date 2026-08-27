@@ -14,11 +14,20 @@ from src.core.integrations.module_contracts import (
 
 
 def jwt_claims_on_module() -> bool:
-    mode = (getattr(settings, 'MODULE_AUTH_MODE', 'orm') or 'orm').strip().lower()
-    if mode != 'jwt_claims':
-        return False
+    """Процесс модуля спрашивает роль и права на ядре, не в своей cms_adp_*.
+
+    ``MODULE_AUTH_MODE=jwt_claims`` — всегда. ``orm`` — тоже, если задан
+    ``BRIDGE_CORE_URL``: иначе модуль читает пустые таблицы и все пользователи
+    выглядят одинаково. Без URL ядра оставляем локальный ORM, чтобы не
+    зациклить ``adp.check_*`` на свой же процесс.
+    """
     role = (getattr(settings, 'ERGO_PROCESS_ROLE', '') or '').strip().lower()
-    return role.startswith('module:')
+    if not role.startswith('module:'):
+        return False
+    mode = (getattr(settings, 'MODULE_AUTH_MODE', 'orm') or 'orm').strip().lower()
+    if mode == 'jwt_claims':
+        return True
+    return bool((getattr(settings, 'BRIDGE_CORE_URL', '') or '').strip())
 
 
 def user_pk(user) -> int | None:

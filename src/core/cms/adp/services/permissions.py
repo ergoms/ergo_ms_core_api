@@ -25,6 +25,7 @@ from src.core.integrations.module_contracts import (
     ADP_SESSION_SCOPED_DENIED_PERMISSIONS,
     ADP_SESSION_SCOPED_MODULE_PERMISSIONS,
 )
+from src.core.integrations.session_context import merge_session_scope_kwargs
 
 
 class RoleAssignmentError(Exception):
@@ -769,6 +770,8 @@ class PermissionService:
             return False
         if override is True:
             return True
+
+        kwargs = merge_session_scope_kwargs(kwargs)
 
         if jwt_claims_on_module():
             from src.core.cms.adp.services.jwt_claims_cache import extra_fingerprint
