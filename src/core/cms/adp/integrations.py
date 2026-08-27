@@ -36,6 +36,8 @@ def _session_device_active(*, user_id=None, device_id=None, user_public_id=None,
     if not is_device_session_active(user, device_id):
         return False
     # Снимок для jwt_claims: в токене старого логина может не быть user_public_id.
+    from src.core.cms.adp.services.permissions import PermissionService
+
     public_id = getattr(user, 'public_id', None)
     return {
         'active': True,
@@ -43,6 +45,7 @@ def _session_device_active(*, user_id=None, device_id=None, user_public_id=None,
         'username': str(getattr(user, 'username', '') or ''),
         'is_superuser': bool(getattr(user, 'is_superuser', False)),
         'is_staff': bool(getattr(user, 'is_staff', False)),
+        'is_admin': bool(PermissionService.is_admin(user)),
     }
 
 

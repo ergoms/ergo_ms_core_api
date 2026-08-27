@@ -245,7 +245,11 @@ class PermissionService:
             cache_key = f'is_global_admin:{getattr(user, "pk", None)}'
             if cache_key in req_cache:
                 return req_cache[cache_key]
-            result = remote_is_admin(user)
+            # JwtPrincipal: is_admin уже из снимка session.device_active на ядре.
+            if hasattr(user, 'is_admin'):
+                result = bool(getattr(user, 'is_admin', False))
+            else:
+                result = remote_is_admin(user)
             req_cache[cache_key] = result
             return result
 

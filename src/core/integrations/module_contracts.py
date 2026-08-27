@@ -61,7 +61,7 @@ CORE_BULK_USER_CREATE = 'core.bulk_user_create'
 # Провайдер возвращает dict session-claims для JWT при логине (или None).
 SESSION_RESTORE_CLAIMS = 'session.restore_claims'
 # Проверка: устройство активно и пользователь is_active (MODULE_AUTH_MODE=jwt_claims).
-# Ответ: False или {'active': True, 'user_public_id', 'username', 'is_superuser', 'is_staff'}.
+# Ответ: False или {'active', 'user_public_id', 'username', 'is_superuser', 'is_staff', 'is_admin'}.
 # Старый bool True остаётся истинным; снимок нужен, если в JWT нет user_public_id.
 SESSION_DEVICE_ACTIVE = 'session.device_active'
 

@@ -143,8 +143,15 @@ class DeviceBoundJWTAuthentication(JWTAuthentication):
         username = str(validated_token.get('username') or snapshot.get('username') or '')
         raw_super = validated_token.get('is_superuser')
         raw_staff = validated_token.get('is_staff')
+        raw_admin = validated_token.get('is_admin')
         is_superuser = bool(raw_super) if raw_super is not None else bool(snapshot.get('is_superuser'))
         is_staff = bool(raw_staff) if raw_staff is not None else bool(snapshot.get('is_staff'))
+        if raw_admin is not None:
+            is_admin = bool(raw_admin)
+        elif 'is_admin' in snapshot:
+            is_admin = bool(snapshot.get('is_admin'))
+        else:
+            is_admin = is_superuser
         return JwtPrincipal(
             id=pk,
             pk=pk,
@@ -152,4 +159,5 @@ class DeviceBoundJWTAuthentication(JWTAuthentication):
             username=username,
             is_superuser=is_superuser,
             is_staff=is_staff,
+            is_admin=is_admin,
         )
