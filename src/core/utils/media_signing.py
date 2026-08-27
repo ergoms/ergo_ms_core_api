@@ -145,6 +145,6 @@ def get_upload_info(
         rate=rate,
     )
     return {
-        'upload_url': media_api_public_upload_url(),
+        'upload_url': media_api_public_upload_url(target_dir),
         'token': token,
     }
