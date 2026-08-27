@@ -6,6 +6,7 @@ HMAC-логика — в core.shared.media_hmac; media_api реимпортир�
 from django.conf import settings
 
 from core.shared.media_hmac import create_upload_token, sign_url
+from src.config.nginx_runtime import media_api_public_upload_url
 
 from src.core.utils.media_upload_quota import cap_upload_rate, is_valid_quota_slug
 from src.core.utils.media_upload_validation import (
@@ -143,8 +144,7 @@ def get_upload_info(
         quota=quota,
         rate=rate,
     )
-    base_url = _get_media_base_url()
     return {
-        'upload_url': f"{base_url}/upload/",
+        'upload_url': media_api_public_upload_url(),
         'token': token,
     }

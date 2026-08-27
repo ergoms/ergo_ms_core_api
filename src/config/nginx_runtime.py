@@ -129,6 +129,21 @@ def effective_media_public_port(default: str = '8003') -> str:
     return env.str('MEDIA_API_BIND_PORT', default=default)
 
 
+def media_api_public_upload_url() -> str:
+    """URL для fetch загрузки из SPA.
+
+    За nginx страница и ``/upload/`` — один origin. Относительный путь не ломает
+    CSP ``connect-src 'self'``, если сайт открыли не тем хостом, что в
+    ``NGINX_PUBLIC_HOST``. Явный ``MEDIA_API_URL`` (CDN) — полный URL.
+    """
+    explicit = env.str('MEDIA_API_URL', default='').strip()
+    if explicit:
+        return f'{explicit.rstrip("/")}/upload/'
+    if nginx_enabled():
+        return '/upload/'
+    return f'{media_api_public_base_url()}/upload/'
+
+
 def media_api_public_base_url() -> str:
     """
     Публичный base URL для подписанных ссылок (/serve/, /upload/).
