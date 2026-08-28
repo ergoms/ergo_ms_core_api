@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
-from email.utils import formatdate, make_msgid, parseaddr
 from typing import Optional, Sequence, Tuple
-from urllib.parse import urlparse
 
-from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 
 from src.core.utils.smtp_errors import format_smtp_error, sanitize_email_delivery_message
 from src.core.utils.smtp_resolver import EMAIL_DISABLED_MESSAGE, is_email_enabled, resolve_connection_and_from
+from src.core.utils.transactional_email_headers import apply_transactional_email_headers
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +30,6 @@ def check_email_enabled() -> SendResult | None:
     if not is_email_enabled():
         return False, EMAIL_DISABLED_MESSAGE
     return None
-
-
-def _message_id_domain(from_email: str) -> str:
-    """Домен для Message-ID: совпадает с From / FRONTEND_BASE_URL, не hostname VPS."""
-    _name, addr = parseaddr(from_email or '')
-    if '@' in addr:
-        return addr.rsplit('@', 1)[-1].lower()
-    base = getattr(settings, 'FRONTEND_BASE_URL', '') or ''
-    host = urlparse(base).hostname
-    if host:
-        return host.lower()
-    return 'localhost'
 
 
 def _plain_to_simple_html(body: str) -> str:
@@ -106,12 +92,7 @@ def send_plain_email(
             connection=connection,
         )
         message.encoding = 'utf-8'
-        _addr_name, addr_email = parseaddr(from_email)
-        if addr_email:
-            message.reply_to = [addr_email]
-        # Иначе Django ставит Message-ID с FQDN VPS (*.twc1.net) — Mail.ru часто режет как spam.
-        message.extra_headers['Message-ID'] = make_msgid(domain=_message_id_domain(from_email))
-        message.extra_headers['Date'] = formatdate(localtime=True)
+        apply_transactional_email_headers(message, from_email=from_email)
         html = html_body if html_body is not None else _plain_to_simple_html(body)
         message.attach_alternative(html, 'text/html')
         message.send(fail_silently=False)
