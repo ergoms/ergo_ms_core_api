@@ -116,7 +116,6 @@ def _iter_ndjson_chunks(client: httpx.Client, response: httpx.Response) -> Itera
                     yield data['chunk']
         finally:
             response.close()
-            client.close()
 
     return chunks()
 
@@ -141,13 +140,33 @@ def _retries() -> int:
         return 2
 
 
+_client_lock = threading.Lock()
+_shared_client: httpx.Client | None = None
+
+
+def close_shared_http_client() -> None:
+    """Закрыть процессный клиент моста (тесты / смена настроек)."""
+    global _shared_client
+    with _client_lock:
+        client = _shared_client
+        _shared_client = None
+    if client is not None and not client.is_closed:
+        client.close()
+
+
 def _http_client(timeout: float | httpx.Timeout | None = None) -> httpx.Client:
+    # Один клиент на процесс: keep-alive между bridge.call, без сокета на каждый op.
     # trust_env=False: http_proxy/HTTP_PROXY не должны перехватывать
     # /internal/bridge/* на private LAN (иначе ReadTimeout через прокси).
-    return httpx.Client(
-        timeout=_timeout() if timeout is None else timeout,
-        trust_env=False,
-    )
+    global _shared_client
+    with _client_lock:
+        if _shared_client is None or _shared_client.is_closed:
+            _shared_client = httpx.Client(
+                timeout=_stream_timeout() if timeout is None else timeout,
+                trust_env=False,
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=40),
+            )
+        return _shared_client
 
 
 def _self_base_url() -> str | None:
@@ -391,7 +410,7 @@ class HttpTransport:
             'kwargs': _json_kwargs(kwargs),
         }
         url = f'{base}/internal/bridge/call'
-        client = _http_client(timeout=_stream_timeout())
+        client = _http_client()
         response = None
         try:
             response = _http_send(
@@ -413,40 +432,36 @@ class HttpTransport:
         except Exception:
             if response is not None:
                 response.close()
-            client.close()
             raise
         response.close()
-        client.close()
         if isinstance(data, dict) and 'result' in data:
             return data['result']
         return data
 
     def _remote_has(self, base: str, name: str) -> bool:
         url = f'{base}/internal/bridge/has'
-        with _http_client() as client:
-            response = _http_send(
-                client,
-                'GET',
-                url,
-                params={'op': name},
-                headers=self._headers(base),
-            )
-            response.raise_for_status()
-            data = response.json()
+        response = _http_send(
+            _http_client(),
+            'GET',
+            url,
+            params={'op': name},
+            headers=self._headers(base),
+        )
+        response.raise_for_status()
+        data = response.json()
         return bool(data.get('has')) if isinstance(data, dict) else False
 
     def _remote_all(self, base: str, group: str) -> dict[str, Any]:
         url = f'{base}/internal/bridge/all'
-        with _http_client() as client:
-            response = _http_send(
-                client,
-                'GET',
-                url,
-                params={'group': group},
-                headers=self._headers(base),
-            )
-            response.raise_for_status()
-            data = response.json()
+        response = _http_send(
+            _http_client(),
+            'GET',
+            url,
+            params={'group': group},
+            headers=self._headers(base),
+        )
+        response.raise_for_status()
+        data = response.json()
         if isinstance(data, dict) and isinstance(data.get('providers'), dict):
             return data['providers']
         if isinstance(data, dict):

@@ -527,6 +527,8 @@ class PermissionService:
         Семантика как у check_url_access: admin → allow; match по priority;
         роль «Пользователь» без match → allow; иначе deny.
         """
+        if PermissionService.is_admin(user):
+            return True
         if jwt_claims_on_module():
             req_cache = get_request_permission_cache()
             cache_key = f'api_access:{getattr(user, "pk", None)}:{api_path}'
@@ -535,8 +537,6 @@ class PermissionService:
             result = remote_check_api_access(user, api_path)
             req_cache[cache_key] = result
             return result
-        if PermissionService.is_admin(user):
-            return True
 
         user_role = PermissionService.get_user_role(user)
         if not user_role:
@@ -777,6 +777,9 @@ class PermissionService:
 
         kwargs = merge_session_scope_kwargs(kwargs)
 
+        if PermissionService.is_admin(user):
+            return True
+
         if jwt_claims_on_module():
             from src.core.cms.adp.services.jwt_claims_cache import extra_fingerprint
 
@@ -795,10 +798,6 @@ class PermissionService:
             )
             req_cache[cache_key] = result
             return result
-
-        # Администраторы имеют доступ ко всему
-        if PermissionService.is_admin(user):
-            return True
 
         # Вызываем подписчиков события 'adp.permission_check'.
         # Подписчики модулей добавляют контекстную логику.
