@@ -84,6 +84,7 @@ REST_FRAMEWORK = {
         'login': THROTTLE_RATES_LOGIN,
         'token_refresh': THROTTLE_RATES_TOKEN_REFRESH,
     },
+    'DEFAULT_SCHEMA_CLASS': 'src.core.utils.swagger.inspectors.UniqueRefNameAutoSchema',
 }
 
 # Всегда синхронизируем: иначе после reload view видит новый scope,
@@ -110,6 +111,9 @@ from src.config.deploy import get_deploy_type, is_development
 
 DEPLOY_TYPE = get_deploy_type()
 IS_DEVELOPMENT = is_development()
+
+# Overlay прав глобального админа (глазик). В production всегда выключен.
+DEV_TOOLS_ENABLED = bool(env.bool('ERGO_DEV_TOOLS', default=False) and IS_DEVELOPMENT)
 
 # Ограничение срока жизни JWT (true/false, не зависит от API_DEPLOY_TYPE).
 # true  — используются API_ACCESS_TOKEN_LIFETIME и API_REFRESH_TOKEN_LIFETIME

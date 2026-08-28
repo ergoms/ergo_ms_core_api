@@ -6,6 +6,7 @@ from django.conf import settings
 
 from src.core.cms.adp.ws_auth import user_from_jwt_token
 from src.core.utils.maintenance import is_maintenance_enabled
+from src.core.realtime.transport import is_websocket_transport
 from src.core.realtime.envelope import (
     WS_AUTH_EVENT,
     WS_AUTH_OK_EVENT,
@@ -18,6 +19,7 @@ logger = logging.getLogger('core.cms.adp')
 
 WS_AUTH_TIMEOUT_SEC = 10
 WS_AUTH_CLOSE_UNAUTHORIZED = 4401
+WS_CLOSE_TRANSPORT_DISABLED = 4404
 WS_CLOSE_MESSAGE_TOO_BIG = 1009
 
 
@@ -49,6 +51,9 @@ class JwtMessageAuthConsumer(AsyncJsonWebsocketConsumer):
     _auth_timeout_task: asyncio.Task | None = None
 
     async def connect(self):
+        if not is_websocket_transport():
+            await self.close(code=WS_CLOSE_TRANSPORT_DISABLED)
+            return
         if is_maintenance_enabled():
             return
         self.ws_user = None

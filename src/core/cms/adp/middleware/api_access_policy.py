@@ -29,6 +29,7 @@ _EXEMPT_PREFIXES = (
     '/api/cms/adp/registration-settings/',
     '/api/cms/adp/invitations/validate/',
     '/api/cms/adp/profile-settings/',
+    '/api/cms/adp/dev-tools/',
     '/api/system/ready/',
     '/api/system/maintenance-status/',
 )
@@ -60,7 +61,9 @@ def _is_exempt(path: str) -> bool:
         if path == prefix.rstrip('/') or path.startswith(prefix):
             return True
     # Swagger / ReDoc под /api/ (если есть)
-    if path.startswith('/api/swagger') or path.startswith('/api/redoc'):
+    if path.startswith('/api/swagger') or path.startswith('/api/redoc') or path.startswith('/api/schema'):
+        return True
+    if path.startswith('/swagger') or path.startswith('/redoc'):
         return True
     return False
 
@@ -88,6 +91,9 @@ def _resolve_authenticated_user(request):
 
     if not result:
         return None
+    from src.core.cms.adp.authentication import REQUEST_JWT_AUTH_ATTR
+
+    setattr(request, REQUEST_JWT_AUTH_ATTR, result)
     return result[0]
 
 

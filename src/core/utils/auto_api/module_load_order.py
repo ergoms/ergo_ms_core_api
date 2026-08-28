@@ -26,12 +26,22 @@ from src.core.utils.auto_api.module_integrations import (
 logger = logging.getLogger('utils')
 
 
-def _microservice_peer_names() -> frozenset[str]:
-    """Имена модулей из MICROSERVICE_MODULES (доступны в другом процессе через мост)."""
+def _remote_peer_names() -> frozenset[str]:
+    """Модули в другом процессе: MICROSERVICE_MODULES и ключи BRIDGE_SERVICE_URLS."""
     import os
 
+    names: set[str] = set()
     raw = os.environ.get('MICROSERVICE_MODULES', '') or ''
-    return frozenset(m.strip() for m in raw.split(',') if m.strip())
+    names.update(item.strip() for item in raw.split(',') if item.strip())
+    urls = os.environ.get('BRIDGE_SERVICE_URLS', '') or ''
+    for part in urls.split(','):
+        part = part.strip()
+        if not part or '=' not in part:
+            continue
+        name = part.split('=', 1)[0].strip()
+        if name:
+            names.add(name)
+    return frozenset(names)
 
 
 def module_name_from_app(app_path: str) -> str | None:
@@ -61,34 +71,52 @@ def _topo_sort_modules(
     """
     Топологическая сортировка имён модулей (Kahn).
 
-    При равной готовности сохраняет исходный порядок (стабильность).
+    Нет обязательной зависимости — потребитель выкидывается из порядка
+    (WARNING), остальные модули остаются. При равной готовности сохраняет
+    исходный порядок (стабильность).
     """
     name_set = set(module_names)
-    indegree = {name: 0 for name in module_names}
-    edges: Dict[str, List[str]] = defaultdict(list)
+    remote_peers = _remote_peer_names()
+    excluded: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name in module_names:
+            if name in excluded:
+                continue
+            for dep in requires.get(name, ()):
+                if dep in remote_peers:
+                    continue
+                if dep in name_set and dep not in excluded:
+                    continue
+                reason = (
+                    'отключён или отсутствует в modules/'
+                    if dep not in name_set
+                    else 'сам пропущен из-за своей зависимости'
+                )
+                logger.warning(
+                    'Модуль %r пропущен: requires %r (%s). '
+                    'Остальные модули загружаются.',
+                    name,
+                    dep,
+                    reason,
+                )
+                excluded.add(name)
+                changed = True
+                break
 
-    remote_peers = _microservice_peer_names()
-    for name in module_names:
+    remaining = [name for name in module_names if name not in excluded]
+    name_set = set(remaining)
+    indegree = {name: 0 for name in remaining}
+    edges = defaultdict(list)
+    for name in remaining:
         for dep in requires.get(name, ()):
             if dep not in name_set:
-                # MODULE_RUNTIME=microservice: зависимость в другом HTTP-процессе.
-                if dep in remote_peers:
-                    logger.debug(
-                        'integrations.requires: %r → %r пропущен в этом процессе '
-                        '(peer из MICROSERVICE_MODULES)',
-                        name,
-                        dep,
-                    )
-                    continue
-                raise ImproperlyConfigured(
-                    f"Модуль {name!r} объявил requires в integrations.yaml: "
-                    f"зависимость {dep!r} не найдена среди установленных модулей "
-                    f"(отключена в DISABLED_MODULES или отсутствует в modules/)."
-                )
+                continue
             edges[dep].append(name)
             indegree[name] += 1
 
-    queue = deque([name for name in module_names if indegree[name] == 0])
+    queue = deque([name for name in remaining if indegree[name] == 0])
     ordered: List[str] = []
 
     while queue:
@@ -99,8 +127,8 @@ def _topo_sort_modules(
             if indegree[child] == 0:
                 queue.append(child)
 
-    if len(ordered) != len(module_names):
-        leftover = [name for name in module_names if name not in ordered]
+    if len(ordered) != len(remaining):
+        leftover = [name for name in remaining if name not in ordered]
         cycle_hint = ', '.join(leftover)
         raise ImproperlyConfigured(
             f"Цикл в integrations.yaml requires между модулями: {cycle_hint}. "

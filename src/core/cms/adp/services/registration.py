@@ -84,7 +84,7 @@ class RegistrationService:
     @staticmethod
     def build_invitation_url(token: str) -> str:
         base_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:8001').rstrip('/')
-        return f'{base_url}/register?invite={token}'
+        return f'{base_url}/register#invite={token}'
 
     @staticmethod
     def generate_token() -> str:

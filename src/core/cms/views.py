@@ -4,8 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.request import Request
 
-from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
+from src.core.utils.swagger.yasg_compat import swagger_auto_schema, openapi
 
 from django.contrib.auth import get_user_model
 

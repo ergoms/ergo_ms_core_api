@@ -8,8 +8,8 @@ from src.core.integrations.module_contracts import (
     MENU_PREPARE_VISIBILITY,
 )
 
-# Синтетический хвост: deny `/module/**` скрывает весь модуль в меню,
-# даже если корневой `/module` сам по себе не матчится шаблоном.
+# Синтетический хвост: deny `/module/**` скрывает вложенные пути модуля в меню.
+# Корень `/module` проверяется отдельно — шаблон `/**` его тоже закрывает.
 _MODULE_DENY_PROBE_SUFFIX = '/.__menu_access__'
 
 

@@ -110,6 +110,11 @@ CELERY_BEAT_SCHEDULE['notifications-archive-stale-read'] = {
     'schedule': crontab(hour=4, minute=15),
 }
 
+CELERY_BEAT_SCHEDULE['integrations-flush-outbox'] = {
+    'task': 'core.integrations.flush_outbox',
+    'schedule': 30.0,
+}
+
 # Дополнительные настройки Beat из модулей
 CELERY_BEAT_ADDITIONAL_CONFIG = beat_module_manager.get_additional_beat_configs()
 

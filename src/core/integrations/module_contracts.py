@@ -24,6 +24,10 @@ NOTIFICATIONS_EVENT_DEFINITIONS_GROUP = 'notifications.event_definitions'
 NOTIFICATIONS_EMAIL_CONTEXT_GROUP = 'notifications.email_context'
 NOTIFICATIONS_EMAIL_TEMPLATES_GROUP = 'notifications.email_templates'
 
+# Политики частоты загрузок media_api: модуль декларирует prefix + класс квоты.
+# Ядро выбирает политику по target_dir; media_api считает по классу из токена.
+MEDIA_UPLOAD_QUOTA_POLICIES_GROUP = 'media.upload_quota_policies'
+
 # --- Ops (bridge.provide_op / call) ---
 
 NOTIFICATIONS_CREATE = 'notifications.create'
@@ -35,12 +39,19 @@ NOTIFICATIONS_FILTER_EVENTS_PREFIX = 'notifications.filter_events_for_user.'
 # --- Events (bridge.subscribe_to / emit / emit_first) ---
 
 ADP_PERMISSION_CHECK = 'adp.permission_check'
+# Процесс модуля (MODULE_AUTH_MODE=jwt_claims) не читает cms_adp_* у себя.
+ADP_IS_ADMIN = 'adp.is_admin'
+ADP_CHECK_API_ACCESS = 'adp.check_api_access'
+ADP_CHECK_MODULE_PERMISSION = 'adp.check_module_permission'
 # Подписчики возвращают iterable id RoleGroup, которые нельзя учитывать
 # в глобальной агрегации ModulePermission (session-scoped системные группы и т.п.).
 ADP_FILTER_GRANTED_ROLE_GROUP_IDS = 'adp.filter_granted_role_group_ids'
 # Подписчики возвращают list ModulePermission (или совместимых объектов)
 # для обогащения snapshot прав в контексте текущего session-scope.
 ADP_SESSION_SCOPED_MODULE_PERMISSIONS = 'adp.session_scoped_module_permissions'
+# Подписчики возвращают iterable пар (module_name, permission_key), которые
+# нужно вычесть из snapshot прав текущего session-scope.
+ADP_SESSION_SCOPED_DENIED_PERMISSIONS = 'adp.session_scoped_denied_permissions'
 AUDIT_CAN_READ = 'audit.can_read'
 AUDIT_RECORD = 'audit.record'
 
@@ -49,6 +60,10 @@ CORE_BULK_USER_CREATE = 'core.bulk_user_create'
 
 # Провайдер возвращает dict session-claims для JWT при логине (или None).
 SESSION_RESTORE_CLAIMS = 'session.restore_claims'
+# Проверка: устройство активно и пользователь is_active (MODULE_AUTH_MODE=jwt_claims).
+# Ответ: False или {'active', 'user_public_id', 'username', 'is_superuser', 'is_staff', 'is_admin'}.
+# Старый bool True остаётся истинным; снимок нужен, если в JWT нет user_public_id.
+SESSION_DEVICE_ACTIVE = 'session.device_active'
 
 MENU_PREPARE_VISIBILITY = 'menu.prepare_visibility'
 MENU_CAN_SEE_ITEM = 'menu.can_see_item'
@@ -62,4 +77,5 @@ CORE_BRIDGE_PREFIXES = (
     'session.',
     'menu.',
     'adp.',
+    'media.',
 )

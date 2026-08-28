@@ -5,6 +5,7 @@
 import os
 import subprocess
 import sys
+import traceback
 
 from typing import Optional
 
@@ -167,9 +168,13 @@ class PoetryCommand:
                 deploy_type = _get_deploy_type()
                 os.environ['DJANGO_SETTINGS_MODULE'] = deploy_type
 
-            from src.core.utils.django_cli import prepare_lean_schema_django
+            from src.core.utils.django_cli import (
+                prepare_celery_for_django,
+                prepare_lean_schema_django,
+            )
 
             prepare_lean_schema_django()
+            prepare_celery_for_django()
 
             import django
             from django.conf import settings
@@ -181,6 +186,9 @@ class PoetryCommand:
             return True
         except Exception as e:
             print(f"Ошибка: Не удалось инициализировать Django: {e}", file=sys.stderr)
+            if isinstance(e, SyntaxError) and e.filename:
+                print(f"  файл: {e.filename}:{e.lineno}", file=sys.stderr)
+            traceback.print_exc()
             return False
 
     def _init_test_settings(self):

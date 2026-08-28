@@ -49,7 +49,7 @@ ALLOWED_MODULE_PREFIXES = (
     'core.',
     'django',
     'rest_framework',
-    'drf_yasg',
+    'drf_spectacular',
     'celery',
     'channels',
     'daphne',

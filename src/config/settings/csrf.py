@@ -2,10 +2,10 @@
 CSRF_TRUSTED_ORIGINS — явный список origin'ов для запросов с cookie.
 
 Development: можно не задавать (пустой список).
-Production (и любой не-development режим): обязательно CSRF_TRUSTED_ORIGINS,
-иначе запуск прерывается (ImproperlyConfigured). Часто те же URL, что CORS_ALLOWED_ORIGINS.
-
-При nginx публичный origin прокси добавляется через effective_cors_origins.
+Production: если CSRF_TRUSTED_ORIGINS пуст, подставляется публичный origin nginx
+или FRONTEND_BASE_URL (как у CORS). Localhost-список разработки не используется.
+Если после этого список пуст — запуск прерывается (ImproperlyConfigured).
+Часто те же URL, что CORS_ALLOWED_ORIGINS.
 """
 
 from django.core.exceptions import ImproperlyConfigured
@@ -27,8 +27,10 @@ if _parsed:
 elif is_development():
     CSRF_TRUSTED_ORIGINS = []
 else:
-    raise ImproperlyConfigured(
-        'В production (и любом не-development режиме) задайте CSRF_TRUSTED_ORIGINS '
-        '(часто те же URL, что CORS_ALLOWED_ORIGINS). Пустой список допустим только '
-        'при ERGO_ENV=development.'
-    )
+    CSRF_TRUSTED_ORIGINS = effective_cors_origins([])
+    if not CSRF_TRUSTED_ORIGINS:
+        raise ImproperlyConfigured(
+            'В production (и любом не-development режиме) задайте CSRF_TRUSTED_ORIGINS '
+            '(часто те же URL, что CORS_ALLOWED_ORIGINS), либо FRONTEND_BASE_URL / '
+            'публичный origin nginx. Пустой список допустим только при ERGO_ENV=development.'
+        )

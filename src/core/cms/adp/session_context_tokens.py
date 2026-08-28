@@ -23,10 +23,17 @@ class ScopedSessionRefreshToken(RefreshToken):
 
     @classmethod
     def for_user_with_claims(cls, user, **claims):
+        from src.core.integrations.session_context import SESSION_CLAIM_KEYS_JWT
+
         token = cls.for_user(user)
+        keys: list[str] = []
         for key, value in claims.items():
-            if value is not None:
-                token[key] = value
+            if key == SESSION_CLAIM_KEYS_JWT or value is None:
+                continue
+            token[key] = value
+            keys.append(key)
+        if keys:
+            token[SESSION_CLAIM_KEYS_JWT] = keys
         return token
 
 
@@ -54,11 +61,16 @@ def create_scoped_session_tokens(
     )
 
     refresh = ScopedSessionRefreshToken.for_user_with_claims(user, **claims)
+    public_id = getattr(user, 'public_id', None)
+    if public_id is not None and 'user_public_id' not in refresh:
+        refresh['user_public_id'] = str(public_id)
 
     if refresh_lifetime:
         refresh.set_exp(lifetime=refresh_lifetime)
 
     access = refresh.access_token
+    if 'user_public_id' in refresh:
+        access['user_public_id'] = refresh['user_public_id']
 
     if access_lifetime:
         access.set_exp(lifetime=access_lifetime)

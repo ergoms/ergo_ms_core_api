@@ -10,6 +10,7 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
 
 from src.core.utils.mixins import SwaggerSafeMixin
+from src.core.utils.permissions import ObjectPermissionMixin
 
 from src.core.realtime.envelope import build_envelope
 from src.core.realtime.polling import apply_after_id
@@ -30,7 +31,7 @@ class NotificationPagination(LimitOffsetPagination):
     max_limit = 100
 
 
-class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
+class NotificationViewSet(ObjectPermissionMixin, SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
     """Инбокс уведомлений текущего пользователя.
 
     Список + действия:
@@ -96,6 +97,9 @@ class NotificationViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         qs = apply_after_id(qs, self.request)
 
         return qs
+
+    def check_object_permission(self, request, obj):
+        return getattr(obj, 'recipient_id', None) == getattr(request.user, 'pk', None)
 
     def _serialize(self, notification):
         return NotificationSerializer(notification).data

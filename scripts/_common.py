@@ -51,9 +51,10 @@ def get_bootstrap_logger() -> logging.Logger:
 
 
 def _bootstrap_project_env() -> None:
-    """Подгружает API_SECRET_KEY из .env до django.setup (для подписи кэша)."""
-    from src.core.utils.env_secret import bootstrap_api_secret_key
-    bootstrap_api_secret_key(start=SCRIPT_DIR)
+    """Записывает пустые секреты текущих режимов в .env / env/*.env до django.setup."""
+    from security.ensure_secret import ensure_mode_secrets_for_process
+
+    ensure_mode_secrets_for_process(PROJECT_ROOT)
 
 
 _bootstrap_project_env()
@@ -256,6 +257,19 @@ def ensure_caches(*, verbose: Optional[bool] = None) -> List[str]:
         return queues
     log.warning('Истекло время ожидания кэша, запуск без -Q (все очереди)')
     return []
+
+
+def exec_celery(cmd: List[str], cwd: str) -> int:
+    """Заменяет процесс на celery — systemd/NSSM держат уже worker/beat."""
+    from _replace_process import replace_current_process
+
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUTF8'] = '1'
+    project_root = str(PROJECT_ROOT)
+    existing = env.get('PYTHONPATH', '')
+    env['PYTHONPATH'] = project_root + (os.pathsep + existing if existing else '')
+    return replace_current_process(cmd, cwd=cwd, env=env)
 
 
 def run_celery_with_timing(

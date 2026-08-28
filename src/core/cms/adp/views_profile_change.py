@@ -4,8 +4,7 @@ API заявок на изменение ФИО пользователя.
 
 from django.utils.translation import gettext as _
 from src.core.search.mixins import parse_search_pagination
-from drf_yasg import openapi
-from drf_yasg.utils import swagger_auto_schema
+from src.core.utils.swagger.yasg_compat import swagger_auto_schema, openapi
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -20,7 +19,7 @@ from src.core.cms.adp.services.profile_change_request import ProfileChangeReques
 from src.core.cms.adp.services.profile_settings import ProfileSettingsService
 from src.core.cms.adp.services.admin_access import require_global_admin_response
 from src.core.audit.shortcuts import audit_log
-from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin
+from src.core.utils.base.base_views import BaseAPIView, BaseAPIViewAuthMixin, BaseAPIViewPublicMixin
 
 
 def _parse_pagination(request, default_page_size=12):
@@ -37,7 +36,7 @@ def _serialize_request(request_obj):
     return UserProfileChangeRequestSerializer(request_obj).data
 
 
-class ProfileSettingsView(BaseAPIView):
+class ProfileSettingsView(BaseAPIViewPublicMixin):
     """Публичные настройки редактирования профиля."""
 
     @swagger_auto_schema(

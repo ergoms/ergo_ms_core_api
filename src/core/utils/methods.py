@@ -129,7 +129,10 @@ def send_registration_invitation_email(
     base_url = getattr(settings, 'FRONTEND_BASE_URL', '').rstrip('/')
     site_host = base_url.removeprefix('https://').removeprefix('http://') or 'ERGOMS'
     register_url = f'{base_url}/register' if base_url else '/register'
-    token = (parse_qs(urlparse(invite_url or '').query).get('invite') or [''])[0].strip()
+    parsed = urlparse(invite_url or '')
+    token = (parse_qs(parsed.query).get('invite') or [''])[0].strip()
+    if not token and parsed.fragment:
+        token = (parse_qs(parsed.fragment).get('invite') or [''])[0].strip()
     ttl_label = '1 день' if ttl_days == 1 else f'{ttl_days} дн.'
 
     # Без URL вида /register?invite=<длинный_токен>: Mail.ru часто режет как phishing/spam,
