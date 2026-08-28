@@ -61,11 +61,11 @@ def remote_is_admin(user) -> bool:
         return bool(cached)
     result = bridge.call(ADP_IS_ADMIN, default=None, **kwargs)
     if result is None:
-        # Мост недоступен: флаги снимка session.device_active, не локальная cms_adp_*.
-        explicit = getattr(user, 'is_admin', None)
-        if explicit is not None:
-            return bool(explicit)
-        return bool(getattr(user, 'is_superuser', False))
+        # Мост недоступен: доверяем только явному True, не «нет флага = не админ».
+        return bool(
+            getattr(user, 'is_admin', False)
+            or getattr(user, 'is_superuser', False)
+        )
     value = bool(result)
     set_adp('admin', kwargs['user_id'], kwargs['user_public_id'], value)
     return value

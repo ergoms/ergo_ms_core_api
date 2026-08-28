@@ -245,9 +245,10 @@ class PermissionService:
             cache_key = f'is_global_admin:{getattr(user, "pk", None)}'
             if cache_key in req_cache:
                 return req_cache[cache_key]
-            # JwtPrincipal: is_admin уже из снимка session.device_active на ядре.
-            if hasattr(user, 'is_admin'):
-                result = bool(getattr(user, 'is_admin', False))
+            # Явный True из снимка/JWT — без HTTP. False не окончателен:
+            # в токене часто нет is_admin, а роль администратора живёт на ядре.
+            if getattr(user, 'is_admin', False):
+                result = True
             else:
                 result = remote_is_admin(user)
             req_cache[cache_key] = result
