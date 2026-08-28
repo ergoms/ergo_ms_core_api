@@ -6,7 +6,7 @@ HMAC-логика — в core.shared.media_hmac; media_api реимпортир�
 from django.conf import settings
 
 from core.shared.media_hmac import create_upload_token, sign_url
-from src.config.nginx_runtime import media_api_public_upload_url
+from src.config.nginx_runtime import media_api_public_base_url, media_api_public_upload_url
 
 from src.core.utils.media_upload_quota import cap_upload_rate, is_valid_quota_slug
 from src.core.utils.media_upload_validation import (
@@ -21,15 +21,13 @@ def _get_secret_key() -> str:
 
 
 def _get_media_base_url() -> str:
-    base_url = getattr(settings, 'MEDIA_API_PUBLIC_BASE_URL', '')
-    if base_url:
-        return base_url.rstrip('/')
-    host = getattr(settings, 'MEDIA_API_HOST', 'localhost')
-    port = getattr(settings, 'MEDIA_API_PORT', 8003)
-    protocol = getattr(settings, 'MEDIA_API_PROTOCOL', 'http')
-    if (protocol == 'http' and int(port) == 80) or (protocol == 'https' and int(port) == 443):
-        return f"{protocol}://{host}"
-    return f"{protocol}://{host}:{port}"
+    # Пустая строка за nginx — тот же origin, что SPA. Не подставлять
+    # MEDIA_API_HOST / NGINX_PUBLIC_HOST: на хосте модулей это IP пира,
+    # и браузер упирается в connect-src 'self'.
+    base_url = getattr(settings, 'MEDIA_API_PUBLIC_BASE_URL', None)
+    if base_url is not None:
+        return str(base_url).rstrip('/')
+    return media_api_public_base_url()
 
 
 def get_signed_media_url(
