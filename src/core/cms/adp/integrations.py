@@ -55,7 +55,8 @@ def _adp_is_admin(*, user_id=None, user_public_id=None, **_):
 
     user = _resolve_user(user_id=user_id, user_public_id=user_public_id)
     if user is None:
-        return False
+        # Не «обычный пользователь»: вызывающий не должен кэшировать отказ.
+        return None
     return bool(PermissionService.is_admin(user))
 
 

@@ -63,6 +63,7 @@ SESSION_RESTORE_CLAIMS = 'session.restore_claims'
 # Проверка: устройство активно и пользователь is_active (MODULE_AUTH_MODE=jwt_claims).
 # Ответ: False или {'active', 'user_public_id', 'username', 'is_superuser', 'is_staff', 'is_admin'}.
 # Старый bool True остаётся истинным; снимок нужен, если в JWT нет user_public_id.
+# is_admin в JWT кладёт ядро (jwt_platform_claims); процесс модуля ему доверяет.
 SESSION_DEVICE_ACTIVE = 'session.device_active'
 
 MENU_PREPARE_VISIBILITY = 'menu.prepare_visibility'

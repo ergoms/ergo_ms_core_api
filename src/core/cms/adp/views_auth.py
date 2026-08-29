@@ -45,6 +45,7 @@ from src.core.cms.adp.services.session_devices import (
     bind_device_to_refresh_token,
 )
 from src.core.cms.adp.services.user_deletion import revoke_user_auth
+from src.core.cms.adp.services.jwt_platform_claims import attach_platform_auth_claims
 from src.core.cms.adp.session_context_tokens import ScopedSessionRefreshToken
 from src.core.integrations import bridge
 from src.core.integrations.module_contracts import SESSION_RESTORE_CLAIMS
@@ -471,17 +472,12 @@ class UserAuthorizationView(BaseAPIViewPublicMixin):
                     user,
                     **restore_claims,
                 )
-                public_id = getattr(user, 'public_id', None)
-                if public_id is not None:
-                    refresh['user_public_id'] = str(public_id)
-                refresh['username'] = user.get_username()
+                attach_platform_auth_claims(refresh, user)
                 refresh.set_exp(lifetime=refresh_lifetime)
 
                 access_token = refresh.access_token
                 access_token.set_exp(lifetime=access_lifetime)
-                if 'user_public_id' in refresh:
-                    access_token['user_public_id'] = refresh['user_public_id']
-                access_token['username'] = refresh['username']
+                attach_platform_auth_claims(access_token, user)
                 bind_device_to_refresh_token(device, refresh)
                 attach_device_to_refresh_token(refresh, device)
                 attach_device_claim(access_token, device)

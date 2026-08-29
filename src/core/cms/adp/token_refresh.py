@@ -17,6 +17,10 @@ from src.core.cms.adp.auth_cookies import (
     set_refresh_cookie,
 )
 from src.core.cms.adp.models import UserDevice
+from src.core.cms.adp.services.jwt_platform_claims import (
+    attach_platform_auth_claims,
+    copy_platform_auth_claims,
+)
 from src.core.cms.adp.services.session_bootstrap import build_session_bootstrap_payload
 from src.core.cms.adp.services.session_devices import (
     bind_device_to_refresh_token,
@@ -40,6 +44,7 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
         refresh = RefreshToken(refresh_value)
         device_id = refresh.payload.get('device_id')
         user_id = refresh.payload.get('user_id')
+        user = None
 
         if device_id is None:
             raise ValidationError(_('Сессия завершена. Войдите снова.'))
@@ -77,12 +82,13 @@ class DeviceBoundTokenRefreshSerializer(TokenRefreshSerializer):
 
         access = active_refresh.access_token
         access['device_id'] = device_id
-        public_id = active_refresh.payload.get('user_public_id')
-        if public_id:
-            access['user_public_id'] = public_id
-        username = active_refresh.payload.get('username')
-        if username:
-            access['username'] = username
+        if user is not None:
+            attach_platform_auth_claims(active_refresh, user)
+            attach_platform_auth_claims(access, user)
+            if rotated_value:
+                data['refresh'] = str(active_refresh)
+        else:
+            copy_platform_auth_claims(active_refresh.payload, access)
         data['access'] = str(access)
         return data
 

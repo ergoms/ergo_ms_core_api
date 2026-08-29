@@ -245,9 +245,8 @@ class PermissionService:
             cache_key = f'is_global_admin:{getattr(user, "pk", None)}'
             if cache_key in req_cache:
                 return req_cache[cache_key]
-            # Явный True из снимка/JWT — без HTTP. False не окончателен:
-            # в токене часто нет is_admin, а роль администратора живёт на ядре.
-            if getattr(user, 'is_admin', False):
+            # JWT/снимок — источник правды. HTTP только для токенов без флагов.
+            if getattr(user, 'is_admin', False) or getattr(user, 'is_superuser', False):
                 result = True
             else:
                 result = remote_is_admin(user)

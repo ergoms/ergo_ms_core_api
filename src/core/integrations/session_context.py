@@ -38,6 +38,7 @@ _RESERVED_JWT_CLAIMS = frozenset({
     'device_id',
     'user_public_id',
     'username',
+    'is_admin',
     'is_superuser',
     'is_staff',
     'refresh_jti',

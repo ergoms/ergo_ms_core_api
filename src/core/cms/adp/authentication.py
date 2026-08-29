@@ -146,6 +146,7 @@ class DeviceBoundJWTAuthentication(JWTAuthentication):
         raw_admin = validated_token.get('is_admin')
         is_superuser = bool(raw_super) if raw_super is not None else bool(snapshot.get('is_superuser'))
         is_staff = bool(raw_staff) if raw_staff is not None else bool(snapshot.get('is_staff'))
+        # JWT важнее снимка: пустой кэш {} от старого bool True не должен затирать is_admin.
         if raw_admin is not None:
             is_admin = bool(raw_admin)
         elif 'is_admin' in snapshot:

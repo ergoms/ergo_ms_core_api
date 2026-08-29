@@ -23,6 +23,7 @@ from ..service_map import (
     iter_group_base_urls,
     resolve_op_base_url,
 )
+from src.core.integrations.module_contracts import SESSION_DEVICE_ACTIVE
 from src.core.utils.request_id import REQUEST_ID_HEADER, get_request_id
 
 logger = logging.getLogger('integrations.bridge.http')
@@ -188,15 +189,24 @@ def _same_base(left: str | None, right: str | None) -> bool:
     return left.rstrip('/') == right.rstrip('/')
 
 
-def _prefer_local_provider(base: str | None) -> bool:
+def _core_owned_identity_op(name: str) -> bool:
+    """Роль и сессия живут на ядре: процесс модуля не читает свою cms_adp_*."""
+    return name == SESSION_DEVICE_ACTIVE or name.startswith('adp.')
+
+
+def _prefer_local_provider(base: str | None, name: str = '') -> bool:
     """Локальный handler только если этот процесс — владелец op.
 
     На ``module:<name>`` ядро всё равно регистрирует ``session.device_active``
-    (и другие ops ядра): пользователи и устройства живут на ядре, не в БД модуля.
+    и ``adp.*``: пользователи и устройства живут на ядре, не в БД модуля.
     """
     role = (getattr(settings, 'ERGO_PROCESS_ROLE', '') or '').strip().lower()
     if not role.startswith('module:'):
         return True
+    if _core_owned_identity_op(name):
+        if not base:
+            return False
+        return _same_base(base, _self_base_url())
     if not base:
         return True
     return _same_base(base, _self_base_url())
@@ -322,7 +332,7 @@ class HttpTransport:
         with self._lock:
             handler = self._providers.get(name)
         base = resolve_op_base_url(name)
-        if handler is not None and _prefer_local_provider(base):
+        if handler is not None and _prefer_local_provider(base, name):
             return handler(*args, **kwargs_accepted_by_handler(handler, kwargs))
 
         if not base:

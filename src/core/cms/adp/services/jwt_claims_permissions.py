@@ -56,12 +56,17 @@ def _remote_kwargs(user) -> dict:
 
 def remote_is_admin(user) -> bool:
     kwargs = _remote_kwargs(user)
+    if not kwargs['user_id'] and not kwargs['user_public_id']:
+        return bool(
+            getattr(user, 'is_admin', False)
+            or getattr(user, 'is_superuser', False)
+        )
     cached = get_adp('admin', kwargs['user_id'], kwargs['user_public_id'])
     if cached is not None:
         return bool(cached)
     result = bridge.call(ADP_IS_ADMIN, default=None, **kwargs)
     if result is None:
-        # Мост недоступен: доверяем только явному True, не «нет флага = не админ».
+        # Мост недоступен или пользователь на ядре не найден: не кэшируем «не админ».
         return bool(
             getattr(user, 'is_admin', False)
             or getattr(user, 'is_superuser', False)

@@ -23,12 +23,14 @@ class ScopedSessionRefreshToken(RefreshToken):
 
     @classmethod
     def for_user_with_claims(cls, user, **claims):
+        from src.core.cms.adp.services.jwt_platform_claims import PLATFORM_AUTH_CLAIM_KEYS
         from src.core.integrations.session_context import SESSION_CLAIM_KEYS_JWT
 
         token = cls.for_user(user)
+        reserved = frozenset(PLATFORM_AUTH_CLAIM_KEYS)
         keys: list[str] = []
         for key, value in claims.items():
-            if key == SESSION_CLAIM_KEYS_JWT or value is None:
+            if key == SESSION_CLAIM_KEYS_JWT or value is None or key in reserved:
                 continue
             token[key] = value
             keys.append(key)
@@ -60,17 +62,16 @@ def create_scoped_session_tokens(
         bind_device_to_refresh_token,
     )
 
+    from src.core.cms.adp.services.jwt_platform_claims import attach_platform_auth_claims
+
     refresh = ScopedSessionRefreshToken.for_user_with_claims(user, **claims)
-    public_id = getattr(user, 'public_id', None)
-    if public_id is not None and 'user_public_id' not in refresh:
-        refresh['user_public_id'] = str(public_id)
+    attach_platform_auth_claims(refresh, user)
 
     if refresh_lifetime:
         refresh.set_exp(lifetime=refresh_lifetime)
 
     access = refresh.access_token
-    if 'user_public_id' in refresh:
-        access['user_public_id'] = refresh['user_public_id']
+    attach_platform_auth_claims(access, user)
 
     if access_lifetime:
         access.set_exp(lifetime=access_lifetime)
