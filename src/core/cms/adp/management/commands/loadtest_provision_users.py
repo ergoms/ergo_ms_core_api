@@ -163,6 +163,7 @@ class Command(BaseCommand):
                         'user_id': user.pk,
                         'index': index,
                         'access': tokens['access'],
+                        'password': password,
                     }
                 )
         return {
