@@ -57,6 +57,11 @@ AUDIT_RECORD = 'audit.record'
 
 CORE_USER_DELETE = 'core.user_delete'
 CORE_BULK_USER_CREATE = 'core.bulk_user_create'
+# Необязательная подмена темы и тела письма-приглашения на регистрацию.
+# Нет провайдера, None или неполный dict — ядро шлёт свой текст.
+# Ответ: {'subject': str, 'body': str, 'html_body'?: str}. Получателя и from
+# модуль не задаёт. Kwargs JSON-примитивы (см. registration_invitation_mail).
+CORE_COMPOSE_REGISTRATION_INVITATION = 'core.compose_registration_invitation'
 
 # Провайдер возвращает dict session-claims для JWT при логине (или None).
 SESSION_RESTORE_CLAIMS = 'session.restore_claims'

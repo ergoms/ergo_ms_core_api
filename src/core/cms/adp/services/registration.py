@@ -18,7 +18,9 @@ from django.db.models import Q
 from django.utils import timezone
 
 from src.core.cms.adp.models import RegistrationInvitation
-from src.core.utils.methods import send_registration_invitation_email
+from src.core.cms.adp.services.registration_invitation_mail import (
+    send_registration_invitation_email,
+)
 
 
 class RegistrationService:
