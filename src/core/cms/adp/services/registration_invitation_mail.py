@@ -2,27 +2,20 @@
 
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass
-from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from django.conf import settings
 
-from src.core.integrations import bridge
+from src.core.cms.adp.services.auth_mail_compose import (
+    ComposedAuthEmail,
+    compose_via_optional_op,
+)
 from src.core.integrations.module_contracts import CORE_COMPOSE_REGISTRATION_INVITATION
 from src.core.utils.plain_mail import send_plain_email
 
-logger = logging.getLogger(__name__)
-
 DEFAULT_INVITATION_SUBJECT = 'Приглашение к регистрации в ERGOMS'
 
-
-@dataclass(frozen=True)
-class ComposedInvitationEmail:
-    subject: str
-    body: str
-    html_body: str | None = None
+ComposedInvitationEmail = ComposedAuthEmail
 
 
 def _site_host() -> str:
@@ -85,22 +78,6 @@ def build_default_registration_invitation(
     return ComposedInvitationEmail(subject=DEFAULT_INVITATION_SUBJECT, body=body)
 
 
-def _normalize_override(raw: Any) -> ComposedInvitationEmail | None:
-    if not isinstance(raw, dict):
-        return None
-    subject = raw.get('subject')
-    body = raw.get('body')
-    if not isinstance(subject, str) or not isinstance(body, str):
-        return None
-    subject = subject.strip()
-    body = body.strip()
-    if not subject or not body:
-        return None
-    html_raw = raw.get('html_body')
-    html_body = html_raw.strip() if isinstance(html_raw, str) and html_raw.strip() else None
-    return ComposedInvitationEmail(subject=subject, body=body, html_body=html_body)
-
-
 def compose_registration_invitation_email(
     *,
     email: str,
@@ -117,32 +94,19 @@ def compose_registration_invitation_email(
         invite_url=invite_url,
         ttl_days=ttl_days,
     )
-    payload = {
-        'email': email,
-        'invite_url': invite_url or '',
-        'token': extract_invitation_token(invite_url),
-        'ttl_days': ttl_days,
-        'ttl_label': _ttl_label(ttl_days),
-        'register_url': _register_url(),
-        'site_host': _site_host(),
-        'default_subject': default.subject,
-        'default_body': default.body,
-    }
-    try:
-        override = bridge.call(
-            CORE_COMPOSE_REGISTRATION_INVITATION,
-            default=None,
-            **payload,
-        )
-    except Exception:
-        logger.exception(
-            'Провайдер %s упал, отправляется текст ядра',
-            CORE_COMPOSE_REGISTRATION_INVITATION,
-        )
-        return default
-
-    composed = _normalize_override(override)
-    return composed if composed is not None else default
+    return compose_via_optional_op(
+        CORE_COMPOSE_REGISTRATION_INVITATION,
+        default,
+        email=email,
+        invite_url=invite_url or '',
+        token=extract_invitation_token(invite_url),
+        ttl_days=ttl_days,
+        ttl_label=_ttl_label(ttl_days),
+        register_url=_register_url(),
+        site_host=_site_host(),
+        default_subject=default.subject,
+        default_body=default.body,
+    )
 
 
 def send_registration_invitation_email(

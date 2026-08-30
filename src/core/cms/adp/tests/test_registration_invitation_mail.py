@@ -29,7 +29,7 @@ class ComposeRegistrationInvitationTests(SimpleTestCase):
 
     def _compose_without_provider(self, **kwargs):
         with patch(
-            'src.core.cms.adp.services.registration_invitation_mail.bridge.call',
+            'src.core.cms.adp.services.auth_mail_compose.bridge.call',
             return_value=None,
         ):
             return self._compose(**kwargs)
@@ -61,7 +61,7 @@ class ComposeRegistrationInvitationTests(SimpleTestCase):
             'html_body': '<p>Свой HTML</p>',
         }
         with patch(
-            'src.core.cms.adp.services.registration_invitation_mail.bridge.call',
+            'src.core.cms.adp.services.auth_mail_compose.bridge.call',
             return_value=override,
         ) as mocked:
             composed = self._compose()
@@ -80,7 +80,7 @@ class ComposeRegistrationInvitationTests(SimpleTestCase):
 
     def test_none_from_provider_keeps_core_text(self):
         with patch(
-            'src.core.cms.adp.services.registration_invitation_mail.bridge.call',
+            'src.core.cms.adp.services.auth_mail_compose.bridge.call',
             return_value=None,
         ):
             composed = self._compose()
@@ -89,7 +89,7 @@ class ComposeRegistrationInvitationTests(SimpleTestCase):
 
     def test_incomplete_dict_keeps_core_text(self):
         with patch(
-            'src.core.cms.adp.services.registration_invitation_mail.bridge.call',
+            'src.core.cms.adp.services.auth_mail_compose.bridge.call',
             return_value={'subject': 'Только тема'},
         ):
             composed = self._compose()
@@ -97,7 +97,7 @@ class ComposeRegistrationInvitationTests(SimpleTestCase):
 
     def test_empty_body_keeps_core_text(self):
         with patch(
-            'src.core.cms.adp.services.registration_invitation_mail.bridge.call',
+            'src.core.cms.adp.services.auth_mail_compose.bridge.call',
             return_value={'subject': 'Тема', 'body': '   '},
         ):
             composed = self._compose()
@@ -105,7 +105,7 @@ class ComposeRegistrationInvitationTests(SimpleTestCase):
 
     def test_provider_exception_keeps_core_text(self):
         with patch(
-            'src.core.cms.adp.services.registration_invitation_mail.bridge.call',
+            'src.core.cms.adp.services.auth_mail_compose.bridge.call',
             side_effect=RuntimeError('composer failed'),
         ):
             composed = self._compose()
