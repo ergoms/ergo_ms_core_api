@@ -21,6 +21,10 @@ from src.core.integrations import bridge
 from src.core.integrations.module_contracts import (
     AUDIT_ACTION_DEFINITIONS_GROUP,
     AUDIT_SCOPE_DIMENSIONS_GROUP,
+    CORE_COMPOSE_ADMIN_PASSWORD_RESET,
+    CORE_COMPOSE_IMPORT_WELCOME_DEFAULTS,
+    CORE_COMPOSE_PASSWORD_RESET_CODE,
+    CORE_COMPOSE_REGISTRATION_INVITATION,
     MEDIA_UPLOAD_QUOTA_POLICIES_GROUP,
     NOTIFICATIONS_EMAIL_CONTEXT_GROUP,
     NOTIFICATIONS_EVENT_DEFINITIONS_GROUP,
@@ -361,14 +365,23 @@ def _validate_upload_quota_policies(errors: list[str]) -> None:
         _expect_callable(data.get('allows'), f'{path}.allows', errors, required=True)
 
 
-def _validate_session_restore_op(errors: list[str]) -> None:
+_OPTIONAL_CALLABLE_OPS = (
+    SESSION_RESTORE_CLAIMS,
+    CORE_COMPOSE_REGISTRATION_INVITATION,
+    CORE_COMPOSE_IMPORT_WELCOME_DEFAULTS,
+    CORE_COMPOSE_PASSWORD_RESET_CODE,
+    CORE_COMPOSE_ADMIN_PASSWORD_RESET,
+)
+
+
+def _validate_optional_callable_ops(errors: list[str]) -> None:
     # Только локальный реестр: has() по HTTP ретраит недоступный peer при django check.
-    handler = _resolve_single_provider(SESSION_RESTORE_CLAIMS)
-    if handler is not None and not callable(handler):
-        errors.append(
-            f'{SESSION_RESTORE_CLAIMS}: провайдер должен быть callable, '
-            f'получено {type(handler).__name__}'
-        )
+    for name in _OPTIONAL_CALLABLE_OPS:
+        handler = _resolve_single_provider(name)
+        if handler is not None and not callable(handler):
+            errors.append(
+                f'{name}: провайдер должен быть callable, получено {type(handler).__name__}'
+            )
 
 
 def _resolve_single_provider(name: str) -> Any | None:
@@ -385,7 +398,7 @@ def collect_contract_violations() -> list[str]:
     _validate_notification_events(errors)
     _validate_email_context(errors)
     _validate_upload_quota_policies(errors)
-    _validate_session_restore_op(errors)
+    _validate_optional_callable_ops(errors)
     return errors
 
 

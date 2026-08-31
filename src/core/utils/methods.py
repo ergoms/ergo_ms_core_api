@@ -4,17 +4,12 @@
 Этот файл содержит различные вспомогательные методы, которые используются в других частях модуля и приложения.
 """
 
-import logging
 import secrets
 import string
 from typing import Dict, Tuple, Optional
 
 from django.contrib.auth import password_validation
 from django.conf import settings
-
-from src.core.utils.plain_mail import send_plain_email
-
-logger = logging.getLogger(__name__)
 
 
 def parse_errors_to_dict(error_dict: Dict[str, list]) -> Dict[str, str]:
@@ -46,11 +41,9 @@ def parse_errors_to_dict(error_dict: Dict[str, list]) -> Dict[str, str]:
 
 def send_confirmation_email(email: str, code: str) -> Tuple[bool, Optional[str]]:
     """Отправляет email с кодом подтверждения."""
-    return send_plain_email(
-        subject='Код подтверждения ERGO MS',
-        body=f'Ваш код подтверждения: {code}',
-        recipients=[email],
-    )
+    from src.core.cms.adp.services.password_reset_mail import send_password_reset_code_email
+
+    return send_password_reset_code_email(email, code)
 
 
 def generate_secure_random_password(length: int = 16, max_attempts: int = 50) -> str:
@@ -94,73 +87,7 @@ def generate_secure_random_password(length: int = 16, max_attempts: int = 50) ->
 
 def send_admin_password_reset_notification(email: str) -> Tuple[bool, Optional[str]]:
     """Уведомление о сбросе пароля администратором (без пароля и без кода)."""
-    from src.core.cms.adp.services.password_reset import PasswordResetService
+    from src.core.cms.adp.services.password_reset_mail import send_admin_password_reset_email
 
-    if PasswordResetService.is_enabled():
-        recovery_hint = (
-            'Для восстановления доступа воспользуйтесь формой «Забыл пароль» '
-            'на странице входа в систему.'
-        )
-    else:
-        recovery_hint = (
-            'Для восстановления доступа обратитесь к администратору системы.'
-        )
-    message = (
-        'Администратор системы сбросил пароль вашей учётной записи.\n\n'
-        'Текущий пароль никому не известен — ни вам, ни администраторам — в целях безопасности.\n\n'
-        f'{recovery_hint}'
-    )
-    return send_plain_email(
-        subject='Сброс пароля администратором — ERGO MS',
-        body=message,
-        recipients=[email],
-        fail_log_level=logging.WARNING,
-    )
+    return send_admin_password_reset_email(email)
 
-
-def send_registration_invitation_email(
-    email: str,
-    invite_url: str,
-    ttl_days: int,
-) -> Tuple[bool, Optional[str]]:
-    """Отправляет email с ссылкой-приглашением на регистрацию."""
-    from urllib.parse import parse_qs, urlparse
-
-    base_url = getattr(settings, 'FRONTEND_BASE_URL', '').rstrip('/')
-    site_host = base_url.removeprefix('https://').removeprefix('http://') or 'ERGOMS'
-    register_url = f'{base_url}/register' if base_url else '/register'
-    parsed = urlparse(invite_url or '')
-    token = (parse_qs(parsed.query).get('invite') or [''])[0].strip()
-    if not token and parsed.fragment:
-        token = (parse_qs(parsed.fragment).get('invite') or [''])[0].strip()
-    ttl_label = '1 день' if ttl_days == 1 else f'{ttl_days} дн.'
-
-    # Без URL вида /register?invite=<длинный_токен>: Mail.ru часто режет как phishing/spam,
-    # хотя обычное письмо с того же ящика проходит.
-    if token:
-        message = (
-            'Здравствуйте!\n\n'
-            f'Вас пригласили создать учётную запись в системе ERGOMS ({site_host}).\n\n'
-            'Как зарегистрироваться:\n'
-            f'1. Откройте страницу: {register_url}\n'
-            f'2. Введите код приглашения:\n{token}\n\n'
-            f'Код действует {ttl_label}.\n\n'
-            'Если вы не ожидали это письмо, просто проигнорируйте его — '
-            'доступ без кода не будет создан.\n\n'
-            'С уважением,\n'
-            'Команда ERGOMS\n'
-        )
-    else:
-        message = (
-            'Здравствуйте!\n\n'
-            f'Вас пригласили создать учётную запись в системе ERGOMS ({site_host}).\n\n'
-            f'Откройте страницу регистрации: {register_url}\n\n'
-            f'Ссылка действительна {ttl_label}.\n\n'
-            'С уважением,\n'
-            'Команда ERGOMS\n'
-        )
-    return send_plain_email(
-        subject='Приглашение к регистрации в ERGOMS',
-        body=message,
-        recipients=[email],
-    )

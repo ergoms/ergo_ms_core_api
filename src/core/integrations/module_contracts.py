@@ -57,6 +57,14 @@ AUDIT_RECORD = 'audit.record'
 
 CORE_USER_DELETE = 'core.user_delete'
 CORE_BULK_USER_CREATE = 'core.bulk_user_create'
+# Необязательная подмена темы и тела служебных писем учётки.
+# Нет провайдера, None или неполный dict — ядро шлёт свой текст.
+# Ответ: {'subject': str, 'body': str, 'html_body'?: str}. Получателя и from
+# модуль не задаёт. Kwargs JSON-примитивы.
+CORE_COMPOSE_REGISTRATION_INVITATION = 'core.compose_registration_invitation'
+CORE_COMPOSE_IMPORT_WELCOME_DEFAULTS = 'core.compose_import_welcome_defaults'
+CORE_COMPOSE_PASSWORD_RESET_CODE = 'core.compose_password_reset_code'
+CORE_COMPOSE_ADMIN_PASSWORD_RESET = 'core.compose_admin_password_reset'
 
 # Провайдер возвращает dict session-claims для JWT при логине (или None).
 SESSION_RESTORE_CLAIMS = 'session.restore_claims'
