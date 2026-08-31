@@ -9,9 +9,8 @@ from src.core.cms.adp.admin_users_common import (
     _build_admin_user_detail,
     _build_admin_user_list_item,
     _get_admin_users_base_queryset,
+    _parse_admin_users_list_filters,
     _parse_admin_users_pagination,
-    _parse_last_name_letter_param,
-    _parse_online_only_param,
 )
 from src.core.search.core_indexes import INDEX_USERS
 from src.core.search.service import search_queryset
@@ -71,8 +70,50 @@ class AdminUserRoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
             openapi.Parameter(
                 'online_only',
                 openapi.IN_QUERY,
-                description='Только пользователи с активным WS-подключением (true, 1, yes)',
+                description='Устаревший alias: только онлайн (true, 1, yes). Синоним presence=online',
                 type=openapi.TYPE_BOOLEAN,
+                required=False,
+            ),
+            openapi.Parameter(
+                'presence',
+                openapi.IN_QUERY,
+                description='Фильтр присутствия: online или offline',
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
+                'role',
+                openapi.IN_QUERY,
+                description='Идентификатор активной глобальной роли',
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+            openapi.Parameter(
+                'joined_from',
+                openapi.IN_QUERY,
+                description='Дата регистрации с (YYYY-MM-DD)',
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
+                'joined_to',
+                openapi.IN_QUERY,
+                description='Дата регистрации по (YYYY-MM-DD)',
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
+                'last_seen_from',
+                openapi.IN_QUERY,
+                description='Последняя активность с (YYYY-MM-DD)',
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
+                'last_seen_to',
+                openapi.IN_QUERY,
+                description='Последняя активность по (YYYY-MM-DD)',
+                type=openapi.TYPE_STRING,
                 required=False,
             ),
             openapi.Parameter(
@@ -90,12 +131,8 @@ class AdminUserRoleListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     )
     def get(self, request):
         page, page_size, search = _parse_admin_users_pagination(request)
-        online_only = _parse_online_only_param(request)
-        letter = _parse_last_name_letter_param(request)
-        base_qs = _get_admin_users_base_queryset(
-            online_only=online_only,
-            letter=letter,
-        )
+        list_filters = _parse_admin_users_list_filters(request)
+        base_qs = _get_admin_users_base_queryset(**list_filters)
         users_qs, search_result = search_queryset(
             INDEX_USERS,
             search,

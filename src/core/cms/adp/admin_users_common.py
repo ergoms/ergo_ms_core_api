@@ -1,6 +1,8 @@
 """Общие хелперы и mixin для админ-управления пользователями."""
 from django.contrib.auth import get_user_model
 from django.db.models import Prefetch, Q
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.translation import gettext as _
 from rest_framework import status
 from rest_framework.response import Response
@@ -20,7 +22,6 @@ from src.core.cms.adp.services.user_deletion import (
     revoke_user_auth,
 )
 from src.core.search.mixins import parse_search_pagination
-from src.core.cms.adp.services.user_search import apply_user_search
 from src.core.settings.models import UserAvatar
 from src.core.utils.methods import generate_secure_random_password
 
@@ -201,6 +202,61 @@ def _parse_online_only_param(request) -> bool:
     return raw in ('true', '1', 'yes')
 
 
+def _parse_presence_param(request) -> str | None:
+    raw = (request.query_params.get('presence') or '').strip().lower()
+    if raw in ('online', 'offline'):
+        return raw
+    if _parse_online_only_param(request):
+        return 'online'
+    return None
+
+
+def _parse_role_id_param(request) -> int | None:
+    raw = (request.query_params.get('role') or '').strip()
+    if not raw:
+        return None
+    try:
+        role_id = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if role_id < 1:
+        return None
+    return role_id
+
+
+def _parse_day_bound_param(request, key: str, *, end_of_day: bool):
+    raw = (request.query_params.get(key) or '').strip()
+    if not raw:
+        return None
+    suffix = 'T23:59:59' if end_of_day else 'T00:00:00'
+    parsed = parse_datetime(raw) or parse_datetime(f'{raw}{suffix}')
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        return timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+def _parse_admin_users_list_filters(request):
+    return {
+        'presence': _parse_presence_param(request),
+        'role_id': _parse_role_id_param(request),
+        'joined_from': _parse_day_bound_param(request, 'joined_from', end_of_day=False),
+        'joined_to': _parse_day_bound_param(request, 'joined_to', end_of_day=True),
+        'last_seen_from': _parse_day_bound_param(request, 'last_seen_from', end_of_day=False),
+        'last_seen_to': _parse_day_bound_param(request, 'last_seen_to', end_of_day=True),
+        'letter': _parse_last_name_letter_param(request),
+    }
+
+
+def _online_presence_q():
+    cutoff = presence_service.get_presence_stale_cutoff()
+    return Q(
+        presence__connection_count__gt=0,
+        presence__last_seen__gte=cutoff,
+    )
+
+
 # Буквы алфавитного фильтра фамилий (кириллица без Ё/Й/Ъ/Ы/Ь + латиница A–Z).
 _ADMIN_USERS_SURNAME_LETTERS = frozenset(
     'АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЮЯ'
@@ -241,7 +297,16 @@ def _apply_last_name_letter_filter(queryset, letter: str | None):
     return queryset.filter(clause)
 
 
-def _get_admin_users_base_queryset(online_only=False, letter=None):
+def _get_admin_users_base_queryset(
+    online_only=False,
+    letter=None,
+    presence=None,
+    role_id=None,
+    joined_from=None,
+    joined_to=None,
+    last_seen_from=None,
+    last_seen_to=None,
+):
     active_roles_qs = (
         UserRole.objects
         .filter(is_active=True)
@@ -258,22 +323,43 @@ def _get_admin_users_base_queryset(online_only=False, letter=None):
         .order_by('last_name', 'first_name', 'username')
     )
 
-    if online_only:
-        cutoff = presence_service.get_presence_stale_cutoff()
+    presence_value = presence
+    if presence_value is None and online_only:
+        presence_value = 'online'
+    if presence_value == 'online':
+        users_qs = users_qs.filter(_online_presence_q())
+    elif presence_value == 'offline':
+        users_qs = users_qs.exclude(_online_presence_q())
+
+    if role_id is not None:
         users_qs = users_qs.filter(
-            presence__connection_count__gt=0,
-            presence__last_seen__gte=cutoff,
+            user_roles__is_active=True,
+            user_roles__role_id=role_id,
         )
+
+    if joined_from is not None:
+        users_qs = users_qs.filter(date_joined__gte=joined_from)
+    if joined_to is not None:
+        users_qs = users_qs.filter(date_joined__lte=joined_to)
+
+    if last_seen_from is not None:
+        users_qs = users_qs.filter(presence__last_seen__gte=last_seen_from)
+    if last_seen_to is not None:
+        users_qs = users_qs.filter(presence__last_seen__lte=last_seen_to)
 
     return _apply_last_name_letter_filter(users_qs, letter)
 
 
-def _get_admin_users_queryset(search='', online_only=False, letter=None):
+def _get_admin_users_queryset(search='', online_only=False, letter=None, **filters):
     """Обратная совместимость: queryset с фильтром поиска."""
     from src.core.cms.adp.services.user_search import apply_user_search
 
     return apply_user_search(
-        _get_admin_users_base_queryset(online_only, letter=letter),
+        _get_admin_users_base_queryset(
+            online_only=online_only,
+            letter=letter,
+            **filters,
+        ),
         search,
     )
 
