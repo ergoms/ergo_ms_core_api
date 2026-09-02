@@ -36,8 +36,8 @@ class KnowledgePackPathTests(SimpleTestCase):
     def test_sign_op_names(self):
         self.assertEqual(knowledge_sign_read_op('core'), 'core.knowledge.sign_read')
         self.assertEqual(
-            knowledge_sign_read_op('announcements'),
-            'knowledge.sign_read.announcements',
+            knowledge_sign_read_op('sample_mod'),
+            'knowledge.sign_read.sample_mod',
         )
 
     def test_revision_changes_with_text(self):
@@ -57,6 +57,6 @@ class KnowledgePackPathTests(SimpleTestCase):
     def test_module_role_is_not_core_publisher(self):
         with patch(
             'src.core.utils.module_registry.get_process_role',
-            return_value='module:ai_assistant',
+            return_value='module:sample_mod',
         ):
             self.assertFalse(_is_core_process())
