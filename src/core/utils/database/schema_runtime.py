@@ -10,6 +10,17 @@ from django.db.models.signals import pre_migrate
 logger = logging.getLogger('utils.database.schema')
 
 _HOOKS_INSTALLED = False
+_MAINTENANCE_DBS = frozenset({'postgres', 'template0', 'template1'})
+
+
+def _is_maintenance_connection(connection) -> bool:
+    """Служебные БД Django (_nodb_cursor): схемы приложения там не создаём."""
+    if getattr(connection, 'alias', '') == '__no_db__':
+        return True
+    name = (getattr(connection, 'settings_dict', None) or {}).get('NAME')
+    if name in (None, ''):
+        return True
+    return str(name) in _MAINTENANCE_DBS
 
 
 def install_schema_hooks() -> None:
@@ -31,6 +42,8 @@ def ensure_pg_schemas(connection) -> None:
 
     if getattr(connection, 'vendor', '') != 'postgresql':
         return
+    if _is_maintenance_connection(connection):
+        return
     if getattr(connection, '_ergo_schema_ready', False):
         return
     names = [CORE_SCHEMA, *installed_module_schema_names()]
@@ -46,6 +59,8 @@ def apply_process_search_path(connection) -> None:
     from src.core.utils.database.module_schema import search_path_for_process
 
     if getattr(connection, 'vendor', '') != 'postgresql':
+        return
+    if _is_maintenance_connection(connection):
         return
     path = search_path_for_process()
     if not path:
