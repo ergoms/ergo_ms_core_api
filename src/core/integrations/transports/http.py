@@ -172,11 +172,16 @@ def _http_client(timeout: float | httpx.Timeout | None = None) -> httpx.Client:
 
 def _self_base_url() -> str | None:
     """URL этого процесса в карте сервисов — не звать сам себя по HTTP."""
+    import os
+
     role = (getattr(settings, 'ERGO_PROCESS_ROLE', '') or '').strip().lower()
     data = build_service_map()
     if role.startswith('module:'):
         name = role.split(':', 1)[1].strip()
         return data['urls'].get(name)
+    # CLI на хосте модулей часто с ролью api — это не процесс ядра.
+    if (os.environ.get('HOST_PROFILE') or '').strip().lower() == 'modules':
+        return None
     if role in ('api', 'core-api', ''):
         core = data.get('core_url')
         return core if core else None

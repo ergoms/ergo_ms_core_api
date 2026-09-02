@@ -436,12 +436,18 @@ def publish_owner_pack(owner: str) -> dict[str, str] | None:
         if not _is_core_process():
             return None
         return publish_pack(CORE_OWNER, collect_core_documents(), signer=CORE_OWNER)
+    import os
+
     from src.core.utils.module_registry import get_microservice_modules
 
     split = owner in get_microservice_modules()
+    modules_host = (os.environ.get('HOST_PROFILE') or '').strip().lower() == 'modules'
     if split and _is_core_process():
         return None
-    signer = owner if split else process_signer()
+    if modules_host or split:
+        signer = owner
+    else:
+        signer = process_signer()
     return publish_pack(owner, collect_module_documents(owner), signer=signer)
 
 
