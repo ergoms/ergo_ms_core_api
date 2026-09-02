@@ -1,8 +1,12 @@
+import os
+from unittest.mock import patch
+
 from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase
 
 from src.core.utils.knowledge_pack import (
     CORE_OWNER,
+    _is_core_process,
     assert_knowledge_path,
     compute_revision,
     knowledge_sign_read_op,
@@ -41,3 +45,18 @@ class KnowledgePackPathTests(SimpleTestCase):
         second = compute_revision([{'id': 'a', 'text': 'two'}])
         self.assertNotEqual(first, second)
         self.assertEqual(len(first), 32)
+
+    def test_modules_host_is_not_core_publisher(self):
+        with patch.dict(os.environ, {'HOST_PROFILE': 'modules'}, clear=False):
+            with patch(
+                'src.core.utils.module_registry.get_process_role',
+                return_value='api',
+            ):
+                self.assertFalse(_is_core_process())
+
+    def test_module_role_is_not_core_publisher(self):
+        with patch(
+            'src.core.utils.module_registry.get_process_role',
+            return_value='module:ai_assistant',
+        ):
+            self.assertFalse(_is_core_process())

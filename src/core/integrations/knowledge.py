@@ -36,6 +36,12 @@ def _core_knowledge_sign_read(*, path: str = '', **_):
 
 def load_knowledge_providers() -> None:
     """Восстановить дескрипторы с диска после регистрации ops."""
+    from src.core.utils.knowledge_pack import _is_core_process
+
+    if not _is_core_process():
+        # Иначе CLI на хосте модулей читает пустой current.json у себя и не идёт на ядро.
+        bridge.unregister(CORE_KNOWLEDGE_PACK)
+        bridge.unregister(CORE_KNOWLEDGE_SIGN_READ)
     try:
         restore_pack_descriptors_from_media()
     except Exception:

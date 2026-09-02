@@ -190,8 +190,12 @@ def _same_base(left: str | None, right: str | None) -> bool:
 
 
 def _core_owned_identity_op(name: str) -> bool:
-    """Роль и сессия живут на ядре: процесс модуля не читает свою cms_adp_*."""
-    return name == SESSION_DEVICE_ACTIVE or name.startswith('adp.')
+    """Роль, сессия и ops ядра живут на ядре: процесс модуля не читает их у себя."""
+    return (
+        name == SESSION_DEVICE_ACTIVE
+        or name.startswith('adp.')
+        or name.startswith('core.')
+    )
 
 
 def _prefer_local_provider(base: str | None, name: str = '') -> bool:

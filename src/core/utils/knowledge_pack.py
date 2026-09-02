@@ -269,10 +269,17 @@ def publish_pack(
 
 
 def _is_core_process() -> bool:
+    import os
+
     from src.core.utils.module_registry import get_process_role
 
     role = (get_process_role() or '').strip().lower()
-    return not role.startswith('module:')
+    if role.startswith('module:'):
+        return False
+    # CLI на хосте модулей часто идёт с ролью api — пакет ядра писать нельзя.
+    if (os.environ.get('HOST_PROFILE') or '').strip().lower() == 'modules':
+        return False
+    return True
 
 
 def _current_module_name() -> str | None:
@@ -426,10 +433,16 @@ def publish_owner_pack(owner: str) -> dict[str, str] | None:
     """Публикует одного владельца. Процесс модуля не пишет пакет ядра."""
     owner = normalize_owner(owner)
     if owner == CORE_OWNER:
-        if _current_module_name():
+        if not _is_core_process():
             return None
         return publish_pack(CORE_OWNER, collect_core_documents(), signer=CORE_OWNER)
-    return publish_pack(owner, collect_module_documents(owner), signer=process_signer())
+    from src.core.utils.module_registry import get_microservice_modules
+
+    split = owner in get_microservice_modules()
+    if split and _is_core_process():
+        return None
+    signer = owner if split else process_signer()
+    return publish_pack(owner, collect_module_documents(owner), signer=signer)
 
 
 def collect_pack_descriptors() -> dict[str, dict[str, str]]:
