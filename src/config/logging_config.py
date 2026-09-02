@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
@@ -22,12 +23,36 @@ from src.config.log_paths import (
 from src.config.paths import ENV_FILE_PATH, SYSTEM_DIR
 
 
+class PermissionSafeRotatingFileHandler(RotatingFileHandler):
+    """Не роняет CLI, если logs/*.log принадлежит другому uid (служба vs deploy)."""
+
+    def shouldRollover(self, record):
+        try:
+            return super().shouldRollover(record)
+        except OSError:
+            return False
+
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except OSError:
+            pass
+
+    def handleError(self, record):
+        if isinstance(sys.exc_info()[1], OSError):
+            return
+        try:
+            super().handleError(record)
+        except OSError:
+            return
+
+
 def _rotating_handler(level: str, filename: str, max_bytes: int, backup_count: int) -> dict[str, Any]:
     return {
         'level': level,
         'formatter': 'verbose',
         'filename': filename,
-        'class': 'logging.handlers.RotatingFileHandler',
+        'class': 'src.config.logging_config.PermissionSafeRotatingFileHandler',
         'maxBytes': max_bytes,
         'backupCount': backup_count,
         'encoding': 'utf-8',
