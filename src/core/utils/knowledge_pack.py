@@ -420,7 +420,12 @@ def visible_knowledge_owners(user) -> frozenset[str] | None:
 
     if PermissionService.is_admin(user):
         return None
-    payload = PermissionService.get_user_permissions(user)
+    from src.core.integrations.session_context import get_request_session_claim_values
+
+    payload = PermissionService.get_user_permissions(
+        user,
+        session_claims=get_request_session_claim_values(),
+    )
     names = {CORE_OWNER}
     for perm in payload.get('module_permissions') or []:
         name = getattr(perm, 'module_name', None)
