@@ -10,6 +10,7 @@ from src.core.integrations import bridge
 from src.core.integrations.module_contracts import (
     CORE_KNOWLEDGE_PACK,
     CORE_KNOWLEDGE_SIGN_READ,
+    CORE_KNOWLEDGE_USER_CAPABILITIES,
 )
 from src.core.utils.knowledge_pack import (
     current_core_pack,
@@ -34,6 +35,27 @@ def _core_knowledge_sign_read(*, path: str = '', **_):
         return None
 
 
+@bridge.provide_op(CORE_KNOWLEDGE_USER_CAPABILITIES)
+def _core_knowledge_user_capabilities(
+    *,
+    user_public_id=None,
+    full: bool = False,
+    session_claims=None,
+    **_,
+):
+    from src.core.utils.knowledge_capabilities import user_capabilities_op
+
+    try:
+        return user_capabilities_op(
+            user_public_id=user_public_id,
+            full=full,
+            session_claims=session_claims,
+        )
+    except Exception:
+        logger.warning('Не удалось собрать меню и каталог модулей', exc_info=True)
+        return None
+
+
 def load_knowledge_providers() -> None:
     """Восстановить дескрипторы с диска и подпись чтения процесса модуля."""
     from src.core.utils.knowledge_pack import (
@@ -46,6 +68,7 @@ def load_knowledge_providers() -> None:
         # Иначе CLI на хосте модулей читает пустой current.json у себя и не идёт на ядро.
         bridge.unregister(CORE_KNOWLEDGE_PACK)
         bridge.unregister(CORE_KNOWLEDGE_SIGN_READ)
+        bridge.unregister(CORE_KNOWLEDGE_USER_CAPABILITIES)
     module_name = _current_module_name()
     if module_name:
         register_module_knowledge_sign_read(module_name)

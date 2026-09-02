@@ -42,6 +42,8 @@ NOTIFICATIONS_FILTER_EVENTS_PREFIX = 'notifications.filter_events_for_user.'
 # Пакет справки ядра и подпись чтения с диска этого процесса.
 CORE_KNOWLEDGE_PACK = 'core.knowledge.pack'
 CORE_KNOWLEDGE_SIGN_READ = 'core.knowledge.sign_read'
+# Меню и каталог модулей с ядра (не с диска процесса модуля).
+CORE_KNOWLEDGE_USER_CAPABILITIES = 'core.knowledge.user_capabilities'
 # Вынесенный модуль: f'{PREFIX}{name}' — только knowledge/<name>/ на своём media.
 KNOWLEDGE_SIGN_READ_PREFIX = 'knowledge.sign_read.'
 

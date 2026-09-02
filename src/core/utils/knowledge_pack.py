@@ -137,6 +137,16 @@ def collect_core_documents() -> list[dict[str, Any]]:
             title=path.stem.replace('_', ' '),
             text=_read_text_file(path),
         ))
+    from src.core.utils.knowledge_capabilities import site_overview_documents
+
+    for item in site_overview_documents():
+        documents.append(_document(
+            doc_id=str(item.get('id') or 'site'),
+            title=str(item.get('title') or item.get('id') or 'site'),
+            text=str(item.get('text') or ''),
+            language=str(item.get('language') or 'ru'),
+            permission_key=str(item.get('permission_key') or ''),
+        ))
     return documents
 
 
