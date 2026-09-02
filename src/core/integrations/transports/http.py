@@ -11,12 +11,14 @@ import json
 import logging
 import threading
 from typing import Any, Callable, Iterator
+from uuid import UUID
 
 import httpx
 from django.conf import settings
 
 from ..exceptions import DuplicateProvider
 from .bind_kwargs import kwargs_accepted_by_handler
+from .user_identity import apply_user_ids
 from ..service_map import (
     all_remote_base_urls,
     build_service_map,
@@ -233,6 +235,8 @@ def _json_safe(value: Any) -> Any:
     """Проверка/нормализация для JSON; несериализуемое → TypeError."""
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
+    if isinstance(value, UUID):
+        return str(value)
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     if isinstance(value, dict):
@@ -243,9 +247,9 @@ def _json_safe(value: Any) -> Any:
 
 
 def _json_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Оставляет только JSON-примитивы. Объект user и callback по HTTP не едут."""
+    """JSON-примитивы. user-like заменяется на user_id / user_public_id."""
     safe: dict[str, Any] = {}
-    for key, value in kwargs.items():
+    for key, value in apply_user_ids(kwargs).items():
         try:
             safe[str(key)] = _json_safe(value)
         except TypeError:
