@@ -233,6 +233,8 @@ def publish_pack(
     pointer = _read_json(current_pointer_path(owner))
     if pointer and pointer.get('revision') == revision:
         descriptor = _descriptor(owner=owner, revision=revision, signer=signer)
+        if pointer.get('signer') != signer:
+            _write_json(current_pointer_path(owner), descriptor)
         register_pack_descriptor(descriptor)
         return descriptor
 
