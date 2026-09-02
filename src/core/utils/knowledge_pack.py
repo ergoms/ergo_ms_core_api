@@ -578,6 +578,7 @@ def load_published_pack_documents() -> dict[str, Any]:
                 'revision': revision,
                 'source': f'knowledge/{owner}/{doc_id}',
                 'permission_key': str(item.get('permission_key') or ''),
+                'audience': str(item.get('audience') or 'user'),
             })
         if owner_failed:
             failed_owners.append(owner)
@@ -589,5 +590,5 @@ def load_published_pack_documents() -> dict[str, Any]:
 
 
 def iter_published_pack_documents() -> list[dict[str, Any]]:
-    """Документы всех доступных пакетов: owner, id, title, text, source, revision."""
+    """Документы всех доступных пакетов: owner, id, title, text, source, revision, audience."""
     return load_published_pack_documents()['documents']
