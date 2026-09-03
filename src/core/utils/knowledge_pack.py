@@ -163,8 +163,17 @@ def collect_core_documents() -> list[dict[str, Any]]:
 
 
 def collect_module_documents(module_name: str) -> list[dict[str, Any]]:
-    """user_guides модуля, user_description и автокаталог экранов клиента."""
+    """user_guides модуля, user_description и автокаталог экранов клиента.
+
+    На процессе ядра вынесенный модуль сам публикует пакет: локальный диск
+    ``modules/<name>/api/user_guides`` не обходим.
+    """
     owner = normalize_owner(module_name)
+    if _is_core_process():
+        from src.core.utils.module_registry import get_microservice_modules
+
+        if owner in get_microservice_modules():
+            return []
     documents: list[dict[str, Any]] = []
     description = _module_user_description(owner)
     if description:
@@ -346,10 +355,14 @@ def publish_local_knowledge_packs() -> list[dict[str, str]]:
             published.append(descriptor)
         from src.core.utils.module_registry import (
             get_installed_module_names,
+            get_microservice_modules,
             is_module_loadable_in_process,
         )
 
+        split = get_microservice_modules()
         for name in get_installed_module_names():
+            if name in split:
+                continue
             if not is_module_loadable_in_process(name):
                 continue
             documents = collect_module_documents(name)
@@ -369,13 +382,15 @@ def restore_pack_descriptors_from_media() -> None:
         owners.append(CORE_OWNER)
         from src.core.utils.module_registry import (
             get_installed_module_names,
+            get_microservice_modules,
             is_module_loadable_in_process,
         )
 
+        split = get_microservice_modules()
         owners.extend(
             name
             for name in get_installed_module_names()
-            if is_module_loadable_in_process(name)
+            if name not in split and is_module_loadable_in_process(name)
         )
     for owner in owners:
         try:
