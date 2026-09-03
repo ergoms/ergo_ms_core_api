@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from src.core.cms.adp.services.permission_catalog import get_modules_catalog
+from src.core.cms.adp.services.permission_catalog import (
+    _is_slug_like_module_label,
+    _resolve_module_label,
+    get_modules_catalog,
+)
 from src.core.cms.adp.services.permissions import PermissionService
 from src.core.utils.module_registry import get_microservice_modules
 
@@ -64,10 +68,6 @@ def _all_active_menu_tree() -> list[dict[str, Any]]:
     return walk(None)
 
 
-def _slug_label(module_name: str) -> str:
-    return module_name.replace('-', ' ').replace('_', ' ').strip().title()
-
-
 def collect_module_entries(*, user=None, is_admin: bool, full: bool) -> list[dict[str, str]]:
     catalog = list(get_modules_catalog(include_disabled=False) or [])
     seen = {
@@ -80,7 +80,7 @@ def collect_module_entries(*, user=None, is_admin: bool, full: bool) -> list[dic
             continue
         catalog.append({
             'module_name': name,
-            'module_label': _slug_label(name),
+            'module_label': _resolve_module_label(name),
             'user_description': '',
             'disabled': False,
         })
@@ -105,6 +105,10 @@ def collect_module_entries(*, user=None, is_admin: bool, full: bool) -> list[dic
         label = (item.get('module_label') or name or '').strip()
         if not name or not label:
             continue
+        if _is_slug_like_module_label(name, label):
+            resolved = _resolve_module_label(name)
+            if resolved and not _is_slug_like_module_label(name, resolved):
+                label = resolved
         if allowed_names is not None and name not in allowed_names:
             continue
         description = item.get('user_description') or ''
