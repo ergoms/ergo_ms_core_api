@@ -263,11 +263,15 @@ def _module_catalog_row(module_name: str) -> dict[str, str]:
 
 
 def _module_display_label(module_name: str) -> str:
-    return _module_catalog_row(module_name)['label'] or module_name
+    from src.core.utils.user_facing import sanitize_user_facing_label
+
+    return sanitize_user_facing_label(_module_catalog_row(module_name)['label'] or module_name)
 
 
 def _module_user_description(module_name: str) -> str:
-    return _module_catalog_row(module_name)['user_description']
+    from src.core.utils.user_facing import sanitize_user_facing_text
+
+    return sanitize_user_facing_text(_module_catalog_row(module_name)['user_description'])
 
 
 def compute_revision(documents: list[dict[str, Any]]) -> str:

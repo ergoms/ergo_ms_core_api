@@ -114,3 +114,44 @@ class KnowledgeCapabilitiesTests(SimpleTestCase):
 
     def test_op_without_user_and_not_full_returns_none(self):
         self.assertIsNone(user_capabilities_op(user_public_id=None, full=False))
+
+    def test_sanitize_strips_api_marker_keeps_assistant_name(self):
+        from src.core.utils.user_facing import (
+            prepare_user_facing_text,
+            sanitize_user_facing_text,
+            select_user_facing_modules,
+        )
+
+        self.assertEqual(sanitize_user_facing_text('Проекты (API)'), 'Проекты')
+        self.assertEqual(
+            sanitize_user_facing_text('Управление задачами через API.'),
+            'Управление задачами.',
+        )
+        self.assertEqual(sanitize_user_facing_text('AI-ассистент'), 'AI-ассистент')
+
+        kept = select_user_facing_modules(
+            [
+                {
+                    'name': 'sample_ui',
+                    'label': 'Проекты (API)',
+                    'user_description': 'Работа с проектами через API.',
+                },
+                {
+                    'name': 'sample_api_only',
+                    'label': 'Задачи (API)',
+                    'user_description': 'Управление задачами через API.',
+                },
+            ],
+            menu_lines=['- Проекты', '- Обучение'],
+        )
+        labels = [item['label'] for item in kept]
+        self.assertEqual(labels, ['Проекты'])
+        self.assertEqual(kept[0]['user_description'], 'Работа с проектами.')
+
+        cleaned = prepare_user_facing_text(
+            '## Задачи (API)\nУправление задачами через API.\n\n## Проекты (API)\nРаздел проектов.\n',
+            menu_lines=['- Проекты'],
+        )
+        self.assertNotIn('Задачи', cleaned)
+        self.assertNotIn('(API)', cleaned)
+        self.assertIn('Проекты', cleaned)

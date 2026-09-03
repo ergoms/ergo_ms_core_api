@@ -12,6 +12,11 @@ from src.core.cms.adp.services.permission_catalog import (
 )
 from src.core.cms.adp.services.permissions import PermissionService
 from src.core.utils.module_registry import get_microservice_modules
+from src.core.utils.user_facing import (
+    sanitize_user_facing_label,
+    sanitize_user_facing_text,
+    select_user_facing_modules,
+)
 
 
 def _resolve_user(*, user_public_id=None):
@@ -161,8 +166,10 @@ def collect_module_entries(*, user=None, is_admin: bool, full: bool) -> list[dic
         description = item.get('user_description') or ''
         entries.append({
             'name': name,
-            'label': label,
-            'user_description': description.strip() if isinstance(description, str) else '',
+            'label': sanitize_user_facing_label(label),
+            'user_description': sanitize_user_facing_text(
+                description.strip() if isinstance(description, str) else ''
+            ),
         })
     return entries
 
@@ -188,10 +195,11 @@ def build_user_capabilities(
             collect_module_entries(user=user, is_admin=is_admin, full=False)
         )
 
+    menu_lines = flatten_menu_lines(menu_tree)
     return {
         'is_admin': is_admin,
-        'menu_lines': flatten_menu_lines(menu_tree),
-        'modules': modules,
+        'menu_lines': menu_lines,
+        'modules': select_user_facing_modules(modules, menu_lines=menu_lines),
     }
 
 
@@ -230,7 +238,7 @@ def site_overview_documents() -> list[dict[str, Any]]:
         lines = [
             '# Возможности и модули системы',
             '',
-            'Установленные модули ERGO MS и их назначение для пользователя.',
+            'Разделы ERGO MS, которые пользователь видит в интерфейсе, и их назначение.',
             '',
         ]
         for item in modules:

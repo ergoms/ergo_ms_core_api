@@ -415,11 +415,15 @@ def rewrite_slug_module_labels(text: str) -> str:
         return value
     for slug_title, label in replacements:
         value = value.replace(slug_title, label)
-    return value
+    from src.core.utils.user_facing import sanitize_user_facing_text
+
+    return sanitize_user_facing_text(value)
 
 
 def localize_module_entries(modules: list) -> list:
     """Подставляет местные русские подписи, если с ядра пришёл title-case slug."""
+    from src.core.utils.user_facing import sanitize_user_facing_label, sanitize_user_facing_text
+
     catalogs = _get_cache().get('catalogs') or {}
     localized: list = []
     for raw in modules or []:
@@ -427,24 +431,26 @@ def localize_module_entries(modules: list) -> list:
             continue
         item = dict(raw)
         name = str(item.get('name') or item.get('module_name') or '').strip()
-        if not name:
-            localized.append(item)
-            continue
-        catalog = catalogs.get(name) if isinstance(catalogs.get(name), dict) else None
-        loc_label = ''
-        if catalog:
-            loc_label = str(catalog.get('module_label') or '').strip()
-        if not loc_label or _is_slug_like_module_label(name, loc_label):
-            loc_label = _resolve_module_label(name, catalog)
-        if loc_label and not _is_slug_like_module_label(name, loc_label):
-            item['label'] = loc_label
-        loc_desc = ''
-        if catalog:
-            loc_desc = catalog.get('user_description') or ''
-        if not (isinstance(loc_desc, str) and loc_desc.strip()):
-            loc_desc = _permission_catalog_strings_from_disk(name).get('user_description') or ''
-        if isinstance(loc_desc, str) and loc_desc.strip():
-            item['user_description'] = loc_desc.strip()
+        if name:
+            catalog = catalogs.get(name) if isinstance(catalogs.get(name), dict) else None
+            loc_label = ''
+            if catalog:
+                loc_label = str(catalog.get('module_label') or '').strip()
+            if not loc_label or _is_slug_like_module_label(name, loc_label):
+                loc_label = _resolve_module_label(name, catalog)
+            if loc_label and not _is_slug_like_module_label(name, loc_label):
+                item['label'] = loc_label
+            loc_desc = ''
+            if catalog:
+                loc_desc = catalog.get('user_description') or ''
+            if not (isinstance(loc_desc, str) and loc_desc.strip()):
+                loc_desc = _permission_catalog_strings_from_disk(name).get('user_description') or ''
+            if isinstance(loc_desc, str) and loc_desc.strip():
+                item['user_description'] = loc_desc.strip()
+        if item.get('label'):
+            item['label'] = sanitize_user_facing_label(str(item['label']))
+        if item.get('user_description'):
+            item['user_description'] = sanitize_user_facing_text(str(item['user_description']))
         localized.append(item)
     return localized
 
