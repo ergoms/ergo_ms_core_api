@@ -68,6 +68,53 @@ def _all_active_menu_tree() -> list[dict[str, Any]]:
     return walk(None)
 
 
+def _menu_blurbs_by_module() -> dict[str, str]:
+    """Краткие подписи из пунктов меню, если в каталоге нет user_description."""
+    try:
+        from src.core.cms.adp.menu.models import MenuItem
+        from src.core.utils.module_registry import top_level_module_from_menu_source
+    except Exception:
+        return {}
+    try:
+        rows = (
+            MenuItem.objects.filter(is_active=True)
+            .exclude(name='')
+            .order_by('order', 'name')
+            .only('name', 'module_source')
+        )
+    except Exception:
+        return {}
+    grouped: dict[str, list[str]] = defaultdict(list)
+    seen: dict[str, set[str]] = defaultdict(set)
+    for item in rows:
+        owner = top_level_module_from_menu_source(item.module_source or '')
+        if not owner:
+            continue
+        name = (item.name or '').strip()
+        if not name or name in seen[owner]:
+            continue
+        seen[owner].add(name)
+        grouped[owner].append(name)
+    return {
+        owner: ', '.join(names[:8])
+        for owner, names in grouped.items()
+        if names
+    }
+
+
+def _with_menu_descriptions(entries: list[dict[str, str]]) -> list[dict[str, str]]:
+    blurbs = _menu_blurbs_by_module()
+    if not blurbs:
+        return entries
+    filled: list[dict[str, str]] = []
+    for item in entries:
+        description = (item.get('user_description') or '').strip()
+        if not description:
+            description = blurbs.get(item.get('name') or '', '')
+        filled.append({**item, 'user_description': description})
+    return filled
+
+
 def collect_module_entries(*, user=None, is_admin: bool, full: bool) -> list[dict[str, str]]:
     catalog = list(get_modules_catalog(include_disabled=False) or [])
     seen = {
@@ -129,13 +176,17 @@ def build_user_capabilities(
     is_admin = bool(user is not None and PermissionService.is_admin(user))
     if full:
         menu_tree = _all_active_menu_tree()
-        modules = collect_module_entries(user=user, is_admin=True, full=True)
+        modules = _with_menu_descriptions(
+            collect_module_entries(user=user, is_admin=True, full=True)
+        )
         is_admin = True
     else:
         from src.core.cms.adp.menu.user_menu_builder import build_user_menu_items
 
         menu_tree = build_user_menu_items(user, session_claims=session_claims) if user else []
-        modules = collect_module_entries(user=user, is_admin=is_admin, full=False)
+        modules = _with_menu_descriptions(
+            collect_module_entries(user=user, is_admin=is_admin, full=False)
+        )
 
     return {
         'is_admin': is_admin,
@@ -185,8 +236,11 @@ def site_overview_documents() -> list[dict[str, Any]]:
         for item in modules:
             lines.append(f'## {item["label"]}')
             lines.append('')
-            description = item.get('user_description') or ''
-            lines.append(description or 'Модуль установлен.')
+            description = (item.get('user_description') or '').strip()
+            if description:
+                lines.append(description)
+            else:
+                lines.append('Подробности — в пунктах бокового меню этого раздела.')
             lines.append('')
         documents.append({
             'id': 'installed_modules',
