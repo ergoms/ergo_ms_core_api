@@ -159,14 +159,16 @@ def close_shared_http_client() -> None:
 
 def _http_client(timeout: float | httpx.Timeout | None = None) -> httpx.Client:
     # Один клиент на процесс: keep-alive между bridge.call, без сокета на каждый op.
-    # trust_env=False: http_proxy/HTTP_PROXY не должны перехватывать
-    # /internal/bridge/* на private LAN (иначе ReadTimeout через прокси).
+    # ERGO_HTTP_TRUST_ENV=false (по умолчанию): HTTP_PROXY не перехватывает
+    # /internal/bridge/* на private LAN.
+    from src.core.utils.http_proxy import http_trust_env
+
     global _shared_client
     with _client_lock:
         if _shared_client is None or _shared_client.is_closed:
             _shared_client = httpx.Client(
                 timeout=_stream_timeout() if timeout is None else timeout,
-                trust_env=False,
+                trust_env=http_trust_env(),
                 limits=httpx.Limits(max_keepalive_connections=20, max_connections=40),
             )
         return _shared_client
