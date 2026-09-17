@@ -5,7 +5,12 @@ import threading
 import time
 
 from src.core.realtime.hub import RealtimeHub
-from src.core.realtime.topics import PRESENCE_ADMIN_GROUP, PRESENCE_ADMIN_TOPIC
+from src.core.realtime.topics import (
+    PRESENCE_ADMIN_GROUP,
+    PRESENCE_ADMIN_TOPIC,
+    presence_peer_group,
+    presence_peer_topic,
+)
 
 logger = logging.getLogger('core.cms.adp')
 
@@ -20,7 +25,7 @@ def publish_presence_delta(
     *,
     public_id: str | None = None,
 ) -> None:
-    """Push изменения presence админам (SSE / WS), с throttle по user_id."""
+    """Push изменения presence админам и тем, кто смотрит этого пользователя."""
     now = time.monotonic()
     with _lock:
         last = _last_publish.get(user_id, 0.0)
@@ -33,13 +38,17 @@ def publish_presence_delta(
     }
     if public_id:
         payload['public_id'] = public_id
+    targets = [(PRESENCE_ADMIN_GROUP, PRESENCE_ADMIN_TOPIC)]
+    if public_id:
+        targets.append((presence_peer_group(public_id), presence_peer_topic(public_id)))
     try:
-        RealtimeHub.publish(
-            group=PRESENCE_ADMIN_GROUP,
-            topic=PRESENCE_ADMIN_TOPIC,
-            event_type='presence_delta',
-            payload={'users': [payload]},
-        )
+        for group, topic in targets:
+            RealtimeHub.publish(
+                group=group,
+                topic=topic,
+                event_type='presence_delta',
+                payload={'users': [payload]},
+            )
     except Exception:
         logger.exception('publish_presence_delta failed user_id=%s', user_id)
 

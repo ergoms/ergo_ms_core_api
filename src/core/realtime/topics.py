@@ -2,6 +2,15 @@ from __future__ import annotations
 
 PRESENCE_ADMIN_GROUP = 'presence_admin'
 PRESENCE_ADMIN_TOPIC = 'presence:admin'
+PRESENCE_PEER_TOPIC_PATTERN = 'presence:peer:{public_id}'
+
+
+def presence_peer_group(public_id: str) -> str:
+    return f'presence_peer_{public_id}'
+
+
+def presence_peer_topic(public_id: str) -> str:
+    return f'presence:peer:{public_id}'
 
 
 def sse_control_group(user_id: int) -> str:

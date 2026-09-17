@@ -236,6 +236,21 @@ def build_presence_snapshot(presence_map: dict[int, PresenceEntry] | None = None
     ]
 
 
+def parse_watch_public_ids(payload: dict | None, *, limit: int = PRESENCE_BATCH_LIMIT) -> list[str]:
+    """public_id из WS envelope `{ public_ids: [...] }` — тот же allowlist, что у batch."""
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get('public_ids')
+    if isinstance(raw, str):
+        return parse_public_ids_param(raw, limit=limit)
+    if isinstance(raw, (list, tuple)):
+        joined = ','.join(
+            str(item) for item in raw if item is not None and str(item).strip()
+        )
+        return parse_public_ids_param(joined, limit=limit)
+    return []
+
+
 def parse_public_ids_param(raw: str | None, *, limit: int = PRESENCE_BATCH_LIMIT) -> list[str]:
     if not raw:
         return []

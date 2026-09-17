@@ -6,8 +6,10 @@ from src.core.realtime.room_access import has_messenger_access, resolve_room_obj
 from src.core.realtime.topics import (
     PRESENCE_ADMIN_GROUP,
     PRESENCE_ADMIN_TOPIC,
+    PRESENCE_PEER_TOPIC_PATTERN,
     messenger_group,
     notifications_user_group,
+    presence_peer_group,
 )
 
 _registered = False
@@ -58,6 +60,20 @@ def _resolve_presence_admin(_user, _params: dict[str, str]) -> str | None:
     return PRESENCE_ADMIN_GROUP
 
 
+def _authorize_presence_peer(user, params: dict[str, str]) -> bool:
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return False
+    public_id = str(params.get('public_id') or '').strip()
+    return bool(public_id) and not public_id.isdigit()
+
+
+def _resolve_presence_peer(_user, params: dict[str, str]) -> str | None:
+    public_id = str(params.get('public_id') or '').strip()
+    if not public_id or public_id.isdigit():
+        return None
+    return presence_peer_group(public_id)
+
+
 def register_core_realtime_topics() -> None:
     global _registered
     if _registered:
@@ -77,4 +93,9 @@ def register_core_realtime_topics() -> None:
         PRESENCE_ADMIN_TOPIC,
         authorize=_authorize_presence_admin,
         resolve_group=_resolve_presence_admin,
+    )
+    register_realtime_topic(
+        PRESENCE_PEER_TOPIC_PATTERN,
+        authorize=_authorize_presence_peer,
+        resolve_group=_resolve_presence_peer,
     )

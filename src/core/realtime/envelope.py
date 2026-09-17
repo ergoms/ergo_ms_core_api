@@ -10,6 +10,7 @@ WS_CONTROL_TOPIC = 'ws:control'
 WS_AUTH_EVENT = 'ws_auth'
 WS_AUTH_OK_EVENT = 'ws_auth_ok'
 PRESENCE_PING_EVENT = 'presence_ping'
+PRESENCE_WATCH_EVENT = 'presence_watch'
 PRESENCE_USER_TOPIC = 'presence:user'
 
 
