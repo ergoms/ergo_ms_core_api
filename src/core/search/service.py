@@ -12,9 +12,16 @@ from .client import get_meili_client, is_meili_available
 from .fallback import apply_ordered_ids, fallback_search
 from .query import expand_query_variants, normalize_query
 from .registry import get_index
-from .sync import ensure_registry_loaded
+from .sync import ensure_index, ensure_registry_loaded
 
 logger = logging.getLogger('search')
+
+
+def _is_missing_index(exc: BaseException) -> bool:
+  code = getattr(exc, 'code', None) or getattr(exc, 'error_code', None)
+  if str(code or '') == 'index_not_found':
+    return True
+  return 'index_not_found' in str(exc)
 
 
 @dataclass
@@ -67,18 +74,18 @@ def search_index(
   if is_meili_available() and get_index(index_uid):
     client = get_meili_client()
     if client is not None:
-      try:
-        index = client.index(index_uid)
-        search_params: dict[str, Any] = {
-          'limit': page_size,
-          'offset': (page - 1) * page_size,
-        }
-        meili_filter = _build_meili_filter(filters)
-        if meili_filter:
-          search_params['filter'] = meili_filter
+      search_params: dict[str, Any] = {
+        'limit': page_size,
+        'offset': (page - 1) * page_size,
+      }
+      meili_filter = _build_meili_filter(filters)
+      if meili_filter:
+        search_params['filter'] = meili_filter
+      variants = expand_query_variants(q)
+      search_query = variants[0] if variants else q
 
-        variants = expand_query_variants(q)
-        search_query = variants[0] if variants else q
+      def run_search():
+        index = client.index(index_uid)
         result = index.search(search_query, search_params)
         hits = result.get('hits') or []
         ids = []
@@ -91,6 +98,10 @@ def search_index(
           or result.get('totalHits')
           or len(ids)
         )
+        return ids, total
+
+      try:
+        ids, total = run_search()
         # Пустой индекс / устаревшие документы — не маскируем ORM-fallback.
         if total > 0 or ids:
           return SearchResult(
@@ -100,12 +111,38 @@ def search_index(
             page_size=page_size,
             used_meili=True,
           )
-      except Exception:
-        logger.warning(
-          'Meilisearch search failed for %s — fallback',
-          index_uid,
-          exc_info=True,
-        )
+      except Exception as exc:
+        if _is_missing_index(exc):
+          defn = get_index(index_uid)
+          if defn is not None:
+            try:
+              ensure_index(defn)
+              ids, total = run_search()
+              if total > 0 or ids:
+                return SearchResult(
+                  ids=ids,
+                  total=total,
+                  page=page,
+                  page_size=page_size,
+                  used_meili=True,
+                )
+            except Exception:
+              logger.warning(
+                'Meilisearch search failed for %s after creating index — fallback',
+                index_uid,
+                exc_info=True,
+              )
+            else:
+              logger.warning(
+                'Meilisearch index %s was missing; created empty — run search-reindex',
+                index_uid,
+              )
+        else:
+          logger.warning(
+            'Meilisearch search failed for %s — fallback',
+            index_uid,
+            exc_info=True,
+          )
 
   ids, total = fallback_search(
     index_uid,
