@@ -109,12 +109,27 @@ def get_modules() -> list[dict]:
     ]
 
 
-def _build_distinct_actors(limit: int = 500, scope: dict | None = None) -> list[dict]:
-    from .models import AuditActor, AuditEvent
+def _actor_event_queryset(scope: dict | None, exclude_source_modules: tuple[str, ...]):
+    from .models import AuditEvent
 
-    scope_filter = {'scope__contains': scope} if scope else {}
+    qs = AuditEvent.objects.all()
+    if scope:
+        qs = qs.filter(scope__contains=scope)
+    if exclude_source_modules:
+        qs = qs.exclude(source_module__in=exclude_source_modules)
+    return qs
 
-    if not scope:
+
+def _build_distinct_actors(
+    limit: int = 500,
+    scope: dict | None = None,
+    exclude_source_modules: tuple[str, ...] = (),
+) -> list[dict]:
+    from .models import AuditActor
+
+    excluded = tuple(module for module in exclude_source_modules if module)
+
+    if not scope and not excluded:
         dimension = list(
             AuditActor.objects
             .order_by('label')
@@ -128,16 +143,17 @@ def _build_distinct_actors(limit: int = 500, scope: dict | None = None) -> list[
 
     from urllib.parse import quote
 
+    events = _actor_event_queryset(scope, excluded)
     linked = (
-        AuditEvent.objects
-        .filter(actor_id__isnull=False, actor__public_id__isnull=False, **scope_filter)
+        events
+        .filter(actor_id__isnull=False, actor__public_id__isnull=False)
         .values('actor__public_id')
         .annotate(label=Max('actor_label'))
         .order_by('label')[:limit]
     )
     orphans = (
-        AuditEvent.objects
-        .filter(actor_id__isnull=True, **scope_filter)
+        events
+        .filter(actor_id__isnull=True)
         .exclude(actor_label='')
         .values('actor_label')
         .distinct()
@@ -160,16 +176,30 @@ def _build_distinct_actors(limit: int = 500, scope: dict | None = None) -> list[
     return result
 
 
-def get_distinct_actors(limit: int = 500, scope: dict | None = None) -> list[dict]:
-    """Уникальные инициаторы из журнала для фильтра UI."""
+def get_distinct_actors(
+    limit: int = 500,
+    scope: dict | None = None,
+    exclude_source_modules: tuple[str, ...] = (),
+) -> list[dict]:
+    """Уникальные инициаторы из журнала для фильтра UI.
+
+    ``exclude_source_modules`` убирает события закрытых источников из расчёта,
+    чтобы в фильтре не оставались люди, которые видны только по ним.
+    """
     if scope:
         scope_suffix = ','.join(f'{k}={scope[k]}' for k in sorted(scope))
     else:
         scope_suffix = 'all'
-    cache_key = f'{ACTORS_CACHE_KEY}:{limit}:{scope_suffix}'
+    excluded = tuple(sorted({module for module in exclude_source_modules if module}))
+    exclude_suffix = ','.join(excluded) if excluded else '-'
+    cache_key = f'{ACTORS_CACHE_KEY}:{limit}:{scope_suffix}:src={exclude_suffix}'
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    result = _build_distinct_actors(limit=limit, scope=scope)
+    result = _build_distinct_actors(
+        limit=limit,
+        scope=scope,
+        exclude_source_modules=excluded,
+    )
     cache.set(cache_key, result, ACTORS_CACHE_TTL)
     return result

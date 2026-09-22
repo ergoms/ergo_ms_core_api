@@ -8,6 +8,10 @@ MODULE_LABEL = 'Администрирование'
 SETTINGS_MODULE = 'core.settings'
 SETTINGS_MODULE_LABEL = 'Настройки системы'
 
+# Чтение этих источников — только глобальный администратор.
+# Журнал организации их не показывает даже ему.
+PLATFORM_ADMIN_SOURCE_MODULES = (MODULE, SETTINGS_MODULE)
+
 CATEGORY_AUTH = 'auth'
 CATEGORY_AUTH_LABEL = 'Аутентификация'
 CATEGORY_USERS = 'users'

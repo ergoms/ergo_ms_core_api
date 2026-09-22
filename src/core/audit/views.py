@@ -12,6 +12,7 @@ from src.core.cms.adp.services.permissions import PermissionService
 from src.core.utils.mixins import SwaggerSafeMixin
 
 from . import catalog
+from .core_actions import PLATFORM_ADMIN_SOURCE_MODULES
 from .dimensions import (
     get_dimensions_for_ui,
     get_read_guard_dimensions,
@@ -33,6 +34,9 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
 
     Доступен глобальному администратору и тем, кому разрешает провайдер
     ``audit.can_read`` в пределах read_guard-измерений scope.
+    Источники админ-панели (``PLATFORM_ADMIN_SOURCE_MODULES``) отдаются только
+    глобальному администратору и не входят в выборку, ограниченную измерением
+    ``organization``.
     Фильтры: модуль, действие / actions / exclude_actions, инициатор, важность,
     период, измерения scope, поиск по объекту/инициатору.
     """
@@ -54,6 +58,34 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
     def _is_global_admin(self) -> bool:
         user = getattr(self.request, 'user', None)
         return bool(user and user.is_authenticated and PermissionService.is_admin(user))
+
+    def _organization_dimension(self) -> dict | None:
+        for dim in get_scope_dimensions():
+            if dim.get('key') == 'organization':
+                return dim
+        return None
+
+    def _hide_platform_admin_sources(self) -> bool:
+        """Скрыть события админ-панели.
+
+        Не-админ не видит их никогда: карточка по id, список и экспорт
+        не отдают ``core.cms.adp`` и ``core.settings``. Глобальный администратор
+        не видит их, когда запрос ограничен измерением organization
+        (журнал в настройках организации). Read_guard для не-админа уже
+        держит выборку в организации, поэтому отдельная ветка не нужна.
+        """
+        if not self._is_global_admin():
+            return True
+        dim = self._organization_dimension()
+        if dim is None:
+            return False
+        raw = self.request.query_params.get(dim['filter_param'])
+        return raw not in (None, '')
+
+    def _exclude_platform_admin_sources(self, qs):
+        if not self._hide_platform_admin_sources():
+            return qs
+        return qs.exclude(source_module__in=PLATFORM_ADMIN_SOURCE_MODULES)
 
     def _read_scope_values(self) -> dict | None:
         """Значения всех read_guard-измерений из запроса для не-админа.
@@ -237,6 +269,7 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
                 'entity_ref',
             )
         qs = self._apply_read_scope(qs)
+        qs = self._exclude_platform_admin_sources(qs)
         return self._apply_filters(qs)
 
     def _resolve_actor_scope(self) -> dict:
@@ -259,9 +292,15 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         Список инициаторов — отдельно в ``actors``: на 3G он тяжёлый (до 500
         записей) и не нужен для первого экрана таблицы.
         """
+        modules = catalog.get_modules()
+        actions = catalog.get_flat_actions()
+        if self._hide_platform_admin_sources():
+            hidden = set(PLATFORM_ADMIN_SOURCE_MODULES)
+            modules = [item for item in modules if item.get('module') not in hidden]
+            actions = [item for item in actions if item.get('module') not in hidden]
         return Response({
-            'modules': catalog.get_modules(),
-            'actions': catalog.get_flat_actions(),
+            'modules': modules,
+            'actions': actions,
             'severities': [
                 {'value': value, 'label': label}
                 for value, label in AuditEvent.SEVERITY_CHOICES
@@ -271,8 +310,15 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['get'], url_path='actors')
     def actors(self, request):
         """Уникальные инициаторы для фильтра журнала (можно грузить после таблицы)."""
+        if not self._is_global_admin() and not self._read_scope_values():
+            return Response({'actors': []})
+        scope = self._resolve_actor_scope() or None
+        excluded = PLATFORM_ADMIN_SOURCE_MODULES if self._hide_platform_admin_sources() else ()
         return Response({
-            'actors': catalog.get_distinct_actors(scope=self._resolve_actor_scope()),
+            'actors': catalog.get_distinct_actors(
+                scope=scope,
+                exclude_source_modules=excluded,
+            ),
         })
 
     @action(detail=False, methods=['get'], url_path='dimensions')
