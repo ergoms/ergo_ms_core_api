@@ -14,7 +14,7 @@ logger = logging.getLogger('core.audit')
 
 ACTION_DEFINITIONS_GROUP = AUDIT_ACTION_DEFINITIONS_GROUP
 
-CATALOG_CACHE_KEY = 'audit:catalog:v1'
+CATALOG_CACHE_KEY = 'audit:catalog:v2'
 ACTORS_CACHE_KEY = 'audit:actors:v1'
 CATALOG_CACHE_TTL = 600
 ACTORS_CACHE_TTL = 600
@@ -84,6 +84,21 @@ def get_action_spec(source_module: str, action: str) -> dict | None:
     for other in get_catalog().values():
         spec = other['actions'].get(action_key)
         if spec:
+            return spec
+    return None
+
+
+def find_action_spec(source_module: str, action: str) -> dict | None:
+    """Спецификация действия: сначала модуль источника, затем любой модуль каталога."""
+    action_key = action or ''
+    if not action_key:
+        return None
+    spec = get_action_spec(source_module, action_key)
+    if spec is not None:
+        return spec
+    for section in get_catalog().values():
+        spec = section['actions'].get(action_key)
+        if spec is not None:
             return spec
     return None
 
