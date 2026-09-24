@@ -4,6 +4,7 @@ import httpx
 from django.test import SimpleTestCase
 
 from src.core.integrations.exceptions import BridgePayloadError, BridgeUnavailable
+from src.core.integrations.transports import http as http_transport
 from src.core.integrations.transports.http import HttpTransport
 
 
@@ -104,3 +105,30 @@ class HttpTransportErrorTests(SimpleTestCase):
                                 5,
                             )
                             send.assert_not_called()
+
+    def test_timeout_cools_down_whole_host(self):
+        http_transport._peer_down_until.clear()
+        calls = {'n': 0}
+
+        def request(method, url, **kwargs):
+            calls['n'] += 1
+            raise httpx.ReadTimeout('timed out')
+
+        fake = type('FakeClient', (), {'request': staticmethod(request)})()
+        try:
+            with self.assertRaises(httpx.ReadTimeout):
+                http_transport._http_send(
+                    fake,
+                    'GET',
+                    'http://10.9.8.7:8123/internal/bridge/all',
+                )
+            self.assertEqual(calls['n'], 1)
+            with self.assertRaises(httpx.ConnectError):
+                http_transport._http_send(
+                    fake,
+                    'GET',
+                    'http://10.9.8.7:8124/internal/bridge/all',
+                )
+            self.assertEqual(calls['n'], 1)
+        finally:
+            http_transport._peer_down_until.clear()

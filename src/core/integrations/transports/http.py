@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from typing import Any, Callable, Iterator
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -35,10 +37,47 @@ _TOKEN_HEADER = 'X-Bridge-Token'
 
 
 _STREAM_READ_TIMEOUT = 300.0
+# Один таймаут на хост: bridge.all не должен обходить каждый порт мёртвой машины.
+_PEER_DOWN_SECONDS = 30.0
+_peer_down_until: dict[str, float] = {}
+_peer_down_lock = threading.Lock()
+
+
+def _peer_host(url: str) -> str:
+    return (urlparse(url).hostname or '').strip().lower()
+
+
+def _peer_cooling_down(url: str) -> bool:
+    host = _peer_host(url)
+    if not host:
+        return False
+    now = time.monotonic()
+    with _peer_down_lock:
+        until = _peer_down_until.get(host, 0.0)
+        if until > now:
+            return True
+        if host in _peer_down_until:
+            del _peer_down_until[host]
+        return False
+
+
+def _mark_peer_down(url: str) -> None:
+    host = _peer_host(url)
+    if not host:
+        return
+    with _peer_down_lock:
+        _peer_down_until[host] = time.monotonic() + _PEER_DOWN_SECONDS
+
+
+def _fast_timeout() -> httpx.Timeout:
+    """Обычный RPC. Долгий read остаётся только у stream=True."""
+    return httpx.Timeout(connect=2.0, read=4.0, write=4.0, pool=2.0)
 
 
 def _http_send(client: httpx.Client, method: str, url: str, *, stream: bool = False, **kwargs):
-    """Повтор при 5xx и TransportError, кроме ConnectError (peer не слушает)."""
+    """Повтор при быстром 5xx. Таймаут и обрыв соединения не повторяем: peer молчит."""
+    if _peer_cooling_down(url):
+        raise httpx.ConnectError(f'bridge peer cooling down: {_peer_host(url)}')
     last_exc: Exception | None = None
     attempts = _retries() + 1
     for attempt in range(attempts):
@@ -47,7 +86,7 @@ def _http_send(client: httpx.Client, method: str, url: str, *, stream: bool = Fa
                 request = client.build_request(method, url, **kwargs)
                 response = client.send(request, stream=True)
             else:
-                response = client.request(method, url, **kwargs)
+                response = client.request(method, url, timeout=_fast_timeout(), **kwargs)
             if response.status_code >= 500 and attempt + 1 < attempts:
                 logger.warning(
                     'Bridge HTTP %s %s -> %s, retry %s/%s',
@@ -60,12 +99,13 @@ def _http_send(client: httpx.Client, method: str, url: str, *, stream: bool = Fa
                 response.close()
                 continue
             return response
-        except httpx.ConnectError:
-            # Peer ещё не слушает — повтор сразу не поможет (django check / старт).
+        except (httpx.TimeoutException, httpx.ConnectError):
+            _mark_peer_down(url)
             raise
         except httpx.TransportError as exc:
             last_exc = exc
             if attempt + 1 >= attempts:
+                _mark_peer_down(url)
                 raise
             logger.warning(
                 'Bridge HTTP %s %s transport error, retry %s/%s: %s',
@@ -393,6 +433,8 @@ class HttpTransport:
             merged = dict(self._groups.get(group, {}))
 
         for base in _remote_bases_for_group(group):
+            if _peer_cooling_down(base):
+                continue
             try:
                 remote = self._remote_all(base, group)
             except Exception:
