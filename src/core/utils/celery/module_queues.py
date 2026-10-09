@@ -10,6 +10,7 @@ from typing import Any, Iterable
 logger = logging.getLogger('celery.module_queues')
 
 _QUEUE_KEY = 'queue'
+DEDICATED_QUEUES_FILENAME = 'dedicated_queues.yaml'
 
 
 def _project_root() -> Path:
@@ -100,3 +101,58 @@ def queues_for_module(
     owned.update(queues_from_celery_configs(directory))
 
     return sorted(owned)
+
+
+def read_dedicated_queues(module_dir: str | Path) -> list[dict[str, Any]]:
+    """Очереди из hook ``dedicated_queues.yaml``: их слушает отдельный процесс.
+
+    Основной worker модуля эти имена не забирает, иначе он держит сообщения
+    в резерве, пока его потоки заняты другими задачами.
+    """
+    path = Path(module_dir) / DEDICATED_QUEUES_FILENAME
+    if not path.is_file():
+        return []
+    try:
+        import yaml
+    except ImportError:
+        logger.debug('PyYAML недоступен, %s пропущен', path)
+        return []
+    try:
+        data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.debug('Не удалось прочитать %s: %s', path, exc)
+        return []
+    raw = data.get('queues') if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        return []
+    specs: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get('name') or '').strip()
+        hostname = str(item.get('hostname') or '').strip()
+        if not name or not hostname:
+            continue
+        try:
+            concurrency = int(item.get('concurrency') or 1)
+        except (TypeError, ValueError):
+            concurrency = 1
+        specs.append({
+            'name': name,
+            'hostname': hostname,
+            'concurrency': max(1, concurrency),
+        })
+    return specs
+
+
+def dedicated_queue_names(modules_root: str | Path) -> set[str]:
+    """Имена отдельных очередей всех каталогов modules/<name>/."""
+    root = Path(modules_root)
+    names: set[str] = set()
+    if not root.is_dir():
+        return names
+    for path in root.iterdir():
+        if path.is_dir():
+            for spec in read_dedicated_queues(path):
+                names.add(spec['name'])
+    return names
