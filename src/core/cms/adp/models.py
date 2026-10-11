@@ -456,3 +456,5 @@ from src.core.cms.adp.menu.models import (  # noqa: E402, F401
     MenuItem,
     MenuSeparator,
 )
+
+from .connection_models import PresenceConnection, SessionConnectionInterval  # noqa: E402,F401

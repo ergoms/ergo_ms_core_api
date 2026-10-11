@@ -18,6 +18,7 @@ from .channels_ import get_channels
 from .models import Notification, NotificationUserSettings
 from .navigation_validation import sanitize_notification_navigation, validate_notification_navigation
 from .preferences import PreferenceResolver, clamp_auto_archive_days
+from .scope import normalize_scope_label, normalize_scope_ref
 from .unread_cache import (
     get_cached_unread_count,
     invalidate_unread_count_cache,
@@ -106,6 +107,8 @@ class NotificationService:
         meta: dict | None = None,
         actions: list | None = None,
         idempotency_key: str | None = None,
+        scope_ref: str = '',
+        scope_label: str = '',
     ) -> Notification | None:
         recipient_id, ok = _resolve_recipient(recipient)
         if not ok:
@@ -137,6 +140,9 @@ class NotificationService:
             return None
 
         action_list = _sanitize_notification_actions(actions) if isinstance(actions, list) else []
+        scope_ref_clean = normalize_scope_ref(scope_ref)
+        scope_label_clean = normalize_scope_label(scope_label)
+
         defaults = {
             'title': title,
             'body': body or '',
@@ -151,6 +157,8 @@ class NotificationService:
             'actions_state': 'pending' if action_list else None,
             # email-only уведомление хранит данные для письма, но скрыто из inbox
             'in_app_visible': enabled_channels.get('in_app', True),
+            'scope_ref': scope_ref_clean,
+            'scope_label': scope_label_clean,
         }
 
         if idempotency_key:
@@ -159,6 +167,23 @@ class NotificationService:
                 idempotency_key=idempotency_key,
                 defaults=defaults,
             )
+            update_fields = []
+            if (
+                not created
+                and not notification.scope_ref
+                and defaults['scope_ref']
+            ):
+                notification.scope_ref = defaults['scope_ref']
+                update_fields.append('scope_ref')
+            if (
+                not created
+                and not notification.scope_label
+                and defaults['scope_label']
+            ):
+                notification.scope_label = defaults['scope_label']
+                update_fields.append('scope_label')
+            if update_fields:
+                notification.save(update_fields=update_fields)
         else:
             notification = Notification.objects.create(
                 recipient_id=recipient_id,

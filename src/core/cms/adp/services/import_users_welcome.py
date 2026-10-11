@@ -133,7 +133,13 @@ def send_import_welcome_email(
     subject: str,
     body: str,
 ) -> Tuple[bool, Optional[str]]:
-    return send_plain_email(subject=subject, body=body, recipients=[recipient_email])
+    composed = compose_import_welcome_defaults()
+    return send_plain_email(
+        subject=subject,
+        body=body,
+        recipients=[recipient_email],
+        from_display_name=composed.from_display_name,
+    )
 
 
 def parse_send_welcome_emails_flag(raw_value) -> bool:

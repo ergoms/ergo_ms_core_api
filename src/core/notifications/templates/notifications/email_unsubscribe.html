@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'">
+  <title>{% if mode == 'done' %}Отписка оформлена{% else %}Отписка от писем{% endif %}</title>
+  <style>
+    :root {
+      --unsub-bg: #f4f7fb;
+      --unsub-card: #ffffff;
+      --unsub-border: #d7e0ea;
+      --unsub-text: #0f172a;
+      --unsub-muted: #64748b;
+      --unsub-accent: #0369a1;
+      --unsub-accent-hover: #025985;
+      --unsub-accent-soft: #e0f2fe;
+      --unsub-success: #1c7145;
+      --unsub-success-bg: #e9f7ef;
+      --unsub-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
+      --unsub-focus: #0284c7;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --unsub-bg: #0f172a;
+        --unsub-card: #1e293b;
+        --unsub-border: #334155;
+        --unsub-text: #f8fafc;
+        --unsub-muted: #94a3b8;
+        --unsub-accent: #38bdf8;
+        --unsub-accent-hover: #7dd3fc;
+        --unsub-accent-soft: #0c4a6e;
+        --unsub-success: #86efac;
+        --unsub-success-bg: #14532d;
+        --unsub-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        --unsub-focus: #7dd3fc;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+    }
+
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background:
+        radial-gradient(1200px 480px at 50% -80px, var(--unsub-accent-soft), transparent 70%),
+        var(--unsub-bg);
+      color: var(--unsub-text);
+    }
+
+    .notif-unsub {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+
+    .notif-unsub__card {
+      width: 100%;
+      max-width: 28rem;
+      background: var(--unsub-card);
+      border: 1px solid var(--unsub-border);
+      border-radius: 16px;
+      box-shadow: var(--unsub-shadow);
+      padding: 28px 28px 24px;
+    }
+
+    .notif-unsub__kicker {
+      margin: 0 0 16px;
+      color: var(--unsub-muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 1.375rem;
+      line-height: 1.3;
+      font-weight: 650;
+    }
+
+    p {
+      margin: 0 0 12px;
+      color: var(--unsub-muted);
+      font-size: 0.975rem;
+      line-height: 1.55;
+    }
+
+    .notif-unsub__lead { color: var(--unsub-text); }
+
+    form { margin: 20px 0 0; }
+
+    .notif-unsub__submit {
+      appearance: none;
+      width: 100%;
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 16px;
+      background: var(--unsub-accent);
+      color: #fff;
+      font: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .notif-unsub__submit { color: #0f172a; }
+    }
+
+    .notif-unsub__submit:hover { background: var(--unsub-accent-hover); }
+
+    .notif-unsub__submit:focus-visible {
+      outline: 3px solid var(--unsub-focus);
+      outline-offset: 3px;
+    }
+
+    .notif-unsub__note {
+      margin: 16px 0 0;
+      font-size: 0.8125rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="notif-unsub" id="main-content">
+    <section class="notif-unsub__card">
+      <p class="notif-unsub__kicker">Уведомления</p>
+      {% if mode == 'done' %}
+      <h1>Вы отписались</h1>
+      <p class="notif-unsub__lead">Если ссылка была действительна, письма-уведомления на этот адрес больше не придут.</p>
+      <p class="notif-unsub__note">Лента в системе и служебные письма учётки это не меняет.</p>
+      {% else %}
+      <h1>Отписаться от писем?</h1>
+      <p class="notif-unsub__lead">Подтвердите, что больше не хотите получать письма-уведомления.</p>
+      <p>После подтверждения канал почты в предпочтениях будет выключен. Колокольчик в системе останется.</p>
+      <form method="post" action="">
+        <input type="hidden" name="token" value="{{ token }}">
+        <button class="notif-unsub__submit" type="submit">Отписаться</button>
+      </form>
+      <p class="notif-unsub__note">Страница одноразовая. Адрес получателя на ней не показывается.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

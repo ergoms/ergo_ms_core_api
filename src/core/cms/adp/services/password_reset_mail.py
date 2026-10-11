@@ -81,6 +81,7 @@ def send_password_reset_code_email(email: str, code: str) -> tuple[bool, str | N
         body=composed.body,
         recipients=[email],
         html_body=composed.html_body,
+        from_display_name=composed.from_display_name,
     )
 
 
@@ -91,5 +92,6 @@ def send_admin_password_reset_email(email: str) -> tuple[bool, str | None]:
         body=composed.body,
         recipients=[email],
         html_body=composed.html_body,
+        from_display_name=composed.from_display_name,
         fail_log_level=logging.WARNING,
     )

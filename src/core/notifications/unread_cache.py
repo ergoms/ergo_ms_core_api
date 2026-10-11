@@ -3,7 +3,7 @@
 from django.conf import settings
 from django.core.cache import cache
 
-UNREAD_CACHE_KEY_PREFIX = 'notifications:unread:'
+UNREAD_CACHE_KEY_PREFIX = 'notifications:unread:v3:'
 
 
 def get_unread_cache_ttl() -> int:
@@ -17,7 +17,10 @@ def _unread_cache_key(user_id: int) -> str:
 def invalidate_unread_count_cache(user_id: int | None) -> None:
     if user_id is None:
         return
-    cache.delete(_unread_cache_key(int(user_id)))
+    uid = int(user_id)
+    cache.delete(_unread_cache_key(uid))
+    cache.delete(f'notifications:unread:{uid}')
+    cache.delete(f'notifications:unread:v2:{uid}')
 
 
 def get_cached_unread_count(user_id: int) -> int | None:

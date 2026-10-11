@@ -25,6 +25,8 @@ def _create_notification(
     meta=None,
     actions=None,
     idempotency_key=None,
+    scope_ref='',
+    scope_label='',
 ):
     """Создать уведомление и доставить его по всем зарегистрированным каналам.
 
@@ -38,11 +40,13 @@ def _create_notification(
         source_module (str): идентификатор модуля-источника, например 'my_module'.
         event_key (str): тип события внутри модуля, например 'course.review_required'.
         link_url (str|None): относительный путь без числовых pk (public_id/UUID).
-        route (dict|None): {'name': '<RouteName>', 'params': {...}} — params только UUID
-            или нечисловые строки; числовые pk отбрасываются при создании.
+        route (dict|None): {'name': '<RouteName>', 'params': {...}, 'query': {...}} —
+            params и query только UUID или нечисловые строки; числовые pk отбрасываются.
         meta (dict|None): произвольные данные.
         actions (list|None): кнопки [{id, label, style, handler}] для in_app.
         idempotency_key (str|None): защита от дублей при повторной доставке.
+        scope_ref (str): непрозрачная ссылка контекста сессии; пусто — видно везде.
+        scope_label (str): подпись контекста для ленты и письма.
 
     Возвращает Notification или None при некорректных данных.
     """
@@ -59,6 +63,8 @@ def _create_notification(
         meta=meta,
         actions=actions,
         idempotency_key=idempotency_key,
+        scope_ref=scope_ref,
+        scope_label=scope_label,
     )
 
 

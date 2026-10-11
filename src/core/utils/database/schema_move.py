@@ -281,6 +281,13 @@ def retarget_public_auth_user_foreign_keys(connection) -> list[str]:
             ) = row
             if not cols or not ref_cols:
                 continue
+            # Устаревшая копия в public при живой таблице в core: данные там
+            # старые (пользователи из public.auth_user), перенацеливание упало бы
+            # на FK. Приложение читает core (search_path), копию не трогаем.
+            if child_schema == 'public' and relation_exists(
+                connection, CORE_SCHEMA, child_table
+            ):
+                continue
             q_schema = quote_ident(connection, child_schema)
             q_table = quote_ident(connection, child_table)
             q_con = quote_ident(connection, conname)

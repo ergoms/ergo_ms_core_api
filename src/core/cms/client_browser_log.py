@@ -21,6 +21,8 @@ _SENSITIVE_KEYS = frozenset({
 _MAX_MESSAGE = 500
 _MAX_CONTEXT_KEYS = 20
 _MAX_CONTEXT_VALUE = 200
+# Версия браузера нужна, чтобы отличать сбои надстроек конкретного браузера от ошибок приложения.
+_MAX_USER_AGENT = 200
 
 
 def _truncate(value: str, limit: int) -> str:
@@ -91,9 +93,12 @@ class ClientBrowserLogView(BaseAPIViewAuthMixin):
         if level == 'critical':
             log_method = logger.critical
 
+        user_agent = _truncate(request.META.get('HTTP_USER_AGENT', '').strip(), _MAX_USER_AGENT)
+
         log_method(
-            'user=%s path=%s context=%s message=%s',
+            'user=%s ua=%s path=%s context=%s message=%s',
             user_label,
+            user_agent or '-',
             path or '-',
             context or {},
             message,

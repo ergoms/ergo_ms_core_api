@@ -10,7 +10,10 @@ from django.core.mail import EmailMultiAlternatives
 
 from src.core.utils.smtp_errors import format_smtp_error, sanitize_email_delivery_message
 from src.core.utils.smtp_resolver import EMAIL_DISABLED_MESSAGE, is_email_enabled, resolve_connection_and_from
-from src.core.utils.transactional_email_headers import apply_transactional_email_headers
+from src.core.utils.transactional_email_headers import (
+    apply_transactional_email_headers,
+    relabel_from_display_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,7 @@ def send_plain_email(
     recipients: Sequence[str],
     fail_log_level: int = logging.ERROR,
     html_body: str | None = None,
+    from_display_name: str | None = None,
 ) -> SendResult:
     """
     Отправить plain-text письмо (опционально с HTML-альтернативой).
@@ -82,6 +86,7 @@ def send_plain_email(
         error_msg = 'SMTP не настроен (нет EmailSettings в БД и DEFAULT_FROM_EMAIL в env)'
         logger.log(fail_log_level, error_msg)
         return False, sanitize_email_delivery_message(error_msg)
+    from_email = relabel_from_display_name(from_email, from_display_name)
 
     try:
         message = EmailMultiAlternatives(

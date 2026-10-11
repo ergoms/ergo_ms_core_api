@@ -136,4 +136,9 @@ CELERY_BEAT_MODULE_LOGGERS = beat_module_manager.get_module_loggers()
 CELERY_BEAT_MODULES = beat_module_manager.get_modules_list()
 
 # ==================== Синхронизация задач с БД ====================
+CELERY_BEAT_SCHEDULE['session-connection-history-maintenance'] = {
+    'task': 'core.cms.adp.maintain_connection_history',
+    'schedule': 60.0,
+}
+
 # Синхронизация будет выполнена в celery.py после полной инициализации Django 

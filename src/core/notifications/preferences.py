@@ -117,6 +117,9 @@ class PreferenceResolver:
             if not spec.get('available', False):
                 result[channel] = False
                 continue
+            if spec.get('forced'):
+                result[channel] = True
+                continue
             if rows.get((GLOBAL_KEY, GLOBAL_KEY, channel)) is False:
                 result[channel] = False
                 continue
@@ -226,11 +229,15 @@ class PreferencePanelService:
         channels = {}
         for channel, spec in event['channels'].items():
             available = spec.get('available', False)
+            locked = bool(spec.get('forced')) and available
             explicit = user_prefs.get((module, event['event_key'], channel))
             enabled = explicit if explicit is not None else bool(spec.get('default', False))
+            if locked:
+                enabled = True
             channels[channel] = {
                 'available': available,
                 'enabled': bool(enabled) if available else False,
+                'locked': locked,
             }
         return {
             'event_key': event['event_key'],
@@ -283,6 +290,8 @@ class PreferencePanelService:
                 continue
             spec = catalog.get_event_spec(source_module, event_key)
             if spec is None or not spec['channels'][channel].get('available', False):
+                continue
+            if spec['channels'][channel].get('forced'):
                 continue
             NotificationPreference.objects.update_or_create(
                 user_id=user.pk,

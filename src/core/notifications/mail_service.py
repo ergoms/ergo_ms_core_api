@@ -8,6 +8,7 @@ fallback — env-переменные (src/config/settings/smtp.py). Кросс�
 
 import logging
 from dataclasses import dataclass
+from email.mime.image import MIMEImage
 
 from django.core.mail import EmailMultiAlternatives
 
@@ -20,7 +21,12 @@ from src.core.utils.smtp_resolver import (
 )
 from src.core.utils.transactional_email_headers import apply_transactional_email_headers
 
-from .email_templates import EmailTemplateResolver, RenderedEmail, resolve_unsubscribe_url
+from .email_templates import (
+    EmailTemplateResolver,
+    RelatedEmailImage,
+    RenderedEmail,
+    resolve_unsubscribe_url,
+)
 
 logger = logging.getLogger('core.notifications')
 
@@ -65,9 +71,12 @@ class MailService:
             apply_transactional_email_headers(
                 message,
                 from_email=sender,
-                unsubscribe_url=resolve_unsubscribe_url(),
+                unsubscribe_url=resolve_unsubscribe_url(notification),
             )
             message.attach_alternative(rendered.html_body, 'text/html')
+            _attach_related_images(message, rendered.related_images)
+            for attachment in rendered.attachments:
+                message.attach(attachment.filename, attachment.content, attachment.mimetype)
             message.send(fail_silently=False)
             return SendResult(success=True)
         except Exception as exc:
@@ -76,3 +85,26 @@ class MailService:
                 notification.pk, recipient_email,
             )
             return SendResult(success=False, error=format_smtp_error(exc))
+
+
+def _attach_related_images(message: EmailMultiAlternatives, images) -> None:
+    """Картинки с CID крепим как related, не как обычные вложения."""
+    related = tuple(images or ())
+    if not related:
+        return
+    message.mixed_subtype = 'related'
+    for image in related:
+        if not isinstance(image, RelatedEmailImage) or not image.content:
+            continue
+        cid = str(image.cid or '').strip()
+        if not cid:
+            continue
+        subtype = str(image.subtype or 'png').split('/')[-1] or 'png'
+        mime = MIMEImage(image.content, _subtype=subtype)
+        mime.add_header('Content-ID', f'<{cid}>')
+        mime.add_header(
+            'Content-Disposition',
+            'inline',
+            filename=image.filename or f'{cid}.{subtype}',
+        )
+        message.attach(mime)

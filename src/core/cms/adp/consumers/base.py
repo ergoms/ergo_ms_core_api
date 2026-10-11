@@ -113,7 +113,8 @@ class JwtMessageAuthConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=WS_AUTH_CLOSE_UNAUTHORIZED)
             return
 
-        user = await user_from_jwt_token(token)
+        identity = await user_from_jwt_token(token, with_claims=True)
+        user, claims = identity if identity is not None else (None, {})
         if user is None or not getattr(user, 'is_authenticated', False):
             await self.close(code=WS_AUTH_CLOSE_UNAUTHORIZED)
             return
@@ -129,6 +130,7 @@ class JwtMessageAuthConsumer(AsyncJsonWebsocketConsumer):
 
         self.ws_user = user
         self.scope['user'] = user
+        self.ws_auth_claims = claims
 
         try:
             await self.on_ws_authenticated()

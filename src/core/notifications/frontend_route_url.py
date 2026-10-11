@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 logger = logging.getLogger('core.notifications')
 
 _PARAM_RE = re.compile(r':([A-Za-z_][\w]*)(\?)?')
+_QUERY_KEY_RE = re.compile(r'^[A-Za-z_][\w]*$')
 INBOX_PATH = '/user/notifications'
 
 
@@ -17,7 +18,7 @@ def _normalize_base(base_url: str) -> str:
 
 
 def join_frontend_path(base_url: str, path: str) -> str:
-    """Склеить FRONTEND_BASE_URL и путь клиента (/crm/tasks/...)."""
+    """Склеить FRONTEND_BASE_URL и путь клиента (/items/...)."""
     base = _normalize_base(base_url)
     if not path:
         return base
@@ -29,7 +30,7 @@ def join_frontend_path(base_url: str, path: str) -> str:
 
 
 def fill_vue_path(template: str, params: dict | None) -> str | None:
-    """Подставить params в шаблон Vue Router (/crm/tasks/:taskId?)."""
+    """Подставить params в шаблон Vue Router (/items/:itemId?)."""
     if not template:
         return None
     values = params if isinstance(params, dict) else {}
@@ -57,8 +58,27 @@ def fill_vue_path(template: str, params: dict | None) -> str | None:
     return filled
 
 
+def _query_string(query) -> str:
+    """Собрать query без числовых pk: только именованные ключи и непрозрачные значения."""
+    if not isinstance(query, dict) or not query:
+        return ''
+    pairs = []
+    for key, value in query.items():
+        if not isinstance(key, str) or not _QUERY_KEY_RE.fullmatch(key):
+            continue
+        if value is None or value == '' or isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            continue
+        text = str(value).strip()
+        if not text or text.isdigit():
+            continue
+        pairs.append((key, text))
+    return urlencode(pairs)
+
+
 def build_frontend_url_from_route(route, *, base_url: str, path_index: dict | None = None) -> str | None:
-    """route {name, params} → абсолютный URL или None, если имя неизвестно."""
+    """route {name, params, query} → абсолютный URL или None, если имя неизвестно."""
     if not isinstance(route, dict):
         return None
     name = (route.get('name') or '').strip()
@@ -80,7 +100,11 @@ def build_frontend_url_from_route(route, *, base_url: str, path_index: dict | No
     filled = fill_vue_path(template, route.get('params'))
     if not filled:
         return None
-    return join_frontend_path(base_url, filled)
+    url = join_frontend_path(base_url, filled)
+    qs = _query_string(route.get('query'))
+    if qs:
+        return f'{url}?{qs}'
+    return url
 
 
 def inbox_url(base_url: str) -> str:

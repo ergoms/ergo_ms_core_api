@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
+from src.core.cms.adp.services import connection_history
 from src.core.utils.swagger.yasg_compat import swagger_auto_schema, openapi
 
 from src.core.cms.adp.services import presence as presence_service
@@ -60,6 +62,10 @@ class RealtimeSyncView(BaseAPIViewAuthMixin, BaseAPIView):
 
         presence_ok = None
         if str(request.query_params.get('presence_heartbeat', '')).lower() in ('1', 'true', 'yes'):
+            try:
+                connection_history.heartbeat(request, request.query_params.get('presence_connection_id'))
+            except ValueError as exc:
+                raise ValidationError(str(exc)) from exc
             entry = presence_service.http_heartbeat(user.pk)
             presence_ok = {
                 'is_online': entry.is_online,

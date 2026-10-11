@@ -1,10 +1,12 @@
 import asyncio
 import logging
+from types import SimpleNamespace
 
 from channels.db import database_sync_to_async
 
 from src.core.cms.adp.consumers.base import JwtMessageAuthConsumer, WsAuthRejectedError
 from src.core.cms.adp.services import presence as presence_service
+from src.core.cms.adp.services import connection_history
 from src.core.cms.adp.services.permissions import PermissionService
 from src.core.cms.adp.services.presence_realtime import publish_presence_snapshot
 from src.core.realtime.consumer_mixin import RealtimeEnvelopeConsumerMixin
@@ -23,6 +25,8 @@ class PresenceConsumer(RealtimeEnvelopeConsumerMixin, JwtMessageAuthConsumer):
 
     async def connect(self):
         self._watched_ids: set[str] = set()
+        self._history_request = None
+        self._history_connection_id = None
         await super().connect()
 
     async def on_ws_authenticated(self):
@@ -30,6 +34,11 @@ class PresenceConsumer(RealtimeEnvelopeConsumerMixin, JwtMessageAuthConsumer):
         await self._register_connection(self.user_id)
 
     async def on_ws_disconnect(self, close_code):
+        if self._history_request is not None and close_code in (1000, 1001, 4401):
+            await database_sync_to_async(connection_history.disconnect)(
+                self._history_request, self._history_connection_id,
+                reason='expired' if close_code == 4401 else 'disconnect',
+            )
         await self._sync_watched_ids(set())
         if self.user_id is not None:
             await self._unregister_connection(self.user_id)
@@ -42,12 +51,45 @@ class PresenceConsumer(RealtimeEnvelopeConsumerMixin, JwtMessageAuthConsumer):
             return
         event_type = envelope.get('type')
         if event_type == PRESENCE_PING_EVENT:
+            payload = envelope.get('payload') or {}
+            if payload.get('connection_id'):
+                request = await self._validated_history_request()
+                if request is None:
+                    await self.close(code=4401)
+                    return
+                try:
+                    await database_sync_to_async(connection_history.heartbeat)(request, payload['connection_id'])
+                except ValueError:
+                    await self.close(code=4400)
+                    return
+                self._history_request = request
+                self._history_connection_id = payload['connection_id']
             await self._touch(self.user_id)
             return
         if event_type == PRESENCE_WATCH_EVENT:
             await self._sync_watched_ids(set(
                 presence_service.parse_watch_public_ids(envelope.get('payload')),
             ))
+
+    @database_sync_to_async
+    def _validated_history_request(self):
+        from django.utils import timezone
+        from src.core.cms.adp.services.session_devices import is_device_session_active
+        validated = getattr(self, 'ws_auth_claims', {})
+        if validated.get('exp', 0) <= timezone.now().timestamp():
+            return None
+        if str(validated.get('user_id')) != str(self.user_id):
+            return None
+        device_id = validated.get('device_id')
+        if not device_id or not is_device_session_active(self.ws_user, device_id):
+            return None
+        headers = {key.decode().lower(): value.decode() for key, value in self.scope.get('headers', [])}
+        client = self.scope.get('client') or ('', 0)
+        return SimpleNamespace(user=self.ws_user, auth=validated, META={
+            'HTTP_USER_AGENT': headers.get('user-agent', ''),
+            'HTTP_X_FORWARDED_FOR': headers.get('x-forwarded-for', ''),
+            'REMOTE_ADDR': client[0],
+        })
 
     async def _sync_watched_ids(self, new_ids: set[str]):
         current = getattr(self, '_watched_ids', set())

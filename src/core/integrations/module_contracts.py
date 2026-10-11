@@ -41,6 +41,8 @@ MENU_CATALOG_GROUP = 'menu.catalog'
 
 NOTIFICATIONS_CREATE = 'notifications.create'
 NOTIFICATIONS_RECALL = 'notifications.recall'
+# Подписи контекста для ленты: scope_refs -> {scope_ref: label}.
+NOTIFICATIONS_SCOPE_LABELS = 'notifications.scope_labels'
 # Динамические ops: f'{PREFIX}{module}'
 NOTIFICATIONS_RENDER_EMAIL_PREFIX = 'notifications.render_email.'
 NOTIFICATIONS_FILTER_EVENTS_PREFIX = 'notifications.filter_events_for_user.'
@@ -75,8 +77,9 @@ CORE_USER_DELETE = 'core.user_delete'
 CORE_BULK_USER_CREATE = 'core.bulk_user_create'
 # Необязательная подмена темы и тела служебных писем учётки.
 # Нет провайдера, None или неполный dict — ядро шлёт свой текст.
-# Ответ: {'subject': str, 'body': str, 'html_body'?: str}. Получателя и from
-# модуль не задаёт. Kwargs JSON-примитивы.
+# Ответ: {'subject': str, 'body': str, 'html_body'?: str, 'from_display_name'?: str}.
+# Получателя и адрес From модуль не задаёт, только необязательное отображаемое имя.
+# Kwargs JSON-примитивы.
 CORE_COMPOSE_REGISTRATION_INVITATION = 'core.compose_registration_invitation'
 CORE_COMPOSE_IMPORT_WELCOME_DEFAULTS = 'core.compose_import_welcome_defaults'
 CORE_COMPOSE_PASSWORD_RESET_CODE = 'core.compose_password_reset_code'
@@ -89,6 +92,13 @@ SESSION_RESTORE_CLAIMS = 'session.restore_claims'
 # Старый bool True остаётся истинным; снимок нужен, если в JWT нет user_public_id.
 # is_admin в JWT кладёт ядро (jwt_platform_claims); процесс модуля ему доверяет.
 SESSION_DEVICE_ACTIVE = 'session.device_active'
+# Scoped connection reads: reader_ref + scope, actor_refs for summary;
+# actor_ref/start/end/page/page_size for history. Only public actor references.
+# Event: modules resolve public scope claims into opaque read-guard dimensions.
+# Kwargs: user_public_id, claims (validated JWT mapping); response: scope dict or None.
+SESSION_CONNECTION_SCOPES = 'session.connection_scopes'
+SESSION_CONNECTION_SUMMARY = 'session.connection_summary'
+SESSION_CONNECTION_HISTORY = 'session.connection_history'
 
 MENU_PREPARE_VISIBILITY = 'menu.prepare_visibility'
 MENU_CAN_SEE_ITEM = 'menu.can_see_item'

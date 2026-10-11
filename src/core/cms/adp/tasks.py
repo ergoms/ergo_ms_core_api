@@ -22,6 +22,12 @@ from src.core.utils.methods import generate_secure_random_password
 
 logger = logging.getLogger('celery.core.cms.adp')
 
+@shared_task(name='core.cms.adp.maintain_connection_history')
+def maintain_connection_history_task():
+    from src.core.cms.adp.services.connection_history import maintain_history
+    return maintain_history()
+
+
 MAX_LOGS_IN_META = 1000
 PROGRESS_UPDATE_EVERY_ROWS = 10
 

@@ -125,4 +125,5 @@ def send_registration_invitation_email(
         body=composed.body,
         recipients=[email],
         html_body=composed.html_body,
+        from_display_name=composed.from_display_name,
     )

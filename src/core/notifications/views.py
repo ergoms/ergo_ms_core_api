@@ -198,6 +198,8 @@ class NotificationViewSet(ObjectPermissionMixin, SwaggerSafeMixin, viewsets.Read
         result = NotificationService.execute_action(pk, request.user, action_id)
         if result.get('error') == 'not_found':
             return Response({'success': False, 'error': 'not_found'}, status=404)
+        if result.get('success'):
+            result['unread_count'] = NotificationService.unread_count(request.user)
 
         notification = result.pop('notification', None)
         if notification is not None:

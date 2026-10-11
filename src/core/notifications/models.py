@@ -47,6 +47,20 @@ class Notification(models.Model):
         default='',
         verbose_name='Ключ события',
     )
+    scope_ref = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        verbose_name='Контекст сессии',
+        help_text='Непрозрачная ссылка модуля (public_id). Пусто — видно в любом контексте.',
+    )
+    scope_label = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        verbose_name='Подпись контекста',
+        help_text='Человекочитаемое имя контекста сессии.',
+    )
     link_url = models.CharField(
         max_length=512,
         blank=True,
@@ -138,6 +152,10 @@ class Notification(models.Model):
             models.Index(
                 fields=['recipient', 'deleted_at', 'archived_at', 'created_at'],
                 name='core_notif_inbox_idx',
+            ),
+            models.Index(
+                fields=['recipient', 'scope_ref', 'created_at'],
+                name='core_notif_scope_idx',
             ),
         ]
         constraints = [

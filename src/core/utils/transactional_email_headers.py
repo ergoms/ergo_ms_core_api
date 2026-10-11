@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
-from email.utils import formatdate, make_msgid, parseaddr
+from email.utils import formataddr, formatdate, make_msgid, parseaddr
 from urllib.parse import urlparse
 
 from django.conf import settings
+
+
+def relabel_from_display_name(from_email: str | None, display_name: str | None) -> str:
+    """Подставить отображаемое имя, сам адрес SMTP не менять."""
+    label = (display_name or '').strip()
+    _old, addr = parseaddr(from_email or '')
+    if not label or not addr:
+        return from_email or ''
+    return formataddr((label, addr))
 
 
 def message_id_domain(from_email: str | None = None) -> str:
@@ -36,3 +45,4 @@ def apply_transactional_email_headers(
     url = (unsubscribe_url or '').strip()
     if url:
         message.extra_headers['List-Unsubscribe'] = f'<{url}>'
+        message.extra_headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'

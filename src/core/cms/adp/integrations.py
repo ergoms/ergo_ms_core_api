@@ -9,6 +9,9 @@ from src.core.integrations.module_contracts import (
     ADP_CHECK_MODULE_PERMISSION,
     ADP_IS_ADMIN,
     SESSION_DEVICE_ACTIVE,
+    SESSION_CONNECTION_SUMMARY,
+    SESSION_CONNECTION_HISTORY,
+    AUDIT_CAN_READ,
 )
 
 
@@ -94,3 +97,31 @@ def _adp_check_module_permission(
             **kwargs,
         )
     )
+
+
+def _connection_read_guard(reader_ref, scope):
+    from rest_framework.exceptions import PermissionDenied
+    from src.core.audit.dimensions import get_read_guard_dimensions
+    user = _resolve_user(user_public_id=reader_ref)
+    keys = {dim['key'] for dim in get_read_guard_dimensions()}
+    if not user or len(scope) != 1 or not set(scope).issubset(keys):
+        raise PermissionDenied('Connection history is unavailable.')
+    decisions = bridge.emit(AUDIT_CAN_READ, user=user, scope=scope)
+    if True not in decisions or False in decisions:
+        raise PermissionDenied('Connection history is unavailable.')
+
+
+@bridge.provide_op(SESSION_CONNECTION_SUMMARY)
+def _connection_summary(*, reader_ref, scope, actor_refs):
+    from src.core.cms.adp.services.connection_history import summary
+    _connection_read_guard(reader_ref, scope)
+    return summary(scope=scope, actor_refs=actor_refs)
+
+
+@bridge.provide_op(SESSION_CONNECTION_HISTORY)
+def _connection_history(*, reader_ref, scope, actor_ref, start, end, page=1, page_size=20):
+    from django.utils.dateparse import parse_datetime
+    from src.core.cms.adp.services.connection_history import history
+    _connection_read_guard(reader_ref, scope)
+    return history(scope=scope, actor_ref=actor_ref, start=parse_datetime(start),
+                   end=parse_datetime(end), page=page, page_size=page_size)

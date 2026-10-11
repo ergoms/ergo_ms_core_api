@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 from django.core.cache import cache
+from django.db import transaction
 
 from src.config.env import env
 from src.core.cms.adp.models import UserDevice
@@ -79,10 +80,14 @@ def attach_device_to_refresh_token(refresh_token, device: UserDevice) -> None:
     refresh_token['device_id'] = device.id
 
 
-def revoke_user_device_session(device: UserDevice) -> None:
+def revoke_user_device_session(device: UserDevice, *, reason='revoked') -> None:
+    from src.core.cms.adp.services.connection_history import end_device
     blacklist_refresh_jti(device.user, device.outstanding_token_jti)
-    invalidate_device_session_cache(device.user_id, device.id)
-    device.delete()
+    user_id, device_id = device.user_id, device.pk
+    with transaction.atomic():
+        end_device(device, reason=reason)
+        device.delete()
+    invalidate_device_session_cache(user_id, device_id)
 
 
 def _payload_from_refresh_string(raw: str | None) -> dict | None:
@@ -159,7 +164,7 @@ def revoke_logout_session(request) -> None:
             device = UserDevice.objects.filter(pk=device_id, user=user).first()
             if device is not None:
                 outstanding_jti = device.outstanding_token_jti
-                revoke_user_device_session(device)
+                revoke_user_device_session(device, reason='logout')
                 if jti and jti != outstanding_jti:
                     blacklist_refresh_jti(user, jti)
                 return

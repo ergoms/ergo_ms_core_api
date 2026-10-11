@@ -9,7 +9,7 @@ User = get_user_model()
 
 
 @database_sync_to_async
-def user_from_jwt_token(token: str):
+def user_from_jwt_token(token: str, *, with_claims=False):
     """Разбор access-токена для WebSocket (как DeviceBoundJWTAuthentication в REST)."""
     try:
         from rest_framework_simplejwt.tokens import AccessToken
@@ -44,4 +44,4 @@ def user_from_jwt_token(token: str):
     if not is_device_session_active(user, device_id):
         return None
 
-    return user
+    return (user, dict(validated.payload)) if with_claims else user

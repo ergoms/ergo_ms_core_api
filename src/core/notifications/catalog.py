@@ -58,10 +58,11 @@ FALLBACK_CHANNEL_DEFAULTS = {
 
 def _normalize_channel_spec(raw):
     if not isinstance(raw, dict):
-        return {'available': False, 'default': False}
+        return {'available': False, 'default': False, 'forced': False}
     return {
         'available': bool(raw.get('available', False)),
         'default': bool(raw.get('default', False)),
+        'forced': bool(raw.get('forced', False)),
         'subject': raw.get('subject') or '',
         'template_html': raw.get('template_html') or '',
         'template_text': raw.get('template_text') or '',

@@ -38,7 +38,8 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
     глобальному администратору и не входят в выборку, ограниченную измерением
     ``organization``.
     Фильтры: модуль, действие / actions / exclude_actions, инициатор, важность,
-    период, измерения scope, поиск по объекту/инициатору.
+    период, измерения scope, entity_type, entity_ref, поиск по объекту/инициатору.
+    При entity_ref ответ включает изменения полей (было / стало).
     """
 
     permission_classes = [permissions.IsAuthenticated, CanReadAuditLog]
@@ -50,8 +51,16 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
             return [permissions.IsAuthenticated()]
         return super().get_permissions()
 
+    def _entity_ref_filter(self) -> str:
+        request = getattr(self, 'request', None)
+        if request is None:
+            return ''
+        return (request.query_params.get('entity_ref') or '').strip()
+
     def get_serializer_class(self):
-        if self.action == 'retrieve':
+        # История одной записи (entity_ref) отдаёт было/стало. Общий список
+        # журнала эти поля не тащит.
+        if self.action == 'retrieve' or self._entity_ref_filter():
             return AuditEventDetailSerializer
         return AuditEventListSerializer
 
@@ -220,6 +229,13 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         if actor_label:
             qs = qs.filter(actor_id__isnull=True, actor_label=actor_label)
 
+        entity_type = (params.get('entity_type') or '').strip()
+        if entity_type:
+            qs = qs.filter(entity_type=entity_type)
+        entity_ref = (params.get('entity_ref') or '').strip()
+        if entity_ref:
+            qs = qs.filter(entity_ref=entity_ref)
+
         qs = self._apply_dimension_filters(qs)
 
         date_from = params.get('date_from')
@@ -257,7 +273,7 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
         if self.is_swagger_fake_view():
             return AuditEvent.objects.none()
         qs = AuditEvent.objects.select_related('actor').all()
-        if self.action == 'list':
+        if self.action == 'list' and not self._entity_ref_filter():
             # Поля для JSON-списка не нужны; source_module/action оставляем для каталога.
             qs = qs.defer(
                 'changes',

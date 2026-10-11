@@ -64,6 +64,15 @@ def validate_notification_navigation(
                             errors.append(
                                 f'route.params.{key}: используйте public_id (UUID), не числовой pk',
                             )
+            query = route.get('query')
+            if query is not None and not isinstance(query, dict):
+                errors.append('route.query: ожидается объект')
+            elif isinstance(query, dict):
+                for key, value in query.items():
+                    if _is_numeric_ref(value):
+                        errors.append(
+                            f'route.query.{key}: используйте public_id (UUID), не числовой pk',
+                        )
 
     return errors
 

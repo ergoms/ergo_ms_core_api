@@ -234,6 +234,8 @@ def _validate_notification_channel(raw: Any, path: str, errors: list[str]) -> No
         _expect_bool(data.get('available'), f'{path}.available', errors)
     if 'default' in data:
         _expect_bool(data.get('default'), f'{path}.default', errors)
+    if 'forced' in data:
+        _expect_bool(data.get('forced'), f'{path}.forced', errors)
     for field in ('subject', 'template_html', 'template_text'):
         if field in data and data.get(field) is not None and not isinstance(data.get(field), str):
             errors.append(

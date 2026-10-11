@@ -32,6 +32,7 @@ _EXEMPT_PREFIXES = (
     '/api/cms/adp/dev-tools/',
     '/api/system/ready/',
     '/api/system/maintenance-status/',
+    '/api/notifications/email/unsubscribe/',
 )
 
 _EXEMPT_EXACT = frozenset({

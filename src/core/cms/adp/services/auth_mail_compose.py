@@ -18,6 +18,7 @@ class ComposedAuthEmail:
     subject: str
     body: str
     html_body: str | None = None
+    from_display_name: str | None = None
 
 
 def frontend_login_url() -> str:
@@ -38,7 +39,16 @@ def normalize_composed_email(raw: Any) -> ComposedAuthEmail | None:
         return None
     html_raw = raw.get('html_body')
     html_body = html_raw.strip() if isinstance(html_raw, str) and html_raw.strip() else None
-    return ComposedAuthEmail(subject=subject, body=body, html_body=html_body)
+    name_raw = raw.get('from_display_name')
+    from_display_name = (
+        name_raw.strip() if isinstance(name_raw, str) and name_raw.strip() else None
+    )
+    return ComposedAuthEmail(
+        subject=subject,
+        body=body,
+        html_body=html_body,
+        from_display_name=from_display_name,
+    )
 
 
 def compose_via_optional_op(

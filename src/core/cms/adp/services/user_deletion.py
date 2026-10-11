@@ -76,7 +76,11 @@ def revoke_user_auth(user: User, *, except_device_id: int | None = None) -> None
             except_jti = except_device.outstanding_token_jti or None
         devices_qs = devices_qs.exclude(pk=except_device_id)
 
-    devices_qs.update(is_active=False)
+    from src.core.cms.adp.services.connection_history import end_device
+    with transaction.atomic():
+        for device in devices_qs:
+            end_device(device)
+        devices_qs.update(is_active=False)
     invalidate_device_session_cache(user.id)
     presence_service.reset_user(user.id)
 

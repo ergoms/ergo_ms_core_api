@@ -13,8 +13,8 @@
           <tr>
             <td style="background-color:#1f2937;padding:16px 32px;">
               <span style="color:#ffffff;font-size:18px;font-weight:bold;">ERGO MS</span>
-              {% if module_label %}
-              <span style="color:#9ca3af;font-size:13px;padding-left:12px;">{{ module_label }}</span>
+              {% if scope_label or event_label or module_label %}
+              <span style="color:#9ca3af;font-size:13px;padding-left:12px;">{% if scope_label %}{{ scope_label }}{% endif %}{% if scope_label and event_label %} · {% endif %}{% if event_label %}{{ event_label }}{% elif not scope_label %}{{ module_label }}{% endif %}</span>
               {% endif %}
             </td>
           </tr>

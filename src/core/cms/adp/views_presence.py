@@ -2,6 +2,8 @@ from src.core.utils.swagger.yasg_compat import swagger_auto_schema, openapi
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
+from src.core.cms.adp.services import connection_history
 
 from src.core.cms.adp.serializers import (
     UserPresenceBatchResponseSerializer,
@@ -53,6 +55,10 @@ class UserPresenceHeartbeatView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: UserPresenceEntrySerializer()},
     )
     def post(self, request):
+        try:
+            connection_history.heartbeat(request, request.data.get('connection_id'))
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
         entry = presence_service.http_heartbeat(request.user.pk)
         return Response(presence_service.serialize_presence_entry(entry))
 
@@ -67,7 +73,15 @@ class UserPresenceOfflineView(BaseAPIViewAuthMixin, BaseAPIView):
         responses={200: UserPresenceEntrySerializer()},
     )
     def post(self, request):
-        entry = presence_service.http_offline(request.user.pk)
+        connection_id = request.data.get('connection_id')
+        if connection_id:
+            try:
+                connection_history.disconnect(request, connection_id, reason=request.data.get('reason', 'disconnect'), terminal=True)
+            except ValueError as exc:
+                raise ValidationError(str(exc)) from exc
+            entry = presence_service.get_presence_map([request.user.pk])[request.user.pk]
+        else:
+            entry = presence_service.http_offline(request.user.pk)
         return Response(presence_service.serialize_presence_entry(entry))
 
 
