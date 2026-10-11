@@ -9,6 +9,7 @@
 """
 
 import logging
+from datetime import timedelta
 
 from src.core.integrations import bridge
 from src.core.integrations.exceptions import BridgeUnavailable
@@ -24,6 +25,9 @@ GLOBAL_KEY = NotificationPreference.GLOBAL_KEY
 SIDEBAR_ACTIVITY_DAYS_MIN = NotificationUserSettings.SIDEBAR_ACTIVITY_DAYS_MIN
 SIDEBAR_ACTIVITY_DAYS_MAX = NotificationUserSettings.SIDEBAR_ACTIVITY_DAYS_MAX
 SIDEBAR_ACTIVITY_DAYS_DEFAULT = NotificationUserSettings.SIDEBAR_ACTIVITY_DAYS_DEFAULT
+# Старое прочитанное остаётся в колокольчике ещё час после read_at,
+# даже если created_at уже вне окна sidebar_activity_days.
+SIDEBAR_READ_GRACE = timedelta(hours=1)
 
 AUTO_ARCHIVE_DAYS_PRESETS = NotificationUserSettings.AUTO_ARCHIVE_DAYS_PRESETS
 AUTO_ARCHIVE_DAYS_DEFAULT = NotificationUserSettings.AUTO_ARCHIVE_DAYS_DEFAULT

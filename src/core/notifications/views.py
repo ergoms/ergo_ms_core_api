@@ -18,6 +18,7 @@ from src.core.realtime.topics import notifications_user_topic
 
 from .models import Notification
 from .preferences import (
+    SIDEBAR_READ_GRACE,
     PreferencePanelService,
     get_auto_archive_days,
     get_sidebar_activity_days,
@@ -80,10 +81,14 @@ class NotificationViewSet(ObjectPermissionMixin, SwaggerSafeMixin, viewsets.Read
             )
 
         if self.request.query_params.get('inbox') == 'sidebar':
+            now = timezone.now()
             days = get_sidebar_activity_days(self.request.user)
-            cutoff = timezone.now() - timedelta(days=days)
+            cutoff = now - timedelta(days=days)
+            read_grace_cutoff = now - SIDEBAR_READ_GRACE
             qs = qs.filter(sidebar_hidden_at__isnull=True).filter(
-                Q(is_read=False) | Q(is_read=True, created_at__gte=cutoff)
+                Q(is_read=False)
+                | Q(is_read=True, created_at__gte=cutoff)
+                | Q(is_read=True, read_at__gte=read_grace_cutoff)
             )
 
         created_after = self.request.query_params.get('created_after')
