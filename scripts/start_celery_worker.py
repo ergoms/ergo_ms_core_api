@@ -7,6 +7,7 @@
 
 import argparse
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -177,6 +178,49 @@ def spawn_dedicated_workers(
         # setsid: короткий повторный старт не забирает процесс с собой.
         # Служба всё равно гасит его вместе с основным worker: оба в одном cgroup.
         subprocess.Popen(cmd, cwd=str(API_DIR), start_new_session=True)
+
+
+_AGENT_WAIT_SEC = 90
+_AGENT_RELOAD_SEC = 15
+
+
+def _is_cluster_agent() -> bool:
+    return os.environ.get('CELERY_CLUSTER_ROLE', '').strip().lower() == 'agent'
+
+
+def _allowed_snapshot() -> Optional[tuple]:
+    if resolve_allowed_queues is None:
+        return None
+    try:
+        allowed = resolve_allowed_queues(PROJECT_ROOT)
+    except Exception:
+        return None
+    if not allowed:
+        return tuple()
+    return tuple(sorted(str(item) for item in allowed))
+
+
+def _reexec() -> None:
+    os.execv(sys.executable, [sys.executable, *sys.argv])
+
+
+def _wait_until_agent_has_queues(log) -> bool:
+    deadline = time.monotonic() + _AGENT_WAIT_SEC
+    while time.monotonic() < deadline:
+        if _allowed_snapshot():
+            return True
+        time.sleep(3)
+    log.info('Кластерный план так и не выдал очереди агенту')
+    return False
+
+
+def _signal_group(proc, sig) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, sig)
+    except OSError:
+        proc.send_signal(sig)
 
 
 def _restrict_cluster_queues(queues: List[str], log) -> Optional[List[str]]:
@@ -422,20 +466,37 @@ def main() -> int:
             procs.append(proc)
             time.sleep(0.3)
         if not procs:
+            if _is_cluster_agent() and _wait_until_agent_has_queues(log):
+                _reexec()
             log.info('Нет worker\'ов для запуска')
-            return 0
+            return 1 if _is_cluster_agent() else 0
         log.info('Для остановки нажмите Ctrl+C...')
+        snapshot = _allowed_snapshot() if _is_cluster_agent() else None
+        reload_at = time.monotonic() + _AGENT_RELOAD_SEC
+
+        def _on_term(_signum, _frame):
+            for item in procs:
+                _signal_group(item, signal.SIGTERM)
+            raise SystemExit(0)
+
+        signal.signal(signal.SIGTERM, _on_term)
         try:
             while any(p.poll() is None for p in procs):
+                if snapshot is not None and time.monotonic() >= reload_at:
+                    current = _allowed_snapshot()
+                    if current != snapshot:
+                        for item in procs:
+                            _signal_group(item, signal.SIGTERM)
+                        time.sleep(2)
+                        _reexec()
+                    reload_at = time.monotonic() + _AGENT_RELOAD_SEC
                 time.sleep(1)
         except KeyboardInterrupt:
             for p in procs:
-                if p.poll() is None:
-                    p.terminate()
+                _signal_group(p, signal.SIGTERM)
             time.sleep(2)
             for p in procs:
-                if p.poll() is None:
-                    p.kill()
+                _signal_group(p, signal.SIGKILL)
         return 0
     else:
         queues = resolve_queues(None, all_queues)
@@ -450,7 +511,9 @@ def main() -> int:
 
     restricted = _restrict_cluster_queues(queues, log)
     if restricted is None:
-        return 0
+        if _is_cluster_agent() and _wait_until_agent_has_queues(log):
+            _reexec()
+        return 1 if _is_cluster_agent() else 0
     queues = restricted
     queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
     if find_celery_worker(hostname=hostname):
