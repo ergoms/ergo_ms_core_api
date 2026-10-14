@@ -29,9 +29,11 @@ from _common import (
 from src.core.utils.celery.startup_format import format_queues_display
 
 try:
+    from celery_balance.cluster import resolve_allowed_queues
     from celery_balance.overlay import worker_override
     from celery_balance.settings import load_settings
 except ImportError:  # pragma: no cover — скрипт без пакета deployment
+    resolve_allowed_queues = None  # type: ignore[assignment]
     worker_override = None  # type: ignore[assignment]
     load_settings = None  # type: ignore[assignment]
 
@@ -175,6 +177,27 @@ def spawn_dedicated_workers(
         # setsid: короткий повторный старт не забирает процесс с собой.
         # Служба всё равно гасит его вместе с основным worker: оба в одном cgroup.
         subprocess.Popen(cmd, cwd=str(API_DIR), start_new_session=True)
+
+
+def _restrict_cluster_queues(queues: List[str], log) -> Optional[List[str]]:
+    """None — этому узлу нечего слушать, процесс не стартует."""
+    if resolve_allowed_queues is None:
+        return queues
+    try:
+        allowed = resolve_allowed_queues(PROJECT_ROOT)
+    except Exception:
+        return queues
+    if allowed is None:
+        return queues
+    if not allowed:
+        log.info('Кластерный план не разрешает очереди этому узлу, worker не запускается')
+        return None
+    allowed_set = set(allowed)
+    filtered = [name for name in queues if name in allowed_set]
+    if not filtered:
+        log.info('Очереди worker не входят в план узла, worker не запускается')
+        return None
+    return filtered
 
 
 def _balance_overrides(worker_name: Optional[str]) -> Dict[str, Any]:
@@ -359,6 +382,10 @@ def main() -> int:
         log.info('Запуск Celery worker\'ов из celery_workers.yaml (несколько процессов)...')
         for name, w in workers_config.items():
             queues = resolve_queues(w.get('queues'), all_queues)
+            restricted = _restrict_cluster_queues(queues, log)
+            if restricted is None:
+                continue
+            queues = restricted
             hostname = w.get('hostname', f'worker@{name}')
             if find_celery_worker(hostname=hostname):
                 log.info('%s уже запущен, пропуск', hostname)
@@ -421,6 +448,10 @@ def main() -> int:
             'очередями (без -Q, если кэш пуст).'
         )
 
+    restricted = _restrict_cluster_queues(queues, log)
+    if restricted is None:
+        return 0
+    queues = restricted
     queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
     if find_celery_worker(hostname=hostname):
         log.info('Worker %s уже запущен', hostname)

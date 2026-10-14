@@ -6,6 +6,7 @@
 берётся из файлового кэша (как discovered_apps); include() остаётся ленивым.
 """
 
+from django.apps import apps
 from django.urls import include, path
 
 from src.core.utils.auto_api.discovered_urls_cache import (
@@ -24,7 +25,11 @@ if not is_slim_module_process():
     )
 
 discovered = get_discovered_url_entries()
+installed_names = {config.name for config in apps.get_app_configs()} if apps.ready else None
 for route, dotted_module in discovered:
+    app_name = dotted_module.rsplit('.urls', 1)[0]
+    if installed_names is not None and not app_name.startswith('src.') and app_name not in installed_names:
+        continue
     urlpatterns.append(path(route, include(dotted_module)))
 
 # Токен загрузки на процессе модуля: nginx /api/<name>/ остаётся на этом хосте,

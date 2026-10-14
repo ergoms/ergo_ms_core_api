@@ -114,8 +114,46 @@ def apply_decision_limits(data: dict[str, Any] | None) -> None:
     queue_concurrency_manager.set_non_light_cap(max(0, non_light_cap))
 
 
+def _load_cluster_plan() -> dict[str, Any] | None:
+    """План этого узла из Redis. Нет ключа или брокер молчит — None, дальше файл."""
+    import os
+    import socket
+
+    flag = os.environ.get('CELERY_CLUSTER', '').strip().lower()
+    if flag not in {'on', '1', 'true', 'yes'}:
+        return None
+    node_id = os.environ.get('ERGO_NODE_ID', '').strip() or socket.gethostname()
+    url = os.environ.get('CELERY_BROKER_URL', '').strip()
+    if not url:
+        try:
+            from django.conf import settings
+
+            url = str(getattr(settings, 'CELERY_BROKER_URL', '') or '')
+        except Exception:
+            url = ''
+    if not url.startswith('redis'):
+        return None
+    try:
+        import redis
+    except ImportError:
+        return None
+    try:
+        client = redis.Redis.from_url(url, socket_timeout=1.5, decode_responses=True)
+        raw = client.get(f'celery_balance:plan:{node_id}')
+    except Exception:
+        logger.debug('План узла из Redis недоступен', exc_info=True)
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def reload_overlay_limits(path: Path | None = None) -> bool:
-    data = _load_decision(path or _DECISION)
+    data = _load_cluster_plan() or _load_decision(path or _DECISION)
     if data is None:
         return False
     apply_decision_limits(data)
