@@ -134,3 +134,9 @@ def connect_signals(celery_app) -> None:
 
     task_prerun.connect(on_task_prerun, weak=False)
     task_postrun.connect(on_task_postrun, weak=False)
+    try:
+        from src.core.utils.celery.cluster_quarantine import connect_quarantine
+
+        connect_quarantine()
+    except Exception:
+        return
