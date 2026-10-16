@@ -46,6 +46,10 @@ USER_SUSPENDED = 'user.suspended'
 USER_ACTIVATED = 'user.activated'
 USER_SESSIONS_REVOKED = 'user.sessions_revoked'
 USER_SESSION_REVOKED = 'user.session_revoked'
+PERSON_LINKED = 'person.linked'
+PERSON_UNLINKED = 'person.unlinked'
+PERSON_MERGED = 'person.merged'
+PERSON_UPDATED = 'person.updated'
 
 # --- Права и политики ---
 ROLE_CREATED = 'role.created'
@@ -156,6 +160,10 @@ CORE_AUDIT_SECTION = {
         _users(USER_PASSWORD_CHANGED, 'Смена пароля', 'KeyRound', severity=_SEC),
         _users(USER_PASSWORD_RESET, 'Восстановление пароля', 'KeyRound', severity=_SEC),
         _users(USER_PASSWORD_RESET_ADMIN, 'Сброс пароля администратором', 'KeyRound', severity=_SEC),
+        _users(PERSON_LINKED, 'Учётка привязана к карточке человека', 'Link', severity=_SEC),
+        _users(PERSON_UNLINKED, 'Учётка отвязана от карточки человека', 'Unlink', severity=_SEC),
+        _users(PERSON_MERGED, 'Карточки людей слиты', 'Merge', severity=_SEC),
+        _users(PERSON_UPDATED, 'Карточка человека изменена', 'IdCard'),
 
         _access(ROLE_CREATED, 'Роль создана', 'Shield'),
         _access(ROLE_UPDATED, 'Роль изменена', 'Shield'),

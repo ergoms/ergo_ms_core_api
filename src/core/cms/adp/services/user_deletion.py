@@ -14,6 +14,7 @@ from src.core.cms.adp.models import UserDevice, UserPresence, UserProfile, UserR
 from src.core.cms.adp.services import presence as presence_service
 from src.core.integrations import bridge
 from src.core.integrations.module_contracts import CORE_USER_DELETE
+from src.core.persons.service import detach_user as detach_person
 from src.core.settings.models import UserAvatar
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ def delete_admin_user(user: User) -> None:
         user.username,
     )
     revoke_user_auth(user)
+    detach_person(user)
 
     public_id = getattr(user, 'public_id', None)
     bridge.emit(

@@ -75,6 +75,30 @@ AUDIT_RECORD = 'audit.record'
 
 CORE_USER_DELETE = 'core.user_delete'
 CORE_BULK_USER_CREATE = 'core.bulk_user_create'
+
+# Карточка человека (core.persons): личность без обязательной учётки.
+# Kwargs и ответы — JSON-примитивы; карточка в ответе — dict
+# {public_id, user_public_id, linked, last_name, first_name, middle_name, full_name, birth_date}.
+CORE_PERSON_ENSURE_FOR_USER = 'core.person.ensure_for_user'
+CORE_PERSON_GET = 'core.person.get'
+# {person_public_id: карточка}; поглощённые слиянием id ведут на выжившую карточку.
+CORE_PERSON_RESOLVE_MANY = 'core.person.resolve_many'
+CORE_PERSON_FIND_BY_USERS = 'core.person.find_by_users'
+CORE_PERSON_CREATE_UNLINKED = 'core.person.create_unlinked'
+CORE_PERSON_FIND_NAMESAKES = 'core.person.find_namesakes'
+CORE_PERSON_UPDATE = 'core.person.update'
+# Привязка только явная и только с actor_user_public_id глобального администратора.
+CORE_PERSON_LINK = 'core.person.link'
+CORE_PERSON_UNLINK = 'core.person.unlink'
+CORE_PERSON_MERGE = 'core.person.merge'
+CORE_PERSON_RESOLVE_ALIAS = 'core.person.resolve_alias'
+CORE_PERSON_CAN_EDIT = 'core.person.can_edit'
+# Провайдер: callable(*, user_public_id, person_public_id) -> True | False | None.
+CORE_PERSON_EDIT_POLICY = 'core.person.edit_policy'
+# События: модули перевешивают свои ссылки и обновляют кэш ФИО и права входа.
+CORE_PERSON_MERGED = 'core.person_merged'
+CORE_PERSON_LINKED = 'core.person_linked'
+CORE_PERSON_UNLINKED = 'core.person_unlinked'
 # Необязательная подмена темы и тела служебных писем учётки.
 # Нет провайдера, None или неполный dict — ядро шлёт свой текст.
 # Ответ: {'subject': str, 'body': str, 'html_body'?: str, 'from_display_name'?: str}.
