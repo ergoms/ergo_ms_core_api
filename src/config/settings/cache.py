@@ -13,6 +13,7 @@ from src.config.redis_runtime import (
     cache_redis_url,
     effective_cache_backend,
     redis_connection_options,
+    redis_enabled,
 )
 from src.config.paths import CACHE_DIR
 
@@ -53,6 +54,21 @@ else:
             'TIMEOUT': CACHE_DEFAULT_TIMEOUT,
         },
     }
+
+
+def _redis_cache() -> dict:
+    return {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': cache_redis_url(),
+        'TIMEOUT': CACHE_DEFAULT_TIMEOUT,
+        'OPTIONS': redis_connection_options(),
+    }
+
+
+# Поминутные счётчики живых экранов читают API и воркеры. Общий Redis,
+# даже если обычный кэш API оставлен в памяти процесса.
+if redis_enabled() and CACHE_BACKEND != 'redis':
+    CACHES['live'] = _redis_cache()
 
 # TTL сериализованного snapshot прав в Django cache (секунды); 0 — отключить
 PERMISSIONS_SNAPSHOT_CACHE_TTL = env.int('API_PERMISSIONS_SNAPSHOT_CACHE_TTL', default=60)

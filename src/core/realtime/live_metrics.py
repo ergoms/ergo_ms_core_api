@@ -1,8 +1,8 @@
 """Поминутные счётчики и короткое состояние для живых экранов.
 
-Ключи лежат в общем кэше Django. Когда кэш — Redis, их видят и API, и воркеры,
-в том числе на другом узле. Ошибка записи не должна останавливать вызывающий код:
-обёртка модуля ловит исключения сама.
+Ключи лежат в кэше ``live``, если включён Redis: его видят и API, и воркеры,
+в том числе на другом узле. Без Redis остаётся обычный кэш процесса.
+Ошибка кэша не должна останавливать вызывающий код.
 """
 
 from __future__ import annotations
@@ -10,7 +10,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone as datetime_timezone
 from typing import Any
 
-from django.core.cache import cache
+from django.conf import settings
+from django.core.cache import caches
 from django.utils import timezone
 
 BUCKET_TTL_SECONDS = 48 * 60 * 60
@@ -50,23 +51,32 @@ def _watch_key(namespace: str) -> str:
     return f'{_PREFIX}:{namespace}:watched'
 
 
+def _store():
+    if 'live' in settings.CACHES:
+        return caches['live']
+    return caches['default']
+
+
 def incr(namespace: str, metric: str, n: int = 1, *, now: datetime | None = None) -> None:
     """Прибавить n к бакету текущей минуты. Ключ живёт 48 часов."""
     amount = int(n)
     if amount <= 0 or not namespace or not metric:
         return
     key = _bucket_key(namespace, metric, _minute(_aware(now)))
+    store = _store()
     try:
-        cache.incr(key, amount)
+        store.incr(key, amount)
     except ValueError:
-        if not cache.add(key, amount, BUCKET_TTL_SECONDS):
+        if not store.add(key, amount, BUCKET_TTL_SECONDS):
             try:
-                cache.incr(key, amount)
+                store.incr(key, amount)
             except ValueError:
-                cache.set(key, amount, BUCKET_TTL_SECONDS)
+                store.set(key, amount, BUCKET_TTL_SECONDS)
+        return
+    except Exception:
         return
     try:
-        cache.touch(key, BUCKET_TTL_SECONDS)
+        store.touch(key, BUCKET_TTL_SECONDS)
     except Exception:
         return
 
@@ -89,7 +99,10 @@ def series(
     slots = _minutes(minutes, now=now)
     names = [name for name in metrics if name]
     keys = [_bucket_key(namespace, name, slot) for slot in slots for name in names]
-    found = cache.get_many(keys) if keys else {}
+    try:
+        found = _store().get_many(keys) if keys else {}
+    except Exception:
+        found = {}
     rows: list[dict[str, Any]] = []
     for slot in slots:
         row: dict[str, Any] = {'t': slot.isoformat()}
@@ -138,19 +151,30 @@ def put_state(
     """Последнее состояние источника. Пока ключ жив, источник считается свежим."""
     if not namespace or not source:
         return
-    cache.set(_state_key(namespace, source), payload, max(1, int(ttl)))
-    index = _index_key(namespace)
-    names = list(cache.get(index) or [])
-    if source not in names:
-        names.append(source)
-        cache.set(index, names, BUCKET_TTL_SECONDS)
+    store = _store()
+    try:
+        store.set(_state_key(namespace, source), payload, max(1, int(ttl)))
+        index = _index_key(namespace)
+        names = list(store.get(index) or [])
+        if source not in names:
+            names.append(source)
+            store.set(index, names, BUCKET_TTL_SECONDS)
+    except Exception:
+        return
 
 
 def get_states(namespace: str) -> dict[str, dict[str, Any]]:
-    names = list(cache.get(_index_key(namespace)) or [])
+    try:
+        store = _store()
+        names = list(store.get(_index_key(namespace)) or [])
+    except Exception:
+        return {}
     states: dict[str, dict[str, Any]] = {}
     for name in names:
-        payload = cache.get(_state_key(namespace, name))
+        try:
+            payload = store.get(_state_key(namespace, name))
+        except Exception:
+            continue
         if isinstance(payload, dict):
             states[str(name)] = payload
     return states
@@ -158,9 +182,18 @@ def get_states(namespace: str) -> dict[str, dict[str, Any]]:
 
 def mark_watched(namespace: str, ttl: int = WATCH_TTL_SECONDS) -> None:
     """Страницу кто-то открыл. Пока отметка жива, снимок имеет смысл рассылать."""
-    if namespace:
-        cache.set(_watch_key(namespace), 1, max(1, int(ttl)))
+    if not namespace:
+        return
+    try:
+        _store().set(_watch_key(namespace), 1, max(1, int(ttl)))
+    except Exception:
+        return
 
 
 def is_watched(namespace: str) -> bool:
-    return bool(namespace and cache.get(_watch_key(namespace)))
+    if not namespace:
+        return False
+    try:
+        return bool(_store().get(_watch_key(namespace)))
+    except Exception:
+        return False
