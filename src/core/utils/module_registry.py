@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -45,6 +46,39 @@ def get_disabled_modules() -> FrozenSet[str]:
 def is_module_disabled(module_name: str) -> bool:
     """Проверяет, отключён ли модуль по имени."""
     return _get_catalog().is_disabled(module_name)
+
+
+def get_bridge_service_names() -> FrozenSet[str]:
+    """Имена из ``BRIDGE_SERVICE_URLS`` (ключ до ``=``), без адресов."""
+    raw = os.environ.get('BRIDGE_SERVICE_URLS', '') or ''
+    names = []
+    for part in raw.split(','):
+        name = part.split('=', 1)[0].strip()
+        if name:
+            names.append(name)
+    return frozenset(names)
+
+
+def is_externally_served_module(module_name: str) -> bool:
+    """Модуль не грузится в этом процессе, но его HTTP-процесс есть на карте."""
+    if not module_name:
+        return False
+    if module_name in get_microservice_modules():
+        return True
+    return module_name in get_bridge_service_names()
+
+
+def is_menu_module_hidden(module_name: str | None) -> bool:
+    """
+    Прятать пункты меню модуля.
+
+    Имя в ``DISABLED_MODULES`` само по себе меню не прячет, если модуль
+    обслуживается отдельным процессом: ядро не грузит приложение второй раз,
+    а вкладки берёт из ``menu.catalog``.
+    """
+    if not module_name or not is_module_disabled(module_name):
+        return False
+    return not is_externally_served_module(module_name)
 
 
 def is_module_loadable_in_process(module_name: str) -> bool:

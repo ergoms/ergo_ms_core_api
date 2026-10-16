@@ -128,13 +128,13 @@ class MenuAccessChecker:
 
     def can_see(self, item) -> bool:
         from src.core.utils.module_registry import (
-            is_module_disabled,
+            is_menu_module_hidden,
             top_level_module_from_menu_source,
         )
 
         module_source = getattr(item, 'module_source', '') or ''
         top_level = top_level_module_from_menu_source(module_source)
-        if top_level and is_module_disabled(top_level):
+        if is_menu_module_hidden(top_level):
             return False
 
         route_name = getattr(item, 'route_name', None)
@@ -162,13 +162,13 @@ class MenuAccessChecker:
 
     def can_see_separator(self, separator) -> bool:
         from src.core.utils.module_registry import (
-            is_module_disabled,
+            is_menu_module_hidden,
             top_level_module_from_menu_source,
         )
 
         module_source = getattr(separator, 'module_source', '') or ''
         top_level = top_level_module_from_menu_source(module_source)
-        if top_level and is_module_disabled(top_level):
+        if is_menu_module_hidden(top_level):
             return False
 
         if not self._passes_role_acl(separator):
