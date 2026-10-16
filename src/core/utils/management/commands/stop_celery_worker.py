@@ -74,6 +74,12 @@ class Command(BaseCommand):
             help='Имя worker\'а для остановки конкретного worker\'а'
         )
         parser.add_argument(
+            '--module',
+            type=str,
+            default=None,
+            help='Каталог модуля: с --worker останавливает один его воркер, без — все воркеры модуля',
+        )
+        parser.add_argument(
             '--all',
             default=False,
             action='store_true',
@@ -259,10 +265,22 @@ class Command(BaseCommand):
         worker_name: Optional[str] = cast(Optional[str], options.get('worker'))
         queues: Optional[str] = cast(Optional[str], options.get('queues'))
         hostname: Optional[str] = cast(Optional[str], options.get('hostname'))
+        module_name = str(options.get('module') or '').strip()
         stop_all: bool = cast(bool, options.get('all', False))
-        
-        logger.info(f'Запуск команды stop_celery_worker (worker={worker_name}, queues={queues}, hostname={hostname}, all={stop_all})')
-        
+        # ergoms stop-worker всегда передаёт --all. Указанный модуль или воркер его отменяет.
+        if module_name or worker_name or hostname or queues:
+            stop_all = False
+
+        logger.info(
+            'Запуск команды stop_celery_worker '
+            f'(module={module_name}, worker={worker_name}, queues={queues}, '
+            f'hostname={hostname}, all={stop_all})'
+        )
+
+        if module_name:
+            self._stop_module_workers(module_name, worker_name)
+            return
+
         # Режим 1: Остановить все worker'ы
         if stop_all:
             self.stdout.write("Поиск всех Celery worker'ов...")
@@ -327,6 +345,44 @@ class Command(BaseCommand):
         # Без параметров — показать справку
         self.stdout.write("Использование:")
         self.stdout.write("  --all              Остановить все worker'ы")
+        self.stdout.write("  --module=<имя>     Остановить воркеры одного модуля")
+        self.stdout.write("  --module=<имя> --worker=<id>  Остановить один воркер модуля")
         self.stdout.write("  --worker=<имя>     Остановить worker из celery_workers.yaml")
         self.stdout.write("  --hostname=<имя>   Остановить worker по hostname")
         self.stdout.write("  --queues=<список>  Остановить worker по очередям")
+
+    def _stop_module_workers(self, module_name: str, worker_name: Optional[str]) -> None:
+        """Останавливает один именованный воркер модуля или все его воркеры."""
+        from src.core.utils.celery.module_queues import find_module_worker, read_module_workers
+
+        module_dir = SYSTEM_DIR / 'modules' / module_name
+        specs = read_module_workers(module_dir)
+        if worker_name:
+            spec = find_module_worker(module_dir, worker_name)
+            if spec is None:
+                known = ', '.join(item['name'] for item in specs) or 'нет'
+                self.stdout.write(self.style.ERROR(
+                    f"Воркер '{worker_name}' модуля '{module_name}' не найден. Доступные: {known}"
+                ))
+                return
+            hostnames = [str(spec['hostname'])]
+            label = f"'{module_name}/{worker_name}' "
+        else:
+            hostnames = [f'worker@{module_name}']
+            hostnames.extend(str(item['hostname']) for item in specs)
+            label = f"модуля '{module_name}' "
+
+        found: List[psutil.Process] = []
+        seen: set[int] = set()
+        for item in hostnames:
+            for proc in self.find_workers_by_hostname(item):
+                pid = proc.pid
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                found.append(proc)
+        if not found:
+            self.stdout.write(self.style.WARNING(f"Воркеры {label.strip()} не запущены"))
+            return
+        stopped = self._stop_processes(found, label)
+        self.stdout.write(self.style.SUCCESS(f"\nОстановлено: {stopped} из {len(found)}"))

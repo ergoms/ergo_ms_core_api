@@ -6,12 +6,12 @@
 """
 
 import argparse
+import json
 import os
 import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import psutil
@@ -91,7 +91,7 @@ def resolve_queues(queues_config: Any, all_queues: List[str]) -> Optional[List[s
     """
     Преобразует конфиг очередей в список.
     Возвращает [] для режима 'all' при пустом all_queues (celery без -Q).
-    Очереди из dedicated_queues.yaml общий worker не слушает.
+    Очереди именованных воркеров модуля общий worker не слушает.
     """
     if queues_config == 'all' or queues_config is None:
         if not all_queues:
@@ -140,44 +140,6 @@ def build_cmd(
     if prefetch_multiplier:
         cmd.append(f'--prefetch-multiplier={prefetch_multiplier}')
     return cmd
-
-
-def spawn_dedicated_workers(
-    module_name: str,
-    specs: List[Dict[str, Any]],
-    *,
-    loglevel: str,
-    pool: str,
-    log: Any,
-) -> None:
-    """Поднять процессы отдельных очередей модуля в той же службе, без второй копии."""
-    script = str(Path(__file__).resolve())
-    for spec in specs:
-        hostname = str(spec['hostname'])
-        if find_celery_worker(hostname=hostname):
-            log.info('%s уже запущен, пропуск', hostname)
-            continue
-        cmd = [
-            sys.executable,
-            script,
-            '--module',
-            module_name,
-            '--queues',
-            str(spec['name']),
-            '--hostname',
-            hostname,
-            '--concurrency',
-            str(spec['concurrency']),
-            '--prefetch-multiplier',
-            '1',
-            '--pool',
-            pool or 'threads',
-            '--loglevel',
-            loglevel,
-        ]
-        # setsid: короткий повторный старт не забирает процесс с собой.
-        # Служба всё равно гасит его вместе с основным worker: оба в одном cgroup.
-        subprocess.Popen(cmd, cwd=str(API_DIR), start_new_session=True)
 
 
 _AGENT_WAIT_SEC = 90
@@ -274,7 +236,12 @@ def main() -> int:
     parser.add_argument('--prefetch-multiplier', type=int, default=None)
     parser.add_argument('--pool', type=str, default=None, help='пул: threads | prefork | solo')
     parser.add_argument('--loglevel', default='info')
-    parser.add_argument('--module', default='', help='Очередь и PROCESS_MODULES одного модуля')
+    parser.add_argument('--module', default='', help='Очереди и PROCESS_MODULES одного модуля')
+    parser.add_argument(
+        '--list-module-workers',
+        action='store_true',
+        help='Напечатать JSON именованных воркеров модуля и выйти',
+    )
     parser.add_argument(
         '--verbose',
         action='store_true',
@@ -284,8 +251,15 @@ def main() -> int:
 
     module_name = (opts.module or '').strip()
     user_queues = bool(opts.queues)
-    dedicated_specs: List[Dict[str, Any]] = []
     prefetch_opt = opts.prefetch_multiplier
+    module_spec: Optional[Dict[str, Any]] = None
+
+    if opts.list_module_workers:
+        from src.core.utils.celery.module_queues import read_module_workers
+
+        specs = read_module_workers(PROJECT_ROOT / 'modules' / module_name) if module_name else []
+        sys.stdout.write(json.dumps(specs, ensure_ascii=False))
+        return 0
 
     if opts.verbose:
         os.environ['ERGO_CELERY_STARTUP_VERBOSE'] = 'true'
@@ -302,8 +276,27 @@ def main() -> int:
         os.environ['PROCESS_MODULES'] = module_name
     else:
         os.environ.setdefault('ERGO_PROCESS_ROLE', 'worker')
-    if module_name and not user_queues and not opts.worker:
-        from src.core.utils.celery.module_queues import queues_for_module
+    if module_name and opts.worker and not user_queues:
+        from src.core.utils.celery.module_queues import find_module_worker, read_module_workers
+
+        module_dir = PROJECT_ROOT / 'modules' / module_name
+        module_spec = find_module_worker(module_dir, opts.worker)
+        if module_spec is None:
+            known = ', '.join(
+                spec['name'] for spec in read_module_workers(module_dir)
+            ) or 'нет'
+            log.error(
+                "Воркер '%s' модуля '%s' не найден. Доступные: %s",
+                opts.worker,
+                module_name,
+                known,
+            )
+            return 1
+    elif module_name and not user_queues and not opts.worker:
+        from src.core.utils.celery.module_queues import (
+            module_worker_queue_names,
+            queues_for_module,
+        )
         from src.core.utils.celery_config_cache import read_routes_queues_cache
 
         cached = read_routes_queues_cache(
@@ -314,16 +307,16 @@ def main() -> int:
             module_name,
             routes=cached.get('routes') or {},
         )
-        from src.core.utils.celery.module_queues import read_dedicated_queues
-
         module_dir = PROJECT_ROOT / 'modules' / module_name
-        dedicated_specs = read_dedicated_queues(module_dir)
-        dedicated_names = {spec['name'] for spec in dedicated_specs}
-        if dedicated_names:
-            filtered = [name for name in module_queues if name not in dedicated_names]
-            if filtered:
-                module_queues = filtered
-        opts.queues = ','.join(module_queues or [module_name])
+        named = module_worker_queue_names(module_dir)
+        module_queues = [name for name in module_queues if name not in named]
+        if not module_queues:
+            log.info(
+                'У модуля %s нет очередей вне именованных воркеров',
+                module_name,
+            )
+            return 0
+        opts.queues = ','.join(module_queues)
 
     if opts.list_workers:
         if not workers_config:
@@ -357,16 +350,31 @@ def main() -> int:
     concurrency_opt = opts.concurrency
     pool_opt = opts.pool or default_pool
     pool = pool_opt
-    if dedicated_specs:
-        spawn_dedicated_workers(
-            module_name,
-            dedicated_specs,
-            loglevel=loglevel_opt,
-            pool=pool,
-            log=log,
-        )
 
-    if worker_name:
+    if module_spec:
+        queues = list(module_spec['queues'])
+        hostname = str(module_spec['hostname'])
+        concurrency = concurrency_opt or int(module_spec['concurrency'])
+        loglevel = loglevel_opt
+        pool = pool_opt
+        if prefetch_opt is None:
+            prefetch_opt = 1
+        worker_name = None
+        log.info(
+            "Запуск воркера модуля '%s' (%s)",
+            module_name,
+            module_spec['name'],
+        )
+        queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
+        log.info(
+            'Режим: именованный воркер модуля, hostname=%s, '
+            'очереди=%s, параллелизм=%s, пул=%s',
+            hostname,
+            queues_display,
+            concurrency,
+            pool,
+        )
+    elif worker_name:
         if worker_name not in workers_config:
             log.error(
                 "Worker '%s' не найден. Доступные: %s",
@@ -520,7 +528,8 @@ def main() -> int:
         log.info('Worker %s уже запущен', hostname)
         return 0
 
-    overlay = {} if concurrency_opt else _balance_overrides(worker_name)
+    # Именованный воркер модуля берёт concurrency из hook, не из плана ядра `all`.
+    overlay = {} if concurrency_opt or module_spec else _balance_overrides(worker_name)
     if overlay.get('concurrency'):
         concurrency = overlay['concurrency']
     prefetch = prefetch_opt or overlay.get('prefetch_multiplier')

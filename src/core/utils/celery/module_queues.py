@@ -11,6 +11,7 @@ logger = logging.getLogger('celery.module_queues')
 
 _QUEUE_KEY = 'queue'
 DEDICATED_QUEUES_FILENAME = 'dedicated_queues.yaml'
+MODULE_WORKERS_FILENAME = 'celery_workers.yaml'
 
 
 def _project_root() -> Path:
@@ -103,56 +104,143 @@ def queues_for_module(
     return sorted(owned)
 
 
-def read_dedicated_queues(module_dir: str | Path) -> list[dict[str, Any]]:
-    """Очереди из hook ``dedicated_queues.yaml``: их слушает отдельный процесс.
-
-    Основной worker модуля эти имена не забирает, иначе он держит сообщения
-    в резерве, пока его потоки заняты другими задачами.
-    """
-    path = Path(module_dir) / DEDICATED_QUEUES_FILENAME
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     if not path.is_file():
-        return []
+        return {}
     try:
         import yaml
     except ImportError:
         logger.debug('PyYAML недоступен, %s пропущен', path)
-        return []
+        return {}
     try:
         data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
     except (OSError, yaml.YAMLError) as exc:
         logger.debug('Не удалось прочитать %s: %s', path, exc)
-        return []
-    raw = data.get('queues') if isinstance(data, dict) else None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _concurrency(raw: Any) -> int:
+    try:
+        value = int(raw or 1)
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, value)
+
+
+def _queue_list(raw: Any, fallback: str) -> list[str]:
+    if isinstance(raw, str):
+        names = [part.strip() for part in raw.split(',') if part.strip()]
+        return names or ([fallback] if fallback else [])
+    if isinstance(raw, list):
+        names = [str(item).strip() for item in raw if str(item).strip()]
+        return names or ([fallback] if fallback else [])
+    return [fallback] if fallback else []
+
+
+def _worker_spec(item: Any, *, queues_from_name: bool) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    name = str(item.get('name') or '').strip()
+    hostname = str(item.get('hostname') or '').strip()
+    if not name or not hostname:
+        return None
+    if queues_from_name:
+        queues = [name]
+    else:
+        queues = _queue_list(item.get('queues'), name)
+    if not queues:
+        return None
+    return {
+        'name': name,
+        'hostname': hostname,
+        'queues': queues,
+        'concurrency': _concurrency(item.get('concurrency')),
+    }
+
+
+def read_dedicated_queues(module_dir: str | Path) -> list[dict[str, Any]]:
+    """Старый hook ``dedicated_queues.yaml``: одна очередь — один процесс.
+
+    Поле ``name`` одновременно имя очереди. Новый hook — ``celery_workers.yaml``.
+    """
+    data = _load_yaml_mapping(Path(module_dir) / DEDICATED_QUEUES_FILENAME)
+    raw = data.get('queues')
     if not isinstance(raw, list):
         return []
     specs: list[dict[str, Any]] = []
     for item in raw:
-        if not isinstance(item, dict):
+        spec = _worker_spec(item, queues_from_name=True)
+        if spec is None:
             continue
-        name = str(item.get('name') or '').strip()
-        hostname = str(item.get('hostname') or '').strip()
-        if not name or not hostname:
-            continue
-        try:
-            concurrency = int(item.get('concurrency') or 1)
-        except (TypeError, ValueError):
-            concurrency = 1
         specs.append({
-            'name': name,
-            'hostname': hostname,
-            'concurrency': max(1, concurrency),
+            'name': spec['name'],
+            'hostname': spec['hostname'],
+            'concurrency': spec['concurrency'],
         })
     return specs
 
 
+def read_module_workers(module_dir: str | Path) -> list[dict[str, Any]]:
+    """Именованные воркеры модуля.
+
+    ``celery_workers.yaml`` задаёт id, hostname и список очередей.
+    Записи ``dedicated_queues.yaml`` дополняют список, если id ещё нет:
+    там ``name`` — и очередь, и id воркера.
+    """
+    directory = Path(module_dir)
+    by_name: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    def _add(spec: dict[str, Any] | None) -> None:
+        if spec is None or spec['name'] in by_name:
+            return
+        by_name[spec['name']] = spec
+        order.append(spec['name'])
+
+    workers = _load_yaml_mapping(directory / MODULE_WORKERS_FILENAME).get('workers')
+    if isinstance(workers, list):
+        for item in workers:
+            _add(_worker_spec(item, queues_from_name=False))
+
+    for legacy in read_dedicated_queues(directory):
+        _add(_worker_spec(
+            {
+                'name': legacy['name'],
+                'hostname': legacy['hostname'],
+                'concurrency': legacy['concurrency'],
+                'queues': [legacy['name']],
+            },
+            queues_from_name=False,
+        ))
+    return [by_name[name] for name in order]
+
+
+def module_worker_queue_names(module_dir: str | Path) -> set[str]:
+    """Очереди, которые слушает именованный воркер, а не общий worker модуля."""
+    names: set[str] = set()
+    for spec in read_module_workers(module_dir):
+        names.update(spec['queues'])
+    return names
+
+
+def find_module_worker(module_dir: str | Path, worker_name: str) -> dict[str, Any] | None:
+    wanted = (worker_name or '').strip()
+    if not wanted:
+        return None
+    for spec in read_module_workers(module_dir):
+        if spec['name'] == wanted:
+            return spec
+    return None
+
+
 def dedicated_queue_names(modules_root: str | Path) -> set[str]:
-    """Имена отдельных очередей всех каталогов modules/<name>/."""
+    """Очереди именованных воркеров всех каталогов modules/<name>/."""
     root = Path(modules_root)
     names: set[str] = set()
     if not root.is_dir():
         return names
     for path in root.iterdir():
         if path.is_dir():
-            for spec in read_dedicated_queues(path):
-                names.add(spec['name'])
+            names.update(module_worker_queue_names(path))
     return names
