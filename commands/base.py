@@ -82,23 +82,21 @@ class PoetryCommand:
         args_str = " ".join(str(arg) for arg in filtered_args)
 
         if self.django_command_name:
-            return self._run_django(args_str)
+            return self._run_django(filtered_args)
         elif self.script_command:
             return self._run_script(f"{self.script_command} {args_str}".strip())
         else:
             raise RuntimeError("Не удалось определить тип команды.")
 
-    def _run_django(self, args_str: str) -> int:
-        """Выполнение Django команды."""
+    def _run_django(self, filtered_args) -> int:
+        """Выполнение Django команды. Аргументы уже разделены оболочкой."""
         try:
             if not self._init_django():
                 return 1
 
             from django.core.management import execute_from_command_line
-            
-            django_args = ['manage.py', self.command_name]
-            if args_str:
-                django_args.extend(args_str.split())
+
+            django_args = ['manage.py', self.command_name, *filtered_args]
 
             print(f"Выполняется Django команда: {' '.join(django_args)}")
             execute_from_command_line(django_args)
