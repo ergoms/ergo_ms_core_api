@@ -1,8 +1,11 @@
-from django.contrib.auth import get_user_model
+from datetime import date
 
-User = get_user_model()
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+from django.utils.translation import gettext as _
 from rest_framework.serializers import (
     CharField,
+    DateField,
     EmailField,
     ModelSerializer,
     SerializerMethodField,
@@ -16,6 +19,8 @@ from src.core.cms.adp.user_agent_utils import (
     get_device_type_display,
     parse_user_agent,
 )
+
+User = get_user_model()
 
 
 class UserDeviceSerializer(ModelSerializer):
@@ -71,7 +76,7 @@ class CMSUserProfileSerializer(ModelSerializer):
     class Meta:
         model = UserProfile
         fields = [
-            'phone', 'bio',
+            'phone', 'birth_date', 'bio',
             'language', 'timezone', 'created_at'
         ]
         read_only_fields = ['created_at']
@@ -147,13 +152,31 @@ class UpdateUserProfileSerializer(ModelSerializer):
     email = EmailField(source='user.email', required=False, allow_blank=True)
     phone = CharField(required=False, allow_blank=True, allow_null=True)
     bio = CharField(required=False, allow_blank=True, allow_null=True)
+    birth_date = DateField(required=False, allow_null=True)
 
     class Meta:
         model = UserProfile
         fields = [
-            'first_name', 'last_name', 'middle_name', 'email', 'phone', 'bio',
+            'first_name', 'last_name', 'middle_name', 'email', 'phone', 'birth_date', 'bio',
             'language', 'timezone'
         ]
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and 'birth_date' in data:
+            raw = data.get('birth_date')
+            if raw is None or (isinstance(raw, str) and not raw.strip()):
+                data = data.copy()
+                data['birth_date'] = None
+        return super().to_internal_value(data)
+
+    def validate_birth_date(self, value):
+        if value is None:
+            return None
+        if value > timezone.localdate():
+            raise ValidationError(_('Дата рождения не может быть в будущем.'))
+        if value < date(1900, 1, 1):
+            raise ValidationError(_('Укажите дату рождения не раньше 1900 года.'))
+        return value
 
     def validate_email(self, value):
         if value is None:
