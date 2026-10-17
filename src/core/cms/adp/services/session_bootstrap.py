@@ -56,6 +56,23 @@ def build_permissions_snapshot_payload(user, session_claims=None) -> dict:
     return get_user_permissions_payload(user, session_claims=session_claims)
 
 
+def build_site_theme_payload(user):
+    """Пара light+dark эффективной палитры — тот же контракт, что GET settings/themes/active/."""
+    from src.core.settings.models import Theme
+    from src.core.settings.services.site_theme_pairs import build_site_theme_pair
+    from src.core.settings.services.user_theme_preference import get_effective_site_theme
+
+    if user is None:
+        return None
+    effective = get_effective_site_theme(user)
+    if effective is None:
+        return None
+    return build_site_theme_pair(
+        Theme.objects.filter(module_key__isnull=True),
+        effective,
+    )
+
+
 def build_session_bootstrap_payload(user, session_claims=None) -> dict:
     """Агрегированные данные для холодного старта клиента."""
     user = (
@@ -82,4 +99,5 @@ def build_session_bootstrap_payload(user, session_claims=None) -> dict:
         ),
         'realtime': build_realtime_config_payload(),
         'system_version': get_system_version(),
+        'site_theme': build_site_theme_payload(user),
     }
