@@ -30,11 +30,12 @@ from _common import (
 from src.core.utils.celery.startup_format import format_queues_display
 
 try:
-    from celery_balance.cluster import resolve_allowed_queues
+    from celery_balance.cluster import resolve_allowed_queues, resolve_paused_queues
     from celery_balance.overlay import worker_override
     from celery_balance.settings import load_settings
 except ImportError:  # pragma: no cover — скрипт без пакета deployment
     resolve_allowed_queues = None  # type: ignore[assignment]
+    resolve_paused_queues = None  # type: ignore[assignment]
     worker_override = None  # type: ignore[assignment]
     load_settings = None  # type: ignore[assignment]
 
@@ -187,23 +188,43 @@ def _signal_group(proc, sig) -> None:
 
 def _restrict_cluster_queues(queues: List[str], log) -> Optional[List[str]]:
     """None — этому узлу нечего слушать, процесс не стартует."""
-    if resolve_allowed_queues is None:
+    if _is_cluster_agent():
+        if resolve_allowed_queues is None:
+            return queues
+        try:
+            allowed = resolve_allowed_queues(PROJECT_ROOT)
+        except Exception:
+            return queues
+        if allowed is None:
+            return queues
+        if not allowed:
+            log.info('Кластерный план не разрешает очереди этому узлу, worker не запускается')
+            return None
+        # План уже решил, что слушать. Кэш маршрутов модуля этих очередей не знает.
+        return [str(name) for name in allowed if str(name).strip()]
+    if resolve_paused_queues is None:
         return queues
     try:
-        allowed = resolve_allowed_queues(PROJECT_ROOT)
+        paused = resolve_paused_queues(PROJECT_ROOT)
     except Exception:
         return queues
-    if allowed is None:
+    if not paused:
         return queues
-    if not allowed:
-        log.info('Кластерный план не разрешает очереди этому узлу, worker не запускается')
-        return None
-    allowed_set = set(allowed)
-    filtered = [name for name in queues if name in allowed_set]
+    paused_set = set(paused)
+    filtered = [name for name in queues if name not in paused_set]
     if not filtered:
-        log.info('Очереди worker не входят в план узла, worker не запускается')
+        log.info('Очереди worker слушает другой узел, здесь процесс их не берёт')
         return None
     return filtered
+
+
+def _wait_until_local_queues(queues: List[str], log) -> List[str]:
+    """Пока очередь отдана другому узлу, не выходим: systemd иначе поднимает consumer снова."""
+    while True:
+        restricted = _restrict_cluster_queues(queues, log)
+        if restricted:
+            return restricted
+        time.sleep(_AGENT_RELOAD_SEC)
 
 
 def _balance_overrides(worker_name: Optional[str]) -> Dict[str, Any]:
@@ -519,10 +540,13 @@ def main() -> int:
 
     restricted = _restrict_cluster_queues(queues, log)
     if restricted is None:
-        if _is_cluster_agent() and _wait_until_agent_has_queues(log):
-            _reexec()
-        return 1 if _is_cluster_agent() else 0
-    queues = restricted
+        if _is_cluster_agent():
+            if _wait_until_agent_has_queues(log):
+                _reexec()
+            return 1
+        queues = _wait_until_local_queues(queues, log)
+    else:
+        queues = restricted
     queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
     if find_celery_worker(hostname=hostname):
         log.info('Worker %s уже запущен', hostname)

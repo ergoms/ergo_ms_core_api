@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,74 @@ _DECISION = CACHE_DIR / 'celery_balance' / 'decision.json'
 _watcher_started = False
 _watcher_lock = threading.Lock()
 _overlay_paused: set[str] = set()
+_consumers_released: set[str] = set()
+
+
+def _argv_queues() -> set[str]:
+    """Очереди из -Q этого процесса. Чужие паузы сюда не подписываем."""
+    argv = sys.argv
+    raw = ''
+    for index, arg in enumerate(argv):
+        if arg.startswith('--queues='):
+            raw = arg.split('=', 1)[1]
+            break
+        if arg == '-Q' or arg == '--queues':
+            if index + 1 < len(argv):
+                raw = argv[index + 1]
+            break
+        if arg.startswith('-Q') and len(arg) > 2:
+            raw = arg[2:]
+            break
+    return {part.strip() for part in raw.split(',') if part.strip()}
+
+
+def _worker_hostname() -> str:
+    argv = sys.argv
+    for index, arg in enumerate(argv):
+        if arg.startswith('--hostname='):
+            return arg.split('=', 1)[1].strip()
+        if arg == '--hostname' and index + 1 < len(argv):
+            return argv[index + 1].strip()
+    return ''
+
+
+def _cluster_enabled() -> bool:
+    return os.environ.get('CELERY_CLUSTER', '').strip().lower() in {'on', '1', 'true', 'yes'}
+
+
+def _sync_paused_consumers(paused: set[str]) -> None:
+    """Пауза семафором не отписывает consumer: сообщения всё равно забирает этот узел."""
+    global _consumers_released
+    if not _cluster_enabled():
+        return
+    hostname = _worker_hostname()
+    mine = _argv_queues()
+    if not hostname or not mine:
+        return
+    target = paused & mine
+    release = target - _consumers_released
+    restore = (_consumers_released & mine) - paused
+    if not release and not restore:
+        return
+    try:
+        from celery import current_app
+    except Exception:
+        return
+    failed = False
+    for name in sorted(release):
+        try:
+            current_app.control.cancel_consumer(name, destination=[hostname])
+        except Exception:
+            logger.debug('Не удалось снять consumer %s', name, exc_info=True)
+            failed = True
+    for name in sorted(restore):
+        try:
+            current_app.control.add_consumer(name, destination=[hostname])
+        except Exception:
+            logger.debug('Не удалось вернуть consumer %s', name, exc_info=True)
+            failed = True
+    if not failed:
+        _consumers_released = set(target)
 
 
 def _load_decision(path: Path) -> dict[str, Any] | None:
@@ -112,6 +182,7 @@ def apply_decision_limits(data: dict[str, Any] | None) -> None:
             if caps:
                 non_light_cap = min(caps)
     queue_concurrency_manager.set_non_light_cap(max(0, non_light_cap))
+    _sync_paused_consumers(paused)
 
 
 def _load_cluster_plan() -> dict[str, Any] | None:
