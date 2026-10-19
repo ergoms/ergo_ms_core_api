@@ -17,6 +17,20 @@ from src.config.env import env
 
 logger = logging.getLogger('utils.database.config')
 
+
+def _redact_redis_url(url: str) -> str:
+    """Адрес брокера для лога: без пользователя и пароля."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    raw = (url or '').split('?')[0]
+    parts = urlsplit(raw)
+    if not parts.username and not parts.password:
+        return raw
+    host = parts.hostname or ''
+    if parts.port:
+        host = f'{host}:{parts.port}'
+    return urlunsplit((parts.scheme, f'***@{host}', parts.path, '', ''))
+
 from .config_manager import (
     BaseDatabaseConfigLoader,
     DatabaseConnectionTester,
@@ -277,8 +291,8 @@ class CeleryDatabaseConfigLoader(BaseDatabaseConfigLoader):
         logger.info(
             "%s: брокер Redis (%s), results (%s)",
             self.component_name,
-            broker_url.split('?')[0],
-            result_backend.split('?')[0],
+            _redact_redis_url(broker_url),
+            _redact_redis_url(result_backend),
         )
         return broker_url, result_backend
     

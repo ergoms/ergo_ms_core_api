@@ -43,11 +43,18 @@ class UserDeviceSerializer(ModelSerializer):
             'last_activity', 'created_at',
         ]
 
+    def _parsed_user_agent(self, obj):
+        cached = getattr(obj, '_parsed_user_agent', None)
+        if cached is None:
+            cached = parse_user_agent(obj.user_agent)
+            obj._parsed_user_agent = cached
+        return cached
+
     def get_browser(self, obj):
-        return parse_user_agent(obj.user_agent)['browser']
+        return self._parsed_user_agent(obj)['browser']
 
     def get_os(self, obj):
-        return parse_user_agent(obj.user_agent)['os']
+        return self._parsed_user_agent(obj)['os']
 
     def get_location(self, obj):
         return format_device_location(obj.city, obj.country)

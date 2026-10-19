@@ -9,6 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from src.core.cms.adp.services.permissions import PermissionService
+from src.core.search.limits import SEARCH_ID_LIMIT, page_from_request
 from src.core.utils.mixins import SwaggerSafeMixin
 
 from . import catalog
@@ -251,18 +252,31 @@ class AuditEventViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSet):
                 qs = qs.filter(created_at__lte=parsed)
 
         search = (params.get('q') or params.get('search') or '').strip()
+        self._search_total = None
         if search:
             from src.core.search.core_indexes import INDEX_AUDIT
             from src.core.search.fallback import apply_ordered_ids
             from src.core.search.service import search_index
 
+            # Список пагинируется в Meilisearch. Экспорт и прочие действия
+            # берут ограниченную выборку id и режут её сами.
+            if getattr(self, 'action', None) == 'list':
+                page, page_size = page_from_request(
+                    self.request,
+                    default_page_size=self.pagination_class.page_size,
+                    max_page_size=self.pagination_class.max_page_size,
+                )
+            else:
+                page, page_size = 1, SEARCH_ID_LIMIT
             result = search_index(
                 INDEX_AUDIT,
                 search,
                 qs,
-                page=1,
-                page_size=10000,
+                page=page,
+                page_size=page_size,
             )
+            if getattr(self, 'action', None) == 'list':
+                self._search_total = result.total
             qs = apply_ordered_ids(qs, result.ids) if result.ids else qs.none()
         else:
             qs = qs.order_by('-created_at', '-id')

@@ -302,7 +302,7 @@ class PolicyListView(BaseAPIViewGlobalAdminMixin, BaseAPIView):
     )
     def get(self, request):
         """Получить список всех политик"""
-        policies = Policy.objects.all()
+        policies = Policy.objects.select_related('role', 'role_group').all()
         serializer = PolicySerializer(policies, many=True)
         return Response(serializer.data)
     

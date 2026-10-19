@@ -67,3 +67,17 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 # CELERY_TIMEZONE — из localization.TIME_ZONE (.env TIME_ZONE).
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+
+def _result_expires_seconds() -> int:
+    raw = os.environ.get('CELERY_RESULT_EXPIRES', '').strip()
+    if not raw:
+        return 86400
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 86400
+
+
+# Результаты задач не копятся: сутки, если срок не задан явно.
+CELERY_RESULT_EXPIRES = _result_expires_seconds()

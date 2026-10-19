@@ -50,13 +50,17 @@ def get_api_bind_port(default: str = '8000') -> str:
     return env.str('API_PORT', default=default)
 
 
-def build_daphne_command(python_executable: str | None = None) -> List[str]:
+def build_daphne_command(
+    python_executable: str | None = None,
+    port: int | None = None,
+) -> List[str]:
     """Команда production-запуска API через daphne (ASGI, без autoreload)."""
     import os
 
     from src.config.log_format import DAPHNE_LOG_FMT
 
     exe = python_executable or sys.executable
+    bind_port = str(port) if port is not None else get_api_bind_port()
     # NCSA access daphne отключён (в os.devnull): единый HTTP-лог — AccessLogMiddleware.
     return [
         exe,
@@ -65,7 +69,7 @@ def build_daphne_command(python_executable: str | None = None) -> List[str]:
         '-b',
         get_api_bind_host(),
         '-p',
-        get_api_bind_port(),
+        bind_port,
         '--access-log',
         os.devnull,
         '--log-fmt',

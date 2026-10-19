@@ -121,6 +121,9 @@ class UserPresence(models.Model):
         app_label = 'cms_adp'
         verbose_name = 'Онлайн-статус пользователя'
         verbose_name_plural = 'Онлайн-статусы пользователей'
+        indexes = [
+            models.Index(fields=['last_seen'], name='cms_adp_use_last_se_c0f19b_idx'),
+        ]
 
     def __str__(self):
         return f"{self.user.username} ({'online' if self.is_online else 'offline'})"
@@ -270,6 +273,12 @@ class Policy(models.Model):
         verbose_name = 'Политика'
         verbose_name_plural = 'Политики'
         ordering = ['-priority', 'name']
+        indexes = [
+            models.Index(
+                fields=['role', 'policy_type', 'is_active'],
+                name='cms_adp_pol_role_id_a3b9c2_idx',
+            ),
+        ]
     
     def __str__(self):
         target = self.role.name if self.role else self.role_group.name
@@ -311,6 +320,9 @@ class UserRole(models.Model):
         verbose_name = 'Роль пользователя'
         verbose_name_plural = 'Роли пользователей'
         unique_together = ['user', 'role']
+        indexes = [
+            models.Index(fields=['user', 'is_active'], name='cms_adp_use_user_id_30c3a9_idx'),
+        ]
     
     def __str__(self):
         return f"{self.user.username} - {self.role.name}"

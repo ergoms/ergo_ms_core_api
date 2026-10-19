@@ -27,6 +27,12 @@ def get_presence_stale_cutoff() -> datetime:
     return timezone.now() - timedelta(seconds=get_presence_stale_threshold_seconds())
 
 
+def get_presence_snapshot_window() -> timedelta:
+    """Окно снимка: онлайн и недавно ушедшие, без чтения всей таблицы."""
+    seconds = max(get_presence_stale_threshold_seconds() * 4, 300)
+    return timedelta(seconds=seconds)
+
+
 def effective_is_online(presence: UserPresence) -> bool:
     if presence.connection_count <= 0:
         return False
@@ -155,10 +161,36 @@ def get_presence_map(user_ids: list[int] | None = None) -> dict[int, PresenceEnt
             for user_id in normalized_ids
         }
 
+    cutoff = timezone.now() - get_presence_snapshot_window()
     return {
         presence.user_id: _to_entry(presence)
-        for presence in UserPresence.objects.all()
+        for presence in UserPresence.objects.filter(last_seen__gte=cutoff)
     }
+
+
+def snapshot_delta(
+    previous: dict[str, tuple],
+    users: list[dict],
+) -> tuple[list[dict], dict[str, tuple]]:
+    """Отличия снимка от прошлого. Ушедшие из окна уходят одним offline-кадром."""
+    current: dict[str, tuple] = {}
+    changed: list[dict] = []
+    for user in users:
+        public_id = user.get('public_id')
+        if not public_id:
+            continue
+        signature = (bool(user.get('is_online')), user.get('last_seen'))
+        current[public_id] = signature
+        if previous.get(public_id) != signature:
+            changed.append(user)
+    for public_id, signature in previous.items():
+        if public_id not in current:
+            changed.append({
+                'public_id': public_id,
+                'is_online': False,
+                'last_seen': signature[1],
+            })
+    return changed, current
 
 
 def get_presence_map_by_public_ids(

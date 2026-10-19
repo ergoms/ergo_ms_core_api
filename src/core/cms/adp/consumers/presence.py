@@ -130,6 +130,7 @@ class PresenceAdminConsumer(RealtimeEnvelopeConsumerMixin, JwtMessageAuthConsume
 
     snapshot_task: asyncio.Task | None = None
     _admin_group: str | None = None
+    _snapshot_sigs: dict | None = None
 
     async def on_ws_authenticated(self):
         if not await self._is_global_admin(self.ws_user):
@@ -163,13 +164,21 @@ class PresenceAdminConsumer(RealtimeEnvelopeConsumerMixin, JwtMessageAuthConsume
             logger.exception('Ошибка цикла presence snapshot для админа')
 
     async def _send_snapshot(self):
-        users = await self._build_snapshot()
+        users = await self._next_snapshot_payload()
+        if users is None:
+            return
         await database_sync_to_async(publish_presence_snapshot)(users)
 
-    @staticmethod
     @database_sync_to_async
-    def _build_snapshot():
-        return presence_service.build_presence_snapshot()
+    def _next_snapshot_payload(self):
+        users = presence_service.build_presence_snapshot()
+        if self._snapshot_sigs is None:
+            _, self._snapshot_sigs = presence_service.snapshot_delta({}, users)
+            return users
+        changed, self._snapshot_sigs = presence_service.snapshot_delta(self._snapshot_sigs, users)
+        if not changed:
+            return None
+        return changed
 
     @staticmethod
     @database_sync_to_async

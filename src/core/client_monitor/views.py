@@ -9,6 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from src.core.search.limits import page_from_request
 from src.core.settings.permissions import IsGlobalAdmin
 from src.core.utils.base.base_views import BaseAPIViewAuthMixin
 from src.core.utils.mixins import SwaggerSafeMixin
@@ -81,18 +82,25 @@ class ClientMonitorSessionViewSet(SwaggerSafeMixin, viewsets.ReadOnlyModelViewSe
             qs = qs.filter(last_event_at__lte=date_to)
 
         search = (request.query_params.get('q') or request.query_params.get('search') or '').strip()
+        self._search_total = None
         if search:
             from src.core.search.core_indexes import INDEX_CLIENT_MONITOR
             from src.core.search.fallback import apply_ordered_ids
             from src.core.search.service import search_index
 
+            page, page_size = page_from_request(
+                request,
+                default_page_size=self.pagination_class.page_size,
+                max_page_size=self.pagination_class.max_page_size,
+            )
             result = search_index(
                 INDEX_CLIENT_MONITOR,
                 search,
                 qs,
-                page=1,
-                page_size=10000,
+                page=page,
+                page_size=page_size,
             )
+            self._search_total = result.total
             qs = apply_ordered_ids(qs, result.ids) if result.ids else qs.none()
 
         page = self.paginate_queryset(qs)

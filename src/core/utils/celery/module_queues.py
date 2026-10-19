@@ -120,6 +120,16 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _positive_int(raw: Any) -> int | None:
+    if raw is None or raw == '':
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _concurrency(raw: Any) -> int:
     try:
         value = int(raw or 1)
@@ -151,12 +161,25 @@ def _worker_spec(item: Any, *, queues_from_name: bool) -> dict[str, Any] | None:
         queues = _queue_list(item.get('queues'), name)
     if not queues:
         return None
-    return {
+    spec = {
         'name': name,
         'hostname': hostname,
         'queues': queues,
         'concurrency': _concurrency(item.get('concurrency')),
     }
+    pool = str(item.get('pool') or '').strip().lower()
+    if pool:
+        spec['pool'] = pool
+    tasks_limit = _positive_int(item.get('max_tasks_per_child'))
+    memory_mb = _positive_int(item.get('max_memory_per_child_mb'))
+    memory_kb = _positive_int(item.get('max_memory_per_child'))
+    if memory_mb:
+        memory_kb = memory_mb * 1024
+    if tasks_limit:
+        spec['max_tasks_per_child'] = tasks_limit
+    if memory_kb:
+        spec['max_memory_per_child'] = memory_kb
+    return spec
 
 
 def read_dedicated_queues(module_dir: str | Path) -> list[dict[str, Any]]:

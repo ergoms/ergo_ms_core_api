@@ -22,7 +22,7 @@ from src.core.utils.methods import generate_secure_random_password
 
 logger = logging.getLogger('celery.core.cms.adp')
 
-@shared_task(name='core.cms.adp.maintain_connection_history')
+@shared_task(name='core.cms.adp.maintain_connection_history', ignore_result=True)
 def maintain_connection_history_task():
     from src.core.cms.adp.services.connection_history import maintain_history
     return maintain_history()
@@ -430,3 +430,6 @@ def import_users_task(
             'errors': [error_msg],
             'logs': [{'level': 'error', 'message': error_msg}],
         }
+
+
+from src.core.cms.adp import auth_mail_tasks as _auth_mail_tasks  # noqa: E402, F401

@@ -41,9 +41,17 @@ def parse_errors_to_dict(error_dict: Dict[str, list]) -> Dict[str, str]:
 
 def send_confirmation_email(email: str, code: str) -> Tuple[bool, Optional[str]]:
     """Отправляет email с кодом подтверждения."""
+    from src.core.cms.adp.auth_mail_tasks import (
+        dispatch_auth_email,
+        send_password_reset_code_email_task,
+    )
     from src.core.cms.adp.services.password_reset_mail import send_password_reset_code_email
 
-    return send_password_reset_code_email(email, code)
+    return dispatch_auth_email(
+        send_password_reset_code_email_task,
+        (email, code),
+        lambda: send_password_reset_code_email(email, code),
+    )
 
 
 def generate_secure_random_password(length: int = 16, max_attempts: int = 50) -> str:
@@ -87,7 +95,15 @@ def generate_secure_random_password(length: int = 16, max_attempts: int = 50) ->
 
 def send_admin_password_reset_notification(email: str) -> Tuple[bool, Optional[str]]:
     """Уведомление о сбросе пароля администратором (без пароля и без кода)."""
+    from src.core.cms.adp.auth_mail_tasks import (
+        dispatch_auth_email,
+        send_admin_password_reset_email_task,
+    )
     from src.core.cms.adp.services.password_reset_mail import send_admin_password_reset_email
 
-    return send_admin_password_reset_email(email)
+    return dispatch_auth_email(
+        send_admin_password_reset_email_task,
+        (email,),
+        lambda: send_admin_password_reset_email(email),
+    )
 

@@ -5,6 +5,8 @@ from math import ceil
 from rest_framework.pagination import BasePagination
 from rest_framework.response import Response
 
+from src.core.search.limits import take_prefetched_search_page
+
 
 class ClientMonitorPagination(BasePagination):
     page_size = 50
@@ -13,6 +15,10 @@ class ClientMonitorPagination(BasePagination):
     max_page_size = 200
 
     def paginate_queryset(self, queryset, request, view=None):
+        prefetched = take_prefetched_search_page(self, queryset, request, view)
+        if prefetched is not None:
+            return prefetched
+
         try:
             page_size = int(request.query_params.get(self.page_size_query_param, self.page_size))
         except (TypeError, ValueError):

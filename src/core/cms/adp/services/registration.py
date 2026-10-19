@@ -215,10 +215,19 @@ class RegistrationService:
         invite_url = RegistrationService.build_invitation_url(invitation.token)
         ttl_days = RegistrationService.get_invitation_ttl_days()
 
-        return send_registration_invitation_email(
-            email=invitation.email,
-            invite_url=invite_url,
-            ttl_days=ttl_days,
+        from src.core.cms.adp.auth_mail_tasks import (
+            dispatch_auth_email,
+            send_registration_invitation_email_task,
+        )
+
+        return dispatch_auth_email(
+            send_registration_invitation_email_task,
+            (invitation.email, invite_url, ttl_days),
+            lambda: send_registration_invitation_email(
+                email=invitation.email,
+                invite_url=invite_url,
+                ttl_days=ttl_days,
+            ),
         )
 
     @staticmethod

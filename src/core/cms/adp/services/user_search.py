@@ -89,9 +89,10 @@ def apply_user_search(
 
     from src.core.search.core_indexes import INDEX_USERS
     from src.core.search.fallback import apply_ordered_ids
+    from src.core.search.limits import SEARCH_ID_LIMIT
     from src.core.search.service import search_index
 
-    result = search_index(INDEX_USERS, search, queryset, page=1, page_size=100000)
+    result = search_index(INDEX_USERS, search, queryset, page=1, page_size=SEARCH_ID_LIMIT)
     if not result.ids:
         return queryset.none()
     return apply_ordered_ids(queryset, result.ids)

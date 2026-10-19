@@ -110,6 +110,17 @@ def resolve_queues(queues_config: Any, all_queues: List[str]) -> Optional[List[s
     return []
 
 
+def _positive_int(raw: Any) -> Optional[int]:
+    """Положительное целое из yaml. Пусто и мусор — None."""
+    if raw is None or raw == '':
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def build_cmd(
     queues: Optional[List[str]],
     hostname: str,
@@ -119,6 +130,8 @@ def build_cmd(
     prefetch_multiplier: Optional[int] = None,
     autoscale_min: Optional[int] = None,
     autoscale_max: Optional[int] = None,
+    max_tasks_per_child: Optional[int] = None,
+    max_memory_per_child: Optional[int] = None,
 ) -> List[str]:
     """Формирует команду celery worker. queues=None или [] — без -Q (все очереди)."""
     effective_pool = (pool or 'threads').strip().lower()
@@ -140,6 +153,13 @@ def build_cmd(
         cmd.append(f'--concurrency={concurrency}')
     if prefetch_multiplier:
         cmd.append(f'--prefetch-multiplier={prefetch_multiplier}')
+    if effective_pool == 'prefork':
+        tasks_limit = _positive_int(max_tasks_per_child)
+        memory_limit = _positive_int(max_memory_per_child)
+        if tasks_limit:
+            cmd.append(f'--max-tasks-per-child={tasks_limit}')
+        if memory_limit:
+            cmd.append(f'--max-memory-per-child={memory_limit}')
     return cmd
 
 
@@ -200,6 +220,57 @@ def _signal_group(proc, sig) -> None:
         os.killpg(proc.pid, sig)
     except OSError:
         proc.send_signal(sig)
+
+
+def _wait_proc(proc, timeout: float) -> None:
+    """Ждём завершения. Иначе новый процесс видит старый celery и сразу выходит."""
+    deadline = time.monotonic() + timeout
+    while proc.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.2)
+    if proc.poll() is None:
+        _signal_group(proc, signal.SIGKILL)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _supervise_agent_worker(cmd: List[str], log) -> int:
+    """Агент без celery_workers.yaml: держим процесс и перезапускаем, когда план сменил пул или очереди."""
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUTF8'] = '1'
+    existing = env.get('PYTHONPATH', '')
+    env['PYTHONPATH'] = str(PROJECT_ROOT) + (os.pathsep + existing if existing else '')
+    proc = subprocess.Popen(
+        cmd, cwd=str(API_DIR), start_new_session=True, env=env,
+    )
+    snapshot = _allowed_snapshot()
+    reload_at = time.monotonic() + _AGENT_RELOAD_SEC
+
+    def _on_term(_signum, _frame):
+        _signal_group(proc, signal.SIGTERM)
+        _wait_proc(proc, 20)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _on_term)
+    signal.signal(signal.SIGINT, _on_term)
+    try:
+        while proc.poll() is None:
+            if time.monotonic() >= reload_at:
+                current = _allowed_snapshot()
+                if current != snapshot:
+                    log.info('План кластера изменился, перезапуск worker')
+                    _signal_group(proc, signal.SIGTERM)
+                    _wait_proc(proc, 20)
+                    _reexec()
+                reload_at = time.monotonic() + _AGENT_RELOAD_SEC
+            time.sleep(1)
+    except KeyboardInterrupt:
+        _signal_group(proc, signal.SIGTERM)
+        _wait_proc(proc, 20)
+        return 0
+    return int(proc.returncode or 0)
 
 
 def _restrict_cluster_queues(queues: List[str], log) -> Optional[List[str]]:
@@ -387,13 +458,17 @@ def main() -> int:
     concurrency_opt = opts.concurrency
     pool_opt = opts.pool or default_pool
     pool = pool_opt
+    max_tasks_per_child = None
+    max_memory_per_child = None
 
     if module_spec:
         queues = list(module_spec['queues'])
         hostname = str(module_spec['hostname'])
         concurrency = concurrency_opt or int(module_spec['concurrency'])
         loglevel = loglevel_opt
-        pool = pool_opt
+        pool = module_spec.get('pool') or pool_opt
+        max_tasks_per_child = module_spec.get('max_tasks_per_child')
+        max_memory_per_child = module_spec.get('max_memory_per_child')
         if prefetch_opt is None:
             prefetch_opt = 1
         worker_name = None
@@ -426,6 +501,8 @@ def main() -> int:
         concurrency = concurrency_opt or overlay.get('concurrency') or w.get('concurrency')
         loglevel = w.get('loglevel') or loglevel_opt
         pool = w.get('pool') or pool_opt
+        max_tasks_per_child = w.get('max_tasks_per_child')
+        max_memory_per_child = w.get('max_memory_per_child')
         log.info("Запуск worker'а '%s': %s", worker_name, w.get('description', ''))
         queues_display = format_queues_display(queues, all_queues, verbose=opts.verbose)
         log.info(
@@ -491,6 +568,8 @@ def main() -> int:
                 prefetch_multiplier=overlay.get('prefetch_multiplier'),
                 autoscale_min=overlay.get('autoscale_min'),
                 autoscale_max=overlay.get('autoscale_max'),
+                max_tasks_per_child=w.get('max_tasks_per_child'),
+                max_memory_per_child=w.get('max_memory_per_child'),
             )
             log.info(
                 "Запуск '%s' (%s) -> очереди=%s, параллелизм=%s, пул=%s",
@@ -532,7 +611,8 @@ def main() -> int:
                     if current != snapshot:
                         for item in procs:
                             _signal_group(item, signal.SIGTERM)
-                        time.sleep(2)
+                        for item in procs:
+                            _wait_proc(item, 20)
                         _reexec()
                     reload_at = time.monotonic() + _AGENT_RELOAD_SEC
                 time.sleep(1)
@@ -583,7 +663,11 @@ def main() -> int:
         prefetch_multiplier=prefetch,
         autoscale_min=overlay.get('autoscale_min'),
         autoscale_max=overlay.get('autoscale_max'),
+        max_tasks_per_child=max_tasks_per_child,
+        max_memory_per_child=max_memory_per_child,
     )
+    if _is_cluster_agent() and not module_spec:
+        return _supervise_agent_worker(cmd, log)
     return exec_celery(cmd, str(API_DIR))
 
 

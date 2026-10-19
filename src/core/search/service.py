@@ -10,6 +10,7 @@ from django.db.models import QuerySet
 
 from .client import get_meili_client, is_meili_available
 from .fallback import apply_ordered_ids, fallback_search
+from .limits import SEARCH_ID_LIMIT
 from .query import expand_query_variants, normalize_query
 from .registry import get_index
 from .sync import ensure_index, ensure_registry_loaded
@@ -60,7 +61,7 @@ def search_index(
   filters: dict[str, Any] | None = None,
 ) -> SearchResult:
   page = max(1, int(page or 1))
-  page_size = max(1, min(int(page_size or 20), 200))
+  page_size = max(1, min(int(page_size or 20), SEARCH_ID_LIMIT))
   q = normalize_query(query)
 
   if not q:

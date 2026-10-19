@@ -10,8 +10,11 @@
 >>> ergoms api stop_celery_worker --hostname=gpu_worker
 """
 
-import psutil
 import logging
+import subprocess
+import sys
+
+import psutil
 import yaml
 
 from typing import Optional, List, Dict, Any, cast
@@ -279,6 +282,7 @@ class Command(BaseCommand):
 
         if module_name:
             self._stop_module_workers(module_name, worker_name)
+            self._requeue_orphaned()
             return
 
         # Режим 1: Остановить все worker'ы
@@ -288,11 +292,13 @@ class Command(BaseCommand):
             
             if not workers:
                 self.stdout.write(self.style.WARNING('Запущенные Celery worker процессы не найдены'))
+                self._requeue_orphaned()
                 return
             
             self.stdout.write(f"Найдено {len(workers)} worker'ов, останавливаем...")
             stopped = self._stop_processes(workers)
             self.stdout.write(self.style.SUCCESS(f"\nОстановлено: {stopped} из {len(workers)}"))
+            self._requeue_orphaned()
             return
         
         # Режим 2: Остановить worker по имени из конфига
@@ -313,10 +319,12 @@ class Command(BaseCommand):
             
             if not workers:
                 self.stdout.write(self.style.WARNING(f"Worker '{worker_name}' не запущен"))
+                self._requeue_orphaned()
                 return
             
             stopped = self._stop_processes(workers, f"'{worker_name}' ")
             self.stdout.write(self.style.SUCCESS(f"\nWorker '{worker_name}' остановлен ({stopped} процессов)"))
+            self._requeue_orphaned()
             return
         
         # Режим 3: Остановить по hostname
@@ -326,10 +334,12 @@ class Command(BaseCommand):
             
             if not workers:
                 self.stdout.write(self.style.WARNING(f"Worker с hostname={hostname} не найден"))
+                self._requeue_orphaned()
                 return
             
             stopped = self._stop_processes(workers)
             self.stdout.write(self.style.SUCCESS(f"\nОстановлено: {stopped}"))
+            self._requeue_orphaned()
             return
         
         # Режим 4: Остановить по очередям
@@ -340,6 +350,7 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS("Worker остановлен"))
             else:
                 self.stdout.write(self.style.WARNING(f"Worker с очередями {queues} не найден"))
+            self._requeue_orphaned()
             return
         
         # Без параметров — показать справку
@@ -386,3 +397,10 @@ class Command(BaseCommand):
             return
         stopped = self._stop_processes(found, label)
         self.stdout.write(self.style.SUCCESS(f"\nОстановлено: {stopped} из {len(found)}"))
+
+    def _requeue_orphaned(self) -> None:
+        """Процесс уже мёртв. Иначе задача останется в unacked до visibility_timeout."""
+        script = SYSTEM_DIR / 'core' / 'deployment' / 'scripts' / 'celery_requeue_unacked.py'
+        if not script.is_file():
+            return
+        subprocess.run([sys.executable, str(script), '--quiet'], check=False)

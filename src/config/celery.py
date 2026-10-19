@@ -25,6 +25,20 @@ from src.config.log_format import (
 from src.core.utils.auto_api.auto_config import get_env_deploy_type
 from src.core.utils.log_i18n import log_t
 
+
+def _redact_broker_url(url: str) -> str:
+    """Адрес брокера для лога: без пользователя и пароля."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    raw = str(url or '').split('?')[0]
+    parts = urlsplit(raw)
+    if not parts.username and not parts.password:
+        return raw
+    host = parts.hostname or ''
+    if parts.port:
+        host = f'{host}:{parts.port}'
+    return urlunsplit((parts.scheme, f'***@{host}', parts.path, '', ''))
+
 # ---------------------------------------------------------------------------
 # БАЗОВАЯ НАСТРОЙКА DJANGO SETTINGS ДЛЯ CELERY
 # ---------------------------------------------------------------------------
@@ -153,7 +167,8 @@ if IS_CELERY_PROCESS:
         }
         # visibility_timeout понимают Redis и SQS. Транспорт sqla+* отдаёт
         # broker_transport_options в create_engine(), и лишний аргумент роняет воркер.
-        # У Redis час — значение по умолчанию; самый долгий обход парсера живёт до трёх суток.
+        # Короткий таймаут нельзя: живой обход держит задачу часами, и брокер
+        # отдал бы её второму воркеру. Мёртвого держателя забирает celery_requeue.
         broker_url = str(celery_app.conf.broker_url or "")
         if broker_url.startswith("redis://") or broker_url.startswith("rediss://"):
             config["broker_transport_options"] = {
@@ -171,6 +186,9 @@ if IS_CELERY_PROCESS:
 
         connect_signals(celery_app)
         start_overlay_limit_watcher()
+        from src.core.utils.celery.unacked_heartbeat import register_unacked_heartbeat
+
+        register_unacked_heartbeat(celery_app)
         try:
             from src.core.utils.request_id import get_request_id, set_request_id
             from celery.signals import before_task_publish, task_prerun
@@ -358,7 +376,7 @@ else:
                 logger.info(
                     log_t(
                         'celery_django_broker_configured',
-                        broker=celery_app.conf.broker_url,
+                        broker=_redact_broker_url(celery_app.conf.broker_url),
                         routes_source=routes_source,
                         routes_count=len(routes),
                         queues_count=len(queues),
