@@ -58,6 +58,51 @@ class KnowledgePackPathTests(SimpleTestCase):
             'Connection refused (10.0.0.5:8003)',
         )
 
+    def test_accel_redirect_is_read_through_nginx(self):
+        seen: list[str] = []
+
+        class _Resp:
+            def __init__(self, body: bytes, headers: dict[str, str]):
+                self._body = body
+                self.headers = headers
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class _FakeOpener:
+            def open(self, url, timeout=None):
+                target = getattr(url, 'full_url', url)
+                host = ''
+                header_map = getattr(url, 'headers', None)
+                if header_map is not None:
+                    host = header_map.get('Host') or header_map.get('host') or ''
+                seen.append((target, host))
+                if ':8003' in target:
+                    return _Resp(b'', {'X-Accel-Redirect': '/_ergo_media/knowledge/core/rev/manifest.json'})
+                return _Resp(b'{"documents":[]}', {})
+
+        with patch(
+            'src.core.utils.http_proxy.urllib_opener',
+            return_value=_FakeOpener(),
+        ):
+            body = _http_get_knowledge_bytes(
+                'http://10.0.0.5:8003/serve/knowledge/core/rev/manifest.json'
+            )
+        self.assertEqual(body, b'{"documents":[]}')
+        self.assertEqual(
+            seen,
+            [
+                ('http://10.0.0.5:8003/serve/knowledge/core/rev/manifest.json', ''),
+                ('http://10.0.0.5/serve/knowledge/core/rev/manifest.json', 'localhost'),
+            ],
+        )
+
     def test_knowledge_download_uses_env_proxy_setting(self):
         class _FakeOpener:
             def open(self, url, timeout=None):

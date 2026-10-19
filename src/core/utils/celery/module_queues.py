@@ -247,6 +247,22 @@ def module_worker_queue_names(module_dir: str | Path) -> set[str]:
     return names
 
 
+def generic_module_worker_needed(
+    module_name: str,
+    module_dir: str | Path | None = None,
+) -> bool:
+    """Общий worker нужен, пока есть очередь вне именованных воркеров.
+
+    Если ``celery_workers.yaml`` забрал все очереди, пустой процесс сразу
+    выходит, а служба с Restart=always остаётся в activating.
+    """
+    directory = Path(module_dir) if module_dir is not None else _default_module_dir(module_name)
+    if not module_worker_queue_names(directory):
+        return True
+    owned = set(queues_for_module(module_name, module_dir=directory))
+    return bool(owned - module_worker_queue_names(directory))
+
+
 def find_module_worker(module_dir: str | Path, worker_name: str) -> dict[str, Any] | None:
     wanted = (worker_name or '').strip()
     if not wanted:
