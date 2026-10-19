@@ -344,6 +344,24 @@ class QueueConcurrencyManager:
             logger.debug(f"Очередь {queue_name}: слот освобожден (distributed)")
         except Exception as e:
             logger.error(f"Ошибка при освобождении слота для очереди {queue_name}: {e}")
+
+    def touch_held_slots(self, queue_name: str) -> None:
+        """Продлевает счётчик, пока задача ещё идёт.
+
+        Ключ в кэше живёт час, а задача — до трёх суток. Без продления
+        счётчик исчезает, и следующая копия проходит мимо лимита.
+        Мёртвый процесс писать перестаёт, и ключ истекает сам.
+        """
+        if not self._use_distributed:
+            return
+        keys = [f'celery:queue_concurrency:{queue_name}']
+        if self._needs_non_light_slot(queue_name):
+            keys.append('celery:queue_concurrency:__non_light__')
+        for key in keys:
+            try:
+                cache.touch(key, self._cache_ttl)
+            except Exception:
+                logger.debug('Слот %s не продлился', key, exc_info=True)
     
     def get_current_count(self, queue_name: str) -> int:
         """
@@ -464,12 +482,15 @@ def create_concurrency_limited_task_class(base_task_class):
                 with _task_slots_lock:
                     _task_acquired_slots[task_id] = queue_name
                 logger.debug(f"Задача {task_id}: захвачен слот для очереди {queue_name}")
-                
+                keeper = _start_slot_keepalive(queue_name)
+
                 try:
                     # Выполняем задачу
                     return super().__call__(*args, **kwargs)
                 finally:
-                    # Освобождаем слот
+                    # Сначала гасим продление, потом отпускаем слот: иначе поток
+                    # продлит уже отпущенный счётчик.
+                    _stop_slot_keepalive(keeper)
                     with _task_slots_lock:
                         _task_acquired_slots.pop(task_id, None)
                     queue_concurrency_manager.release(queue_name)
@@ -479,6 +500,36 @@ def create_concurrency_limited_task_class(base_task_class):
                 return super().__call__(*args, **kwargs)
     
     return ConcurrencyLimitedTask
+
+
+def _start_slot_keepalive(queue_name: str, *, interval: float | None = None):
+    """Фоновый поток: раз в треть TTL заново ставит срок счётчику слота."""
+    manager = queue_concurrency_manager
+    if not manager._use_distributed:
+        return None
+    stop = threading.Event()
+    if interval is None:
+        interval = max(1, int(manager._cache_ttl) // 3)
+
+    def loop() -> None:
+        while not stop.wait(interval):
+            manager.touch_held_slots(queue_name)
+
+    thread = threading.Thread(
+        target=loop,
+        name=f'slot-ttl-{queue_name}',
+        daemon=True,
+    )
+    thread.start()
+    return stop, thread
+
+
+def _stop_slot_keepalive(keeper) -> None:
+    if not keeper:
+        return
+    stop, thread = keeper[:2]
+    stop.set()
+    thread.join(timeout=2)
 
 
 def setup_concurrency_limited_tasks(celery_app):
