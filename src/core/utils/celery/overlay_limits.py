@@ -20,6 +20,9 @@ _watcher_started = False
 _watcher_lock = threading.Lock()
 _overlay_paused: set[str] = set()
 _consumers_released: set[str] = set()
+_live_nodename = ''
+_nodename_hooked = False
+_CLUSTER_ON = {'on', '1', 'true', 'yes'}
 
 
 def _argv_queues() -> set[str]:
@@ -50,8 +53,66 @@ def _worker_hostname() -> str:
     return ''
 
 
+def _project_env() -> dict[str, str]:
+    """Файлы env проекта. У воркера модуля флага кластера в начальном окружении процесса нет."""
+    try:
+        import sys
+
+        from src.config.paths import DEPLOYMENT_DIR, SYSTEM_DIR
+
+        deployment = str(DEPLOYMENT_DIR)
+        if deployment not in sys.path:
+            sys.path.insert(0, deployment)
+        from env_file_loader import load_project_env
+
+        loaded = load_project_env(SYSTEM_DIR)
+    except Exception:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _setting(name: str) -> str:
+    current = os.environ.get(name, '').strip()
+    if current:
+        return current
+    return str(_project_env().get(name) or '').strip()
+
+
 def _cluster_enabled() -> bool:
-    return os.environ.get('CELERY_CLUSTER', '').strip().lower() in {'on', '1', 'true', 'yes'}
+    return _setting('CELERY_CLUSTER').lower() in _CLUSTER_ON
+
+
+def _remember_nodename(sender: str | None = None, **_kwargs: Any) -> None:
+    global _live_nodename
+    if sender:
+        _live_nodename = str(sender)
+
+
+def _ensure_nodename_hook() -> None:
+    global _nodename_hooked
+    if _nodename_hooked:
+        return
+    try:
+        from celery.signals import celeryd_init
+    except Exception:
+        return
+    celeryd_init.connect(_remember_nodename, weak=False)
+    _nodename_hooked = True
+
+
+def _control_destination() -> str:
+    """Имя, под которым воркер слушает команды. Без @ Celery сам ставит префикс celery@."""
+    if _live_nodename:
+        return _live_nodename
+    raw = _worker_hostname()
+    if not raw:
+        return ''
+    try:
+        from celery.utils.nodenames import default_nodename
+
+        return default_nodename(raw)
+    except Exception:
+        return raw if '@' in raw else f'celery@{raw}'
 
 
 def _sync_paused_consumers(paused: set[str]) -> None:
@@ -59,7 +120,7 @@ def _sync_paused_consumers(paused: set[str]) -> None:
     global _consumers_released
     if not _cluster_enabled():
         return
-    hostname = _worker_hostname()
+    hostname = _control_destination()
     mine = _argv_queues()
     if not hostname or not mine:
         return
@@ -187,14 +248,13 @@ def apply_decision_limits(data: dict[str, Any] | None) -> None:
 
 def _load_cluster_plan() -> dict[str, Any] | None:
     """План этого узла из Redis. Нет ключа или брокер молчит — None, дальше файл."""
-    import os
     import socket
 
-    flag = os.environ.get('CELERY_CLUSTER', '').strip().lower()
-    if flag not in {'on', '1', 'true', 'yes'}:
+    flag = _setting('CELERY_CLUSTER').lower()
+    if flag not in _CLUSTER_ON:
         return None
-    node_id = os.environ.get('ERGO_NODE_ID', '').strip() or socket.gethostname()
-    url = os.environ.get('CELERY_BROKER_URL', '').strip()
+    node_id = _setting('ERGO_NODE_ID') or socket.gethostname()
+    url = _setting('CELERY_BROKER_URL')
     if not url:
         try:
             from django.conf import settings
@@ -238,6 +298,7 @@ def start_overlay_limit_watcher(*, interval_sec: float = 30.0) -> None:
             return
         _watcher_started = True
 
+    _ensure_nodename_hook()
     reload_overlay_limits()
 
     def _loop() -> None:

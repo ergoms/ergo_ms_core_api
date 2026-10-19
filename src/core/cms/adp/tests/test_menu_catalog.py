@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from src.core.cms.adp.menu.catalog_apply import _parent_first
+from src.core.cms.adp.menu.catalog_apply import _order_behind_siblings, _parent_first
 from src.core.cms.adp.menu.catalog_export import normalize_menu_catalog
 from src.core.cms.adp.menu.catalog_sandbox import MenuCatalogStore
 from src.core.cms.adp.menu.migration_utils import MenuMigrationHelper
@@ -62,3 +62,11 @@ class MenuCatalogParentFirstTests(SimpleTestCase):
             [item['catalog_key'] for item in ordered],
             [root['catalog_key'], child['catalog_key']],
         )
+
+
+class MenuCatalogNewItemOrderTests(SimpleTestCase):
+    def test_new_item_stays_after_custom_sibling_order(self):
+        self.assertEqual(_order_behind_siblings(60, [10, 20, 200]), 210)
+
+    def test_new_item_keeps_seed_when_already_last(self):
+        self.assertEqual(_order_behind_siblings(60, [10, 20, 50]), 60)

@@ -151,6 +151,20 @@ def _is_cluster_agent() -> bool:
     return os.environ.get('CELERY_CLUSTER_ROLE', '').strip().lower() == 'agent'
 
 
+def _pool_snapshot() -> tuple:
+    """Размер пула из плана. Пустая пара — плана нет, воркер не перезапускается из-за него."""
+    if worker_override is None or load_settings is None:
+        return (None, None)
+    try:
+        settings = load_settings(PROJECT_ROOT)
+        override = worker_override(PROJECT_ROOT, None, mode=settings.mode)
+    except Exception:
+        return (None, None)
+    if override is None:
+        return (None, None)
+    return (override.concurrency, override.prefetch_multiplier)
+
+
 def _allowed_snapshot() -> Optional[tuple]:
     if resolve_allowed_queues is None:
         return None
@@ -160,7 +174,9 @@ def _allowed_snapshot() -> Optional[tuple]:
         return None
     if not allowed:
         return tuple()
-    return tuple(sorted(str(item) for item in allowed))
+    queues = tuple(sorted(str(item) for item in allowed))
+    concurrency, prefetch = _pool_snapshot()
+    return (queues, concurrency, prefetch)
 
 
 def _reexec() -> None:

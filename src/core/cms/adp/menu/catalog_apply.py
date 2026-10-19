@@ -9,6 +9,16 @@ from .catalog_export import normalize_menu_catalog
 from .migration_utils import MenuMigrationHelper
 
 
+def _order_behind_siblings(seed_order: int | None, sibling_orders: list[int]) -> int | None:
+    """Новый пункт не встаёт между уже расставленными соседями."""
+    if not sibling_orders:
+        return seed_order
+    last = max(sibling_orders)
+    if seed_order is not None and seed_order > last:
+        return seed_order
+    return last + MenuMigrationHelper.ORDER_STEP
+
+
 def _parent_first(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_key = {
         item['catalog_key']: item
@@ -39,6 +49,8 @@ def apply_module_menu_catalog(raw: dict[str, Any] | None) -> tuple[int, int]:
     Пересоздаёт seed-каталог модуля из снимка.
 
     Layout (MenuLayoutPlacement) не трогает: helper накатывает его на catalog_key.
+    Пункт, которого в layout ещё нет, ставится после последнего соседа,
+    а не в середину уже сохранённого порядка.
     Возвращает (число пунктов, число разделителей).
     """
     catalog = normalize_menu_catalog(raw)
@@ -48,6 +60,7 @@ def apply_module_menu_catalog(raw: dict[str, Any] | None) -> tuple[int, int]:
     from django.apps import apps
 
     helper = MenuMigrationHelper(apps, catalog['module_source'])
+    known_keys = _placement_keys(helper, catalog)
     helper.clear_module_items()
 
     created: dict[str, Any] = {}
@@ -79,6 +92,7 @@ def apply_module_menu_catalog(raw: dict[str, Any] | None) -> tuple[int, int]:
         key = getattr(item, 'catalog_key', None) or spec.get('catalog_key')
         if key:
             created[key] = item
+    _place_new_children_last(helper, created, known_keys)
 
     sep_count = 0
     for spec in catalog.get('separators') or []:
@@ -97,3 +111,37 @@ def apply_module_menu_catalog(raw: dict[str, Any] | None) -> tuple[int, int]:
         )
         sep_count += 1
     return item_count, sep_count
+
+
+def _placement_keys(helper: MenuMigrationHelper, catalog: dict[str, Any]) -> set[str]:
+    if not helper._has_layout_models:
+        return set()
+    keys = [
+        spec.get('catalog_key')
+        for spec in catalog.get('items') or []
+        if spec.get('catalog_key')
+    ]
+    if not keys:
+        return set()
+    found = helper.MenuLayoutPlacement.objects.filter(catalog_key__in=keys)
+    return set(found.values_list('catalog_key', flat=True))
+
+
+def _place_new_children_last(helper: MenuMigrationHelper, created: dict[str, Any], known_keys: set[str]) -> None:
+    """Сдвигает только новые дочерние пункты за последнего соседа."""
+    for key, item in created.items():
+        if key in known_keys or not item.parent_id:
+            continue
+        sibling_orders = list(
+            helper.MenuItem.objects.filter(parent_id=item.parent_id)
+            .exclude(pk=item.pk)
+            .values_list('order', flat=True)
+        )
+        sibling_orders = [int(value) for value in sibling_orders if value is not None]
+        target = _order_behind_siblings(item.order, sibling_orders)
+        if target is None or target == item.order:
+            continue
+        item.order = target
+        item.save(update_fields=['order'])
+        if helper._has_layout_models and item.catalog_key:
+            helper.MenuLayoutPlacement.objects.filter(catalog_key=item.catalog_key).update(order=target)
