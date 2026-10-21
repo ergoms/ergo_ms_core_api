@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 from django.db import connection, models, transaction
 from django.db.models.deletion import ProtectedError
+from django.db.models.signals import pre_delete
 from django.db.utils import IntegrityError, ProgrammingError
 
 from src.core.cms.adp.models import UserDevice, UserPresence, UserProfile, UserRole
@@ -30,6 +31,7 @@ class UserDeletionBlockedError(Exception):
         self.detail = detail
 
 
+@transaction.atomic
 def delete_admin_user(user: User) -> None:
     """
     Удаляет пользователя: отзывает сессии, вызывает bridge-хуки, очищает связи ядра.
@@ -89,11 +91,12 @@ def revoke_user_auth(user: User, *, except_device_id: int | None = None) -> None
     try:
         from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
-        outstanding_qs = OutstandingToken.objects.filter(user=user)
-        if except_jti:
-            outstanding_qs = outstanding_qs.exclude(jti=except_jti)
-        for outstanding in outstanding_qs:
-            BlacklistedToken.objects.get_or_create(token=outstanding)
+        with transaction.atomic():
+            outstanding_qs = OutstandingToken.objects.filter(user=user)
+            if except_jti:
+                outstanding_qs = outstanding_qs.exclude(jti=except_jti)
+            for outstanding in outstanding_qs:
+                BlacklistedToken.objects.get_or_create(token=outstanding)
     except Exception:
         pass
 
@@ -109,7 +112,8 @@ def _cleanup_core_user_relations(user: User) -> None:
     try:
         from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 
-        OutstandingToken.objects.filter(user=user).delete()
+        with transaction.atomic():
+            OutstandingToken.objects.filter(user=user).delete()
     except Exception:
         pass
 
@@ -119,7 +123,8 @@ def _delete_user_record(user: User) -> None:
     username = user.username
 
     try:
-        user.delete()
+        with transaction.atomic():
+            user.delete()
         return
     except ProtectedError as exc:
         detail = _format_protected_objects(exc)
@@ -132,6 +137,12 @@ def _delete_user_record(user: User) -> None:
         )
         raise UserDeletionBlockedError(detail=detail) from exc
     except ProgrammingError as exc:
+        if pre_delete.has_listeners(User):
+            raise UserDeletionBlockedError(detail=(
+                'Не удалось проверить ограничения удаления учётной записи. '
+                'SQL-обход отключён при наличии обработчиков сохранности данных; '
+                'деактивируйте пользователя и проверьте схему БД.'
+            )) from exc
         logger.warning(
             'ORM user.delete() failed with ProgrammingError for user_id=%s username=%s, '
             'attempting SQL fallback: %s',
