@@ -65,6 +65,20 @@ def _jupyter_enabled_from_env(project_root: Path) -> bool:
     return False
 
 
+def _runtime_extra_groups(project_root: Path) -> frozenset[str]:
+    deployment = project_root / "core" / "deployment"
+    if deployment.is_dir() and str(deployment) not in sys.path:
+        sys.path.insert(0, str(deployment))
+    try:
+        from runtime_requirements import required_python_groups
+    except ModuleNotFoundError as exc:
+        if exc.name == "yaml":
+            # A new venv receives PyYAML from the first core Poetry install.
+            return frozenset()
+        raise
+    return required_python_groups(project_root)
+
+
 def _auto_extra_groups(project_root: Path) -> frozenset[str]:
     groups: set[str] = set()
     docker_service = os.environ.get("ERGO_DOCKER_SERVICE_NAME", "").strip()
@@ -72,7 +86,7 @@ def _auto_extra_groups(project_root: Path) -> frozenset[str]:
         groups.add("mcp")
     if docker_service == "jupyter" or _jupyter_enabled_from_env(project_root):
         groups.add("jupyter")
-    return frozenset(groups)
+    return frozenset(groups) | _runtime_extra_groups(project_root)
 
 
 def _parse_with_groups(args: Tuple[Any, ...]) -> frozenset[str]:
@@ -114,7 +128,11 @@ class InstallCommand(PoetryCommand):
             print("Ошибка: не удалось найти корневой pyproject.toml.")
             return 1
 
-        extra_groups = _parse_with_groups(args) | _auto_extra_groups(project_root)
+        try:
+            extra_groups = _parse_with_groups(args) | _auto_extra_groups(project_root)
+        except ValueError as exc:
+            print(f"Ошибка runtime_requirements.yaml: {exc}")
+            return 1
 
         fingerprint = self._python_deps_fingerprint(project_root, extra_groups=extra_groups)
         root_data = self._read_toml(project_root / "pyproject.toml")
@@ -170,6 +188,19 @@ class InstallCommand(PoetryCommand):
         rc = self._install_core(project_root, extra_groups=extra_groups)
         if rc != 0:
             return rc
+
+        # Resolve manifests again after bootstrap, when PyYAML is available.
+        try:
+            runtime_groups = _runtime_extra_groups(project_root)
+        except ValueError as exc:
+            print(f"Ошибка runtime_requirements.yaml: {exc}")
+            return 1
+        if not runtime_groups.issubset(extra_groups):
+            extra_groups |= runtime_groups
+            rc = self._install_core(project_root, extra_groups=extra_groups)
+            if rc != 0:
+                return rc
+            fingerprint = self._python_deps_fingerprint(project_root, extra_groups=extra_groups)
 
         if not module_configs:
             print("Модульных pyproject.toml не найдено.")
