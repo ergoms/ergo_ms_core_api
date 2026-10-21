@@ -27,8 +27,14 @@ if not is_slim_module_process():
 discovered = get_discovered_url_entries()
 installed_names = {config.name for config in apps.get_app_configs()} if apps.ready else None
 for route, dotted_module in discovered:
-    app_name = dotted_module.rsplit('.urls', 1)[0]
-    if installed_names is not None and not app_name.startswith('src.') and app_name not in installed_names:
+    # app_name имеет специальное значение для django.urls.include():
+    # публичная переменная с таким именем превращает всё /api/ в namespace.
+    _url_app_name = dotted_module.rsplit('.urls', 1)[0]
+    if (
+        installed_names is not None
+        and not _url_app_name.startswith('src.')
+        and not any(_url_app_name == name or _url_app_name.startswith(name + '.') for name in installed_names)
+    ):
         continue
     urlpatterns.append(path(route, include(dotted_module)))
 

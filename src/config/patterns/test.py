@@ -9,6 +9,7 @@
 """
 
 import os
+import uuid
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'src.config.patterns.test')
 
@@ -23,6 +24,20 @@ load_settings_modules(
     globals(),
     deferred={'celery_beat', 'jupyter', 'apps'},
 )
+
+# Не переиспользуем и не пересоздаём чужую test_<database> при --noinput.
+_test_run_id = uuid.uuid4().hex
+for _alias, _database in DATABASES.items():
+    if not _database.get('TEST', {}).get('MIRROR'):
+        _database.setdefault('TEST', {})['NAME'] = f'test_ergo_{_test_run_id}_{_alias}'[:63]
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': _test_run_id,
+    },
+}
+CELERY_BROKER_URL = 'memory://'
+CELERY_RESULT_BACKEND = 'cache+memory://'
 
 target_module = os.environ.get('TEST_TARGET_MODULE')
 use_full_apps = os.environ.get('TEST_FULL_APPS', '').lower() in ('1', 'true', 'yes')

@@ -120,7 +120,9 @@ class DjangoSAExecutor:
             return sql_text, params if params is not None else ()
         compile_kwargs = {'literal_binds': True} if literal_binds else {}
         compiled = stmt.compile(
-            dialect=postgresql.dialect(),
+            # При инлайнинге параметров cursor.execute получает params=None:
+            # pyformat-экранирование удвоило бы буквальные проценты в данных.
+            dialect=postgresql.dialect(paramstyle='named' if literal_binds else 'pyformat'),
             compile_kwargs=compile_kwargs,
         )
         sql_str = str(compiled)

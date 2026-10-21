@@ -4,6 +4,7 @@
 Обход FS только при смене fingerprint; include() по-прежнему ленивый.
 """
 import logging
+import hashlib
 import os
 from typing import List, Optional, Tuple
 
@@ -59,7 +60,14 @@ def _url_fingerprint() -> dict:
     fingerprint['modules_urls'] = modules_urls_mtime
     fingerprint['core_urls_count'] = str(core_urls_count)
     fingerprint['modules_urls_count'] = str(modules_urls_count)
-    fingerprint['urls_algo'] = '3'
+    fingerprint['urls_algo'] = '4'
+    # Изолированные тесты и процессы могут иметь разный набор приложений
+    # при том же дереве файлов. Их результаты discovery несовместимы.
+    from django.conf import settings
+
+    fingerprint['installed_apps'] = hashlib.sha256(
+        '\n'.join(sorted(settings.INSTALLED_APPS)).encode('utf-8')
+    ).hexdigest()
     try:
         from src.core.utils.module_registry import get_process_filter_fingerprint
 
