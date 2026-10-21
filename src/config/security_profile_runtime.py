@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+from functools import lru_cache
 
 from src.config.paths import DEPLOYMENT_DIR
 
@@ -16,14 +17,15 @@ if str(DEPLOYMENT_DIR) not in sys.path:
     sys.path.insert(0, str(DEPLOYMENT_DIR))
 
 from ergo_modes import env_bool  # noqa: E402
-from security.catalog import load_security_catalog  # noqa: E402
+from security.catalog import DEFAULT_PROFILES_PATH, load_security_catalog  # noqa: E402
 from security.profile_defaults import (  # noqa: E402
     APPLYABLE_CONTROL_IDS,
     merge_security_profile_defaults,
 )
 
 
-def _watched_keys() -> tuple[str, ...]:
+@lru_cache(maxsize=8)
+def _watched_keys(catalog_signature) -> tuple[str, ...]:
     catalog = load_security_catalog()
     keys = ['ERGO_SECURITY']
     for control_id in APPLYABLE_CONTROL_IDS:
@@ -33,17 +35,27 @@ def _watched_keys() -> tuple[str, ...]:
     return tuple(keys)
 
 
-def _environ_subset() -> dict[str, str]:
+def _environ_subset(catalog_signature) -> dict[str, str]:
     values: dict[str, str] = {}
-    for key in _watched_keys():
+    for key in _watched_keys(catalog_signature):
         raw = os.environ.get(key)
         if raw is not None and str(raw).strip() != '':
             values[key] = str(raw).strip()
     return values
 
 
+@lru_cache(maxsize=32)
+def _merged_security_env(catalog_signature, values):
+    return merge_security_profile_defaults(dict(values))
+
+
 def merged_security_env() -> dict[str, str]:
-    return merge_security_profile_defaults(_environ_subset())
+    # Не разбираем YAML на каждом HTTP-ответе. Файл и явные env-значения
+    # остаются частью ключа: изменение политики не требует очистки кэша.
+    stat = DEFAULT_PROFILES_PATH.stat()
+    signature = (str(DEFAULT_PROFILES_PATH), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+    values = tuple(sorted(_environ_subset(signature).items()))
+    return dict(_merged_security_env(signature, values))
 
 
 def security_env_str(key: str, *, default: str) -> str:
