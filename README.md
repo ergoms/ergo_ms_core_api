@@ -9,7 +9,7 @@
 | Каталог | Назначение |
 |---------|------------|
 | `src/config/` | настройки Django, Celery, URL, ASGI, runtime nginx/redis/jupyter |
-| `src/core/` | код ядра: CMS, ADP, utils, audit, integrations, search, messenger, notifications, realtime, settings, system |
+| `src/core/` | код ядра: CMS, ADP, utils, audit, integrations, search, notifications, realtime, settings, system |
 | `src/core/cms/adp/` | пользователи, роли, приглашения, WebSocket consumers (presence) |
 | `locale/` | каталоги локализации API (ru / en / fr) |
 | `commands/` | команды ergoms для модулей и зависимостей (`install`, `module-add`, …) |

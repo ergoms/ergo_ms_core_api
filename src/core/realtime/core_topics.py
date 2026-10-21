@@ -85,7 +85,7 @@ def register_core_realtime_topics() -> None:
         resolve_group=_resolve_user_topic,
     )
     register_realtime_topic(
-        'messenger:{content_type}:{object_id}',
+        'chat:{content_type}:{object_id}',
         authorize=_authorize_messenger_topic,
         resolve_group=_resolve_messenger_topic,
     )

@@ -33,7 +33,7 @@ class RealtimeConfigView(BaseAPIViewAuthMixin):
                 'presence': getattr(settings, 'REALTIME_POLL_PRESENCE_INTERVAL', 45),
                 'notifications': getattr(settings, 'REALTIME_POLL_NOTIFICATIONS_INTERVAL', 15),
                 'admin_presence': getattr(settings, 'REALTIME_POLL_ADMIN_PRESENCE_INTERVAL', 10),
-                'messenger': getattr(settings, 'REALTIME_POLL_MESSENGER_INTERVAL', 5),
+                'chat': getattr(settings, 'REALTIME_POLL_MESSENGER_INTERVAL', 5),
             },
         })
 
