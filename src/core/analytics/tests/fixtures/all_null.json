@@ -1,0 +1,60 @@
+{
+  "summary": [
+    {
+      "name": "amount",
+      "dtype": "Float64",
+      "count": 6,
+      "nulls": 6,
+      "null_pct": 100.0,
+      "unique": 1,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null,
+      "std": null,
+      "q25": null,
+      "q75": null
+    },
+    {
+      "name": "category",
+      "dtype": "String",
+      "count": 6,
+      "nulls": 6,
+      "null_pct": 100.0,
+      "unique": 1,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null,
+      "std": null,
+      "q25": null,
+      "q75": null
+    },
+    {
+      "name": "day",
+      "dtype": "Date",
+      "count": 6,
+      "nulls": 6,
+      "null_pct": 100.0,
+      "unique": 1,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null,
+      "std": null,
+      "q25": null,
+      "q75": null
+    }
+  ],
+  "distributions": {
+    "numeric": {},
+    "categorical": {}
+  },
+  "correlations": {
+    "fields": [
+      "amount"
+    ],
+    "matrix": []
+  },
+  "outliers": []
+}

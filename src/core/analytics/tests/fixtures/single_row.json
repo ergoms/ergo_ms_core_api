@@ -1,0 +1,124 @@
+{
+  "summary": [
+    {
+      "name": "amount",
+      "dtype": "Float64",
+      "count": 1,
+      "nulls": 0,
+      "null_pct": 0.0,
+      "unique": 1,
+      "min": 7.5,
+      "max": 7.5,
+      "mean": 7.5,
+      "median": 7.5,
+      "std": null,
+      "q25": 7.5,
+      "q75": 7.5
+    },
+    {
+      "name": "category",
+      "dtype": "String",
+      "count": 1,
+      "nulls": 0,
+      "null_pct": 0.0,
+      "unique": 1,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null,
+      "std": null,
+      "q25": null,
+      "q75": null
+    },
+    {
+      "name": "day",
+      "dtype": "Date",
+      "count": 1,
+      "nulls": 0,
+      "null_pct": 0.0,
+      "unique": 1,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null,
+      "std": null,
+      "q25": null,
+      "q75": null
+    }
+  ],
+  "distributions": {
+    "numeric": {
+      "amount": {
+        "bins": [
+          7.05,
+          7.1,
+          7.15,
+          7.2,
+          7.25,
+          7.3,
+          7.35,
+          7.4,
+          7.45,
+          7.5,
+          7.55,
+          7.6,
+          7.65,
+          7.7,
+          7.75,
+          7.8,
+          7.85,
+          7.9,
+          7.95,
+          8.0
+        ],
+        "counts": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "categorical": {
+      "category": {
+        "values": [
+          "one"
+        ],
+        "counts": [
+          1
+        ]
+      },
+      "day": {
+        "values": [
+          "2024-01-01"
+        ],
+        "counts": [
+          1
+        ]
+      }
+    }
+  },
+  "correlations": {
+    "fields": [
+      "amount"
+    ],
+    "matrix": []
+  },
+  "outliers": []
+}

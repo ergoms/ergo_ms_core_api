@@ -1,0 +1,85 @@
+{
+  "summary": [
+    {
+      "name": "amount",
+      "dtype": "Float64",
+      "count": 0,
+      "nulls": 0,
+      "null_pct": 0,
+      "unique": 0,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null,
+      "std": null,
+      "q25": null,
+      "q75": null
+    },
+    {
+      "name": "units",
+      "dtype": "Int64",
+      "count": 0,
+      "nulls": 0,
+      "null_pct": 0,
+      "unique": 0,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null,
+      "std": null,
+      "q25": null,
+      "q75": null
+    },
+    {
+      "name": "category",
+      "dtype": "String",
+      "count": 0,
+      "nulls": 0,
+      "null_pct": 0,
+      "unique": 0,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null,
+      "std": null,
+      "q25": null,
+      "q75": null
+    },
+    {
+      "name": "day",
+      "dtype": "Date",
+      "count": 0,
+      "nulls": 0,
+      "null_pct": 0,
+      "unique": 0,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": null,
+      "std": null,
+      "q25": null,
+      "q75": null
+    }
+  ],
+  "distributions": {
+    "numeric": {},
+    "categorical": {}
+  },
+  "correlations": {
+    "fields": [
+      "amount",
+      "units"
+    ],
+    "matrix": [
+      [
+        null,
+        null
+      ],
+      [
+        null,
+        null
+      ]
+    ]
+  },
+  "outliers": []
+}

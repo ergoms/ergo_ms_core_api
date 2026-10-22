@@ -1,0 +1,169 @@
+{
+  "summary": [
+    {
+      "name": "amount",
+      "dtype": "Float64",
+      "count": 6,
+      "nulls": 1,
+      "null_pct": 16.67,
+      "unique": 6,
+      "min": null,
+      "max": null,
+      "mean": null,
+      "median": 1.0,
+      "std": null,
+      "q25": 0.0,
+      "q75": null
+    },
+    {
+      "name": "units",
+      "dtype": "Int64",
+      "count": 6,
+      "nulls": 0,
+      "null_pct": 0.0,
+      "unique": 6,
+      "min": 1,
+      "max": 6,
+      "mean": 3.5,
+      "median": 3.5,
+      "std": 1.8708286933869707,
+      "q25": 2.0,
+      "q75": 5.0
+    }
+  ],
+  "distributions": {
+    "numeric": {
+      "amount": {
+        "bins": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "counts": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "units": {
+        "bins": [
+          1.25,
+          1.5,
+          1.75,
+          2.0,
+          2.25,
+          2.5,
+          2.75,
+          3.0,
+          3.25,
+          3.5,
+          3.75,
+          4.0,
+          4.25,
+          4.5,
+          4.75,
+          5.0,
+          5.25,
+          5.5,
+          5.75,
+          6.0
+        ],
+        "counts": [
+          1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    "categorical": {}
+  },
+  "correlations": {
+    "fields": [
+      "amount",
+      "units"
+    ],
+    "matrix": [
+      [
+        null,
+        null
+      ],
+      [
+        null,
+        1.0
+      ]
+    ]
+  },
+  "outliers": [
+    {
+      "name": "amount",
+      "count": 1,
+      "pct": 16.67,
+      "lower_bound": null,
+      "upper_bound": null,
+      "q1": 0.0,
+      "q3": null,
+      "iqr": null
+    },
+    {
+      "name": "units",
+      "count": 0,
+      "pct": 0.0,
+      "lower_bound": -2.5,
+      "upper_bound": 9.5,
+      "q1": 2.0,
+      "q3": 5.0,
+      "iqr": 3.0
+    }
+  ]
+}
