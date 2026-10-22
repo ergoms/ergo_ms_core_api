@@ -548,10 +548,15 @@ class InstallCommand(PoetryCommand):
         self, module_deps: dict, project_root: Path
     ) -> dict:
         installed = self._get_installed_versions()
+        roots = {canonicalize_name(pkg) for pkg in module_deps}
+        missing = self._dependency_closure(roots) - installed.keys()
         unsatisfied: Dict[str, Any] = {}
         for pkg, constraint in module_deps.items():
             req_line = self._to_pip_requirement(pkg, constraint, project_root)
             if not self._requirement_satisfied(req_line, installed):
+                unsatisfied[pkg] = constraint
+                continue
+            if missing and self._dependency_closure({canonicalize_name(pkg)}) & missing:
                 unsatisfied[pkg] = constraint
                 continue
             for dep_line in _NO_DEPS_RUNTIME_DEPS.get(canonicalize_name(pkg), []):
@@ -799,15 +804,18 @@ class InstallCommand(PoetryCommand):
         return 0
 
     def _dependency_closure(self, root_names: Set[str]) -> Set[str]:
-        """Имена установленных пакетов, достижимых из root_names по Requires-Dist."""
+        """Достижимые пакеты с extras, запрошенными рёбрами Requires-Dist."""
         from importlib.metadata import PackageNotFoundError, distribution
 
         result: Set[str] = set()
-        stack = [canonicalize_name(name) for name in root_names]
+        seen: Set[Tuple[str, frozenset[str]]] = set()
+        stack: List[Tuple[str, frozenset[str]]] = [(canonicalize_name(name), frozenset()) for name in root_names]
         while stack:
-            name = stack.pop()
-            if name in result:
+            name, extras = stack.pop()
+            context = (name, extras)
+            if context in seen:
                 continue
+            seen.add(context)
             result.add(name)
             try:
                 dist = distribution(name)
@@ -820,11 +828,11 @@ class InstallCommand(PoetryCommand):
                     continue
                 if req.marker is not None:
                     try:
-                        if not req.marker.evaluate():
+                        if not any(req.marker.evaluate({"extra": extra}) for extra in extras | {""}):
                             continue
                     except InvalidMarker:
                         continue
-                stack.append(canonicalize_name(req.name))
+                stack.append((canonicalize_name(req.name), frozenset(canonicalize_name(extra) for extra in req.extras)))
         return result
 
     def _find_project_root(self) -> Optional[Path]:
