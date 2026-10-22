@@ -38,8 +38,5 @@ def resolve_huggingface_source(repo_id: str, *, root: Path | None = None) -> str
 
 def ensure_local_source(repo_id: str, *, root: Path | None = None) -> str:
     """Путь к снимку в trained_models; если весов нет — ставит их туда."""
-    project = _deployment_root(root)
-    from huggingface.snapshot import ensure_installed
-
-    dest = ensure_installed(project, repo_id)
-    return str(dest)
+    from src.core.utils.model_index import resolve_model
+    return resolve_model('huggingface', repo_id, root=root, allow_download=True)['local_path']
