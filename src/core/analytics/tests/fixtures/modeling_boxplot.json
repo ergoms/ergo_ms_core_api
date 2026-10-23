@@ -1,0 +1,70 @@
+{
+  "result": {
+    "model_type": "boxplot",
+    "boxplots": [
+      {
+        "field": "x",
+        "min": 0.0,
+        "max": 100.0,
+        "q1": 1.0,
+        "median": 2.0,
+        "q3": 3.0,
+        "mean": 21.2,
+        "whisker_low": 0.0,
+        "whisker_high": 6.0,
+        "iqr": 2.0,
+        "lower_fence": -2.0,
+        "upper_fence": 6.0,
+        "outlier_count": 1,
+        "outliers_sample": [
+          100.0
+        ]
+      },
+      {
+        "field": "constant",
+        "min": 4.0,
+        "max": 4.0,
+        "q1": 4.0,
+        "median": 4.0,
+        "q3": 4.0,
+        "mean": 4.0,
+        "whisker_low": 4.0,
+        "whisker_high": 4.0,
+        "iqr": 0.0,
+        "lower_fence": 4.0,
+        "upper_fence": 4.0,
+        "outlier_count": 0,
+        "outliers_sample": []
+      }
+    ],
+    "metrics": {
+      "total_fields": 2,
+      "total_outliers": 1
+    },
+    "meta": {
+      "n_observations": 6,
+      "fields_analyzed": [
+        "x",
+        "constant"
+      ]
+    }
+  },
+  "progress": [
+    [
+      0.05,
+      "Расчёт квантилей и усов"
+    ],
+    [
+      0.39,
+      "Поле x"
+    ],
+    [
+      0.9,
+      "Поле constant"
+    ],
+    [
+      0.95,
+      "Формирование результата"
+    ]
+  ]
+}
