@@ -1,0 +1,187 @@
+{
+  "aggregates": {
+    "mixed": [
+      10,
+      [
+        {
+          "name": "city",
+          "count": 10,
+          "nulls": 0,
+          "null_pct": 0.0,
+          "unique": 3,
+          "min": null,
+          "max": null,
+          "mean": null,
+          "std": null
+        },
+        {
+          "name": "amount",
+          "count": 10,
+          "nulls": 2,
+          "null_pct": 20.0,
+          "unique": 7,
+          "min": 1.0,
+          "max": 9.0,
+          "mean": 4.5,
+          "std": 2.0
+        }
+      ]
+    ],
+    "empty": [
+      0,
+      []
+    ],
+    "all_null": [
+      5,
+      [
+        {
+          "name": "x",
+          "count": 5,
+          "nulls": 5,
+          "null_pct": 100.0,
+          "unique": 0,
+          "min": null,
+          "max": null,
+          "mean": null,
+          "std": null
+        }
+      ]
+    ],
+    "no_rows": [
+      0,
+      [
+        {
+          "name": "x",
+          "count": 0,
+          "nulls": 0,
+          "null_pct": 0.0,
+          "unique": 0,
+          "min": null,
+          "max": null,
+          "mean": null,
+          "std": null
+        },
+        {
+          "name": "label",
+          "count": 0,
+          "nulls": 0,
+          "null_pct": 0.0,
+          "unique": 0,
+          "min": null,
+          "max": null,
+          "mean": null,
+          "std": null
+        }
+      ]
+    ],
+    "decimal": [
+      3,
+      [
+        {
+          "name": "x",
+          "count": 3,
+          "nulls": 1,
+          "null_pct": 33.33,
+          "unique": 2,
+          "min": 0.1,
+          "max": 0.3,
+          "mean": 0.2,
+          "std": 0.1414213562373095
+        }
+      ]
+    ],
+    "non_finite": [
+      5,
+      [
+        {
+          "name": "x",
+          "count": 5,
+          "nulls": 2,
+          "null_pct": 40.0,
+          "unique": 0,
+          "min": null,
+          "max": null,
+          "mean": null,
+          "std": null
+        }
+      ]
+    ]
+  },
+  "entries": {
+    "aliases": [
+      {
+        "name": "amount",
+        "count": 10,
+        "nulls": 2,
+        "null_pct": 20.0,
+        "unique": 7,
+        "min": 1.0,
+        "max": 9.0,
+        "mean": 4.5,
+        "std": 2.0
+      },
+      {
+        "name": "city",
+        "count": 10,
+        "nulls": 1,
+        "null_pct": 10.0,
+        "unique": 3,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "std": null
+      }
+    ],
+    "fallback_and_missing": [
+      {
+        "name": "x",
+        "count": 4,
+        "nulls": 1,
+        "null_pct": 25.0,
+        "unique": 2,
+        "min": null,
+        "max": null,
+        "mean": 1.25,
+        "std": null
+      }
+    ],
+    "duplicates": [
+      {
+        "name": "renamed",
+        "count": 2,
+        "nulls": 0,
+        "null_pct": 0.0,
+        "unique": 2,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "std": null
+      },
+      {
+        "name": "x",
+        "count": 2,
+        "nulls": 0,
+        "null_pct": 0.0,
+        "unique": 2,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "std": null
+      }
+    ],
+    "invalid_values": [
+      {
+        "name": "x",
+        "count": 3,
+        "nulls": 0,
+        "null_pct": 0.0,
+        "unique": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "std": null
+      }
+    ],
+    "empty": []
+  }
+}
