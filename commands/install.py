@@ -159,12 +159,9 @@ class InstallCommand(PoetryCommand):
                 else {}
             )
             stamp_ok = self._python_deps_stamp_matches(project_root, fingerprint)
-            # Stamp совпал — достаточно проверки модульных пакетов (быстрый путь).
-            # Stamp отсутствует/устарел — сверить poetry.lock с venv без poetry install.
-            if not unsatisfied and (
-                stamp_ok
-                or self._core_lock_satisfied(project_root, extra_groups=extra_groups)
-            ):
+            # Fingerprint не отражает удаление пакета или дрейф версии в venv.
+            # Всегда сверяем активные группы lock без запуска poetry install.
+            if not unsatisfied and self._core_lock_satisfied(project_root, extra_groups=extra_groups):
                 self._write_python_deps_stamp(project_root, fingerprint)
                 if stamp_ok:
                     print(
@@ -241,12 +238,12 @@ class InstallCommand(PoetryCommand):
                         self._uninstall_packages(list(to_install.keys()))
 
                     rc = self._install_module_packages(
-                        project_root, root_data, to_install
+                        project_root, root_data, to_install, extra_groups=extra_groups
                     )
                     if rc != 0:
                         return rc
 
-        rc = self._sync_main_lock_versions(project_root)
+        rc = self._sync_main_lock_versions(project_root, extra_groups=extra_groups)
         if rc != 0:
             return rc
 
@@ -339,10 +336,11 @@ class InstallCommand(PoetryCommand):
         return result.returncode
 
     def _install_module_packages(
-        self, project_root: Path, root_data: dict, module_deps: dict
+        self, project_root: Path, root_data: dict, module_deps: dict,
+        *, extra_groups: frozenset[str] = frozenset(),
     ) -> int:
         lock_path = project_root / "poetry.lock"
-        main_versions = self._parse_poetry_lock(lock_path, groups=_CORE_LOCK_GROUPS)
+        main_versions = self._parse_poetry_lock(lock_path, groups=self._lock_groups_for_install(extra_groups))
         if not main_versions:
             print("Предупреждение: poetry.lock ядра не найден или пуст — constraints не применены.")
 
@@ -490,10 +488,12 @@ class InstallCommand(PoetryCommand):
             for name, version in main_versions.items()
         )
 
-    def _sync_main_lock_versions(self, project_root: Path) -> int:
+    def _sync_main_lock_versions(
+        self, project_root: Path, *, extra_groups: frozenset[str] = frozenset(),
+    ) -> int:
         main_versions = self._parse_poetry_lock(
             project_root / "poetry.lock",
-            groups=_CORE_LOCK_GROUPS,
+            groups=self._lock_groups_for_install(extra_groups),
         )
         if not main_versions:
             return 0
