@@ -1,5 +1,6 @@
 """Numerical references captured before extracting statistical modeling."""
 from copy import deepcopy
+from contextlib import ExitStack
 import json
 import math
 import os
@@ -7,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 import polars as pl
 from polars.testing import assert_frame_equal
@@ -39,8 +41,17 @@ class ModelingReferenceTests(unittest.TestCase):
                                        f'modeling_{name}.json').read_text(encoding='utf-8'))
                 original_frame, original_config = frame.clone(), deepcopy(config)
                 progress = []
-                result = getattr(modeling, operation)(frame, config,
-                                                       lambda value, message: progress.append([value, message]))
+                with ExitStack() as stack:
+                    if name == 'sarima':
+                        from statsmodels.tsa.statespace.sarimax import SARIMAX
+                        # Native numerical fits differ on Windows/Linux. Keep
+                        # the historical serialization check at the original fit.
+                        stack.enter_context(patch.object(
+                            SARIMAX, 'fit', autospec=True,
+                            side_effect=lambda model, **kwargs: model.filter(expected['fit_parameters']),
+                        ))
+                    result = getattr(modeling, operation)(frame, config,
+                                                           lambda value, message: progress.append([value, message]))
                 self.assert_reference_equal(result, expected['result'])
                 self.assertEqual(progress, expected['progress'])
                 assert_frame_equal(frame, original_frame)
@@ -93,6 +104,21 @@ class BoxplotContractTests(unittest.TestCase):
 
 
 class StatisticalModelContractTests(unittest.TestCase):
+    def test_sarima_native_fit_matches_statsmodels_on_the_current_platform(self):
+        from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+        _, frame, config = reference_cases()['sarima']
+        values = frame.select(['day', 'value']).drop_nulls().sort('day')['value'].to_numpy().astype(float)
+        fitted = SARIMAX(values, order=(1, 0, 0), seasonal_order=(1, 0, 0, 4)).fit(disp=False)
+        self.assertTrue(fitted.mle_retvals['converged'])
+        actual = modeling.run_sarima(frame, config)
+        self.assertEqual(actual['params'], {str(i): round(float(value), 6)
+                                          for i, value in enumerate(fitted.params)})
+        self.assertEqual(actual['forecast'], [round(float(value), 6) for value in fitted.forecast(steps=5)])
+        self.assertEqual(actual['residuals_sample'], [round(float(value), 6) for value in fitted.resid])
+        self.assertEqual(actual['metrics'], {name: round(float(getattr(fitted, name)), 6)
+                                            for name in ('aic', 'bic', 'hqic')})
+
     def test_linear_coefficients_recover_the_known_relationship_and_drop_incomplete_rows(self):
         result = modeling.run_linear_regression(regression_frame(),
                                                 {'target_field': 'y', 'feature_fields': ['x', 'z']})
