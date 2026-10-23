@@ -1,0 +1,409 @@
+[
+  {
+    "id": "grouped_nulls",
+    "columns": [
+      [
+        "category",
+        "string"
+      ],
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [
+      [
+        "A",
+        "10.5"
+      ],
+      [
+        "A",
+        null
+      ],
+      [
+        "B",
+        "-2"
+      ],
+      [
+        "B",
+        "0"
+      ],
+      [
+        null,
+        "1"
+      ],
+      [
+        null,
+        "2"
+      ],
+      [
+        "",
+        "4"
+      ]
+    ],
+    "group": "category",
+    "value": "amount"
+  },
+  {
+    "id": "all_null",
+    "columns": [
+      [
+        "category",
+        "string"
+      ],
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [
+      [
+        "A",
+        null
+      ],
+      [
+        "A",
+        null
+      ]
+    ],
+    "group": "category",
+    "value": "amount"
+  },
+  {
+    "id": "empty_global",
+    "columns": [
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [],
+    "value": "amount"
+  },
+  {
+    "id": "decimal",
+    "columns": [
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [
+      [
+        "0.1"
+      ],
+      [
+        "0.2"
+      ],
+      [
+        "-0.3"
+      ]
+    ],
+    "value": "amount"
+  },
+  {
+    "id": "large_integer",
+    "columns": [
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [
+      [
+        "9007199254740993"
+      ],
+      [
+        "1"
+      ]
+    ],
+    "value": "amount"
+  },
+  {
+    "id": "large_transport",
+    "columns": [
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [
+      [
+        "9007199254740993"
+      ]
+    ],
+    "value": "amount"
+  },
+  {
+    "id": "text_numbers",
+    "columns": [
+      [
+        "category",
+        "string"
+      ],
+      [
+        "amount",
+        "string"
+      ]
+    ],
+    "rows": [
+      [
+        "A",
+        "1,5"
+      ],
+      [
+        "A",
+        "2.5"
+      ]
+    ],
+    "group": "category",
+    "value": "amount"
+  },
+  {
+    "id": "date_week",
+    "columns": [
+      [
+        "day",
+        "date"
+      ],
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [
+      [
+        "2024-12-31",
+        "1"
+      ],
+      [
+        "2025-01-01",
+        "2"
+      ],
+      [
+        null,
+        "3"
+      ],
+      [
+        "2025-01-06",
+        "4"
+      ]
+    ],
+    "group": "day",
+    "granularity": "week",
+    "value": "amount"
+  },
+  {
+    "id": "date_month",
+    "columns": [
+      [
+        "day",
+        "date"
+      ],
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [
+      [
+        "2024-02-29",
+        "1"
+      ],
+      [
+        "2024-03-01",
+        "2"
+      ],
+      [
+        "2025-01-01",
+        "3"
+      ]
+    ],
+    "group": "day",
+    "granularity": "month",
+    "value": "amount"
+  },
+  {
+    "id": "date_auto",
+    "columns": [
+      [
+        "day",
+        "date"
+      ],
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [
+      [
+        "2020-01-01",
+        "1"
+      ],
+      [
+        "2024-01-01",
+        "2"
+      ],
+      [
+        null,
+        "3"
+      ]
+    ],
+    "group": "day",
+    "granularity": "auto",
+    "value": "amount"
+  },
+  {
+    "id": "timestamp_day",
+    "columns": [
+      [
+        "at",
+        "date&time"
+      ],
+      [
+        "amount",
+        "float"
+      ]
+    ],
+    "rows": [
+      [
+        "2024-03-31T23:30:00+03:00",
+        "1"
+      ],
+      [
+        "2024-03-31T01:30:00Z",
+        "2"
+      ],
+      [
+        null,
+        "3"
+      ]
+    ],
+    "group": "at",
+    "granularity": "day",
+    "value": "amount"
+  },
+  {
+    "id": "bin_edges",
+    "columns": [
+      [
+        "amount",
+        "float"
+      ],
+      [
+        "id",
+        "integer"
+      ]
+    ],
+    "rows": [
+      [
+        "-11",
+        1
+      ],
+      [
+        "-10",
+        2
+      ],
+      [
+        "-5",
+        3
+      ],
+      [
+        "0",
+        4
+      ],
+      [
+        "5",
+        5
+      ],
+      [
+        "10",
+        6
+      ],
+      [
+        "11",
+        7
+      ],
+      [
+        null,
+        8
+      ]
+    ],
+    "group": "amount",
+    "group_aggregation": "bin:4:-10:10",
+    "value": "id"
+  },
+  {
+    "id": "bin_only_null",
+    "columns": [
+      [
+        "amount",
+        "float"
+      ],
+      [
+        "id",
+        "integer"
+      ]
+    ],
+    "rows": [
+      [
+        null,
+        1
+      ]
+    ],
+    "group": "amount",
+    "group_aggregation": "bin:4:-10:10",
+    "value": "id"
+  },
+  {
+    "id": "invalid_bin_range",
+    "columns": [
+      [
+        "amount",
+        "float"
+      ],
+      [
+        "id",
+        "integer"
+      ]
+    ],
+    "rows": [
+      [
+        "0",
+        1
+      ],
+      [
+        "5",
+        2
+      ],
+      [
+        null,
+        3
+      ]
+    ],
+    "group": "amount",
+    "group_aggregation": "bin:4:10:0",
+    "value": "id"
+  },
+  {
+    "id": "rounded_integer",
+    "columns": [
+      [
+        "amount",
+        "integer"
+      ]
+    ],
+    "rows": [
+      [
+        "1.5"
+      ],
+      [
+        "-1.5"
+      ],
+      [
+        null
+      ]
+    ],
+    "value": "amount"
+  }
+]
