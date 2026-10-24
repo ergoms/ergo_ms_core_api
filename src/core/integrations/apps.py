@@ -51,6 +51,7 @@ class IntegrationsConfig(AppConfig):
 
         from . import tasks as _core_outbox_tasks  # noqa: F401
         from . import knowledge as _knowledge_ops  # noqa: F401
+        from . import analytics as _analytics_ops  # noqa: F401
 
         self._configure_bridge()
         _knowledge_ops.load_knowledge_providers()

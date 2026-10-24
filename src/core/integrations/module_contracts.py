@@ -32,12 +32,19 @@ MEDIA_UPLOAD_QUOTA_POLICIES_GROUP = 'media.upload_quota_policies'
 # {owner, revision, media_path, signer}. Байты лежат в knowledge/<owner>/<revision>/.
 KNOWLEDGE_PACKS_GROUP = 'knowledge.packs'
 
+# JSON descriptors of providers owning durable executions and source access.
+ANALYTICS_BACKENDS = 'core.analytics.backends'
+
 # Каталог бокового меню модуля: JSON
 # {module, module_source, items[], separators[]}. Процесс модуля отдаёт дерево
 # пунктов; ядро пишет их в свои MenuItem. Папка modules/<name>/ на ядре не нужна.
 MENU_CATALOG_GROUP = 'menu.catalog'
 
 # --- Ops (bridge.provide_op / call) ---
+
+ANALYTICS_LIST_OPERATIONS = 'core.analytics.list_operations'
+ANALYTICS_RUN_OPERATION = 'core.analytics.run_operation'
+ANALYTICS_GET_STATUS = 'core.analytics.get_status'
 
 NOTIFICATIONS_CREATE = 'notifications.create'
 NOTIFICATIONS_RECALL = 'notifications.recall'
