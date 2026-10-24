@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 NUMERIC_TYPES = (
     pl.Int8, pl.Int16, pl.Int32, pl.Int64,
     pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
-    pl.Float32, pl.Float64,
+    pl.Float32, pl.Float64, pl.Decimal,
 )
 
 HISTOGRAM_BINS = 20
@@ -33,6 +33,12 @@ def _safe_scalar(val: Any) -> Any:
 
 def _is_numeric(dtype: pl.DataType) -> bool:
     return isinstance(dtype, NUMERIC_TYPES)
+
+
+def _statistics_series(series: pl.Series) -> pl.Series:
+    # Statistical operations use Float64; Decimal histograms are unsupported.
+    # Keep the caller's exact Decimal column and its metadata unchanged.
+    return series.cast(pl.Float64) if isinstance(series.dtype, pl.Decimal) else series
 
 
 def _numeric_columns(df: pl.DataFrame) -> List[str]:
@@ -60,7 +66,7 @@ def compute_summary(df: pl.DataFrame) -> List[Dict[str, Any]]:
         }
 
         if _is_numeric(series.dtype):
-            desc = series.drop_nulls()
+            desc = _statistics_series(series.drop_nulls())
             if len(desc) > 0:
                 entry.update({
                     'min': _safe_scalar(desc.min()),
@@ -88,7 +94,7 @@ def compute_distributions(df: pl.DataFrame) -> Dict[str, Any]:
     categorical = {}
 
     for col_name in _numeric_columns(df):
-        series = df[col_name].drop_nulls()
+        series = _statistics_series(df[col_name].drop_nulls())
         if len(series) == 0:
             continue
         try:
@@ -123,7 +129,7 @@ def compute_correlations(df: pl.DataFrame) -> Dict[str, Any]:
 
     # Keep the established 30-field result limit and caller-provided field order.
     num_cols = num_cols[:30]
-    sub = df.select(num_cols)
+    sub = pl.DataFrame({name: _statistics_series(df[name]) for name in num_cols})
 
     matrix = []
     for col_a in num_cols:
@@ -146,7 +152,7 @@ def compute_outliers(df: pl.DataFrame) -> List[Dict[str, Any]]:
     total = len(df)
 
     for col_name in _numeric_columns(df):
-        series = df[col_name].drop_nulls()
+        series = _statistics_series(df[col_name].drop_nulls())
         if len(series) < 4:
             continue
 

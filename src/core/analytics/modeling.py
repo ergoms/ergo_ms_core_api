@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, Optional
 import numpy as np
 import polars as pl
 
-from .eda import NUMERIC_TYPES
+from .eda import NUMERIC_TYPES, _statistics_series
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +249,7 @@ def run_boxplot(
             logger.warning('Поле %s не числовое, пропуск', col)
             continue
 
-        series = df[col].drop_nulls()
+        series = _statistics_series(df[col].drop_nulls())
         n = len(series)
         if n < 1:
             continue
