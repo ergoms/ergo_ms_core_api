@@ -163,8 +163,8 @@ def build_cmd(
     return cmd
 
 
-_AGENT_WAIT_SEC = 90
 _AGENT_RELOAD_SEC = 15
+_AGENT_WAIT_LOG_SEC = 60
 
 
 def _is_cluster_agent() -> bool:
@@ -204,13 +204,16 @@ def _reexec() -> None:
 
 
 def _wait_until_agent_has_queues(log) -> bool:
-    deadline = time.monotonic() + _AGENT_WAIT_SEC
-    while time.monotonic() < deadline:
+    """Ждём план до SIGTERM. Краткий провал Redis не должен крутить Docker exit 1."""
+    next_log = time.monotonic()
+    while True:
         if _allowed_snapshot():
             return True
+        now = time.monotonic()
+        if now >= next_log:
+            log.info('Кластерный план ещё не выдал очереди агенту, ожидание')
+            next_log = now + _AGENT_WAIT_LOG_SEC
         time.sleep(3)
-    log.info('Кластерный план так и не выдал очереди агенту')
-    return False
 
 
 def _signal_group(proc, sig) -> None:
