@@ -41,6 +41,14 @@ def _bucket_key(namespace: str, metric: str, moment: datetime) -> str:
     return f'{_PREFIX}:{namespace}:{metric}:{_stamp(moment)}'
 
 
+def _hour_stamp(moment: datetime) -> str:
+    return moment.astimezone(datetime_timezone.utc).strftime('%Y%m%d%H')
+
+
+def _hour_key(namespace: str, metric: str, moment: datetime) -> str:
+    return f'{_PREFIX}:{namespace}:hour:{metric}:{_hour_stamp(moment)}'
+
+
 def _state_key(namespace: str, source: str) -> str:
     return f'{_PREFIX}:{namespace}:state:{source}'
 
@@ -59,28 +67,61 @@ def _store():
     return caches['default']
 
 
-def incr(namespace: str, metric: str, n: int = 1, *, now: datetime | None = None) -> None:
-    """Прибавить n к бакету текущей минуты. Ключ живёт BUCKET_TTL_SECONDS."""
-    amount = int(n)
-    if amount <= 0 or not namespace or not metric:
-        return
-    key = _bucket_key(namespace, metric, _minute(_aware(now)))
-    store = _store()
+def _incr_key(store, key: str, amount: int, ttl: int) -> None:
     try:
         store.incr(key, amount)
     except ValueError:
-        if not store.add(key, amount, BUCKET_TTL_SECONDS):
+        if not store.add(key, amount, ttl):
             try:
                 store.incr(key, amount)
             except ValueError:
-                store.set(key, amount, BUCKET_TTL_SECONDS)
+                store.set(key, amount, ttl)
         return
     except Exception:
         return
     try:
-        store.touch(key, BUCKET_TTL_SECONDS)
+        store.touch(key, ttl)
     except Exception:
         return
+
+
+def incr(namespace: str, metric: str, n: int = 1, *, now: datetime | None = None) -> None:
+    """Прибавить n к бакету текущей минуты и часа. Ключи живут BUCKET_TTL_SECONDS."""
+    amount = int(n)
+    if amount <= 0 or not namespace or not metric:
+        return
+    moment = _minute(_aware(now))
+    store = _store()
+    _incr_key(store, _bucket_key(namespace, metric, moment), amount, BUCKET_TTL_SECONDS)
+    _incr_key(store, _hour_key(namespace, metric, moment), amount, BUCKET_TTL_SECONDS)
+
+
+def day_totals(
+    namespace: str,
+    metrics: list[str],
+    *,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """Сумма за последние 24 часа по часовым ключам (не по 1440 минутным)."""
+    names = [name for name in metrics if name]
+    if not namespace or not names:
+        return {}
+    end = _minute(_aware(now)).replace(minute=0, second=0, microsecond=0)
+    hours = [end - timedelta(hours=offset) for offset in range(23, -1, -1)]
+    keys = [_hour_key(namespace, name, slot) for slot in hours for name in names]
+    try:
+        found = _store().get_many(keys) if keys else {}
+    except Exception:
+        found = {}
+    totals = {name: 0 for name in names}
+    for slot in hours:
+        for name in names:
+            raw = found.get(_hour_key(namespace, name, slot), 0)
+            try:
+                totals[name] += int(raw or 0)
+            except (TypeError, ValueError):
+                continue
+    return totals
 
 
 def _minutes(count: int, *, now: datetime | None = None) -> list[datetime]:
