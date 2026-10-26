@@ -15,7 +15,46 @@ from src.config.paths import CACHE_DIR
 
 _HISTORY_DIR = CACHE_DIR / 'celery_balance'
 _HISTORY_FILE = _HISTORY_DIR / 'history.jsonl'
+# Совпадает с celery_balance.constants.HISTORY_MAX_BYTES: иначе jsonl растёт без
+# потолка, а ergoms celery-balance зависает на полном чтении.
+_HISTORY_MAX_BYTES = 32 * 1024 * 1024
 _local = threading.local()
+
+
+def _trim_history_file(path: Path, *, max_bytes: int = _HISTORY_MAX_BYTES) -> None:
+    if max_bytes < 1024:
+        max_bytes = 1024
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return
+    if size <= max_bytes:
+        return
+    keep = max(max_bytes // 2, 1024)
+    try:
+        with path.open('rb') as handle:
+            handle.seek(max(0, size - keep))
+            data = handle.read()
+    except OSError:
+        return
+    if not data:
+        return
+    if not data.startswith(b'{'):
+        newline = data.find(b'\n')
+        if newline < 0:
+            return
+        data = data[newline + 1 :]
+    if not data:
+        return
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    try:
+        tmp.write_bytes(data)
+        tmp.replace(path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _vram_mb_for_pid(pid: int | None = None) -> float:
@@ -125,6 +164,7 @@ def _append(
         }
         with _HISTORY_FILE.open('a', encoding='utf-8') as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+        _trim_history_file(_HISTORY_FILE)
     except OSError:
         return
 

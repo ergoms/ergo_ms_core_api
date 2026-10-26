@@ -14,7 +14,9 @@ from django.conf import settings
 from django.core.cache import caches
 from django.utils import timezone
 
-BUCKET_TTL_SECONDS = 48 * 60 * 60
+# Неделя на мониторах модулей (вкладка «7 д») плюс сутки запаса. Раньше 48 ч —
+# график за неделю обнулялся, хотя карточки в БД оставались.
+BUCKET_TTL_SECONDS = 8 * 24 * 60 * 60
 STATE_TTL_SECONDS = 120
 WATCH_TTL_SECONDS = 30
 _PREFIX = 'livemetric'
@@ -58,7 +60,7 @@ def _store():
 
 
 def incr(namespace: str, metric: str, n: int = 1, *, now: datetime | None = None) -> None:
-    """Прибавить n к бакету текущей минуты. Ключ живёт 48 часов."""
+    """Прибавить n к бакету текущей минуты. Ключ живёт BUCKET_TTL_SECONDS."""
     amount = int(n)
     if amount <= 0 or not namespace or not metric:
         return
