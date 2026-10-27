@@ -16,6 +16,17 @@ class Person(PublicIdMixin, models.Model):
     first_name = models.CharField(max_length=150, blank=True, default='', verbose_name='Имя')
     middle_name = models.CharField(max_length=150, blank=True, default='', verbose_name='Отчество')
     birth_date = models.DateField(null=True, blank=True, verbose_name='Дата рождения')
+    gender = models.CharField(
+        max_length=16,
+        blank=True,
+        default='',
+        choices=(
+            ('', 'Не указан'),
+            ('male', 'Мужской'),
+            ('female', 'Женский'),
+        ),
+        verbose_name='Пол',
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создана')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлена')
 

@@ -83,7 +83,7 @@ class CMSUserProfileSerializer(ModelSerializer):
     class Meta:
         model = UserProfile
         fields = [
-            'phone', 'birth_date', 'bio',
+            'phone', 'birth_date', 'gender', 'bio',
             'language', 'timezone', 'created_at'
         ]
         read_only_fields = ['created_at']
@@ -160,21 +160,33 @@ class UpdateUserProfileSerializer(ModelSerializer):
     phone = CharField(required=False, allow_blank=True, allow_null=True)
     bio = CharField(required=False, allow_blank=True, allow_null=True)
     birth_date = DateField(required=False, allow_null=True)
+    gender = CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = UserProfile
         fields = [
-            'first_name', 'last_name', 'middle_name', 'email', 'phone', 'birth_date', 'bio',
+            'first_name', 'last_name', 'middle_name', 'email', 'phone', 'birth_date', 'gender', 'bio',
             'language', 'timezone'
         ]
 
     def to_internal_value(self, data):
-        if isinstance(data, dict) and 'birth_date' in data:
-            raw = data.get('birth_date')
-            if raw is None or (isinstance(raw, str) and not raw.strip()):
-                data = data.copy()
-                data['birth_date'] = None
+        if isinstance(data, dict):
+            data = data.copy()
+            if 'birth_date' in data:
+                raw = data.get('birth_date')
+                if raw is None or (isinstance(raw, str) and not raw.strip()):
+                    data['birth_date'] = None
+            if 'gender' in data:
+                raw = data.get('gender')
+                if raw is None or (isinstance(raw, str) and not raw.strip()):
+                    data['gender'] = ''
         return super().to_internal_value(data)
+
+    def validate_gender(self, value):
+        raw = (value or '').strip()
+        if raw not in ('', 'male', 'female'):
+            raise ValidationError(_('Укажите мужской или женский пол или оставьте поле пустым.'))
+        return raw
 
     def validate_birth_date(self, value):
         if value is None:
@@ -238,5 +250,8 @@ class UpdateUserProfileSerializer(ModelSerializer):
                 value = self._normalize_blank_profile_value(value)
             setattr(instance, attr, value)
         instance.save()
+        if 'gender' in validated_data:
+            from src.core.persons.service import sync_account_gender
+            sync_account_gender(instance.user)
 
         return instance

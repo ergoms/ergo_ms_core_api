@@ -58,7 +58,7 @@ def _find_by_users(*, user_public_ids, **_):
 
 
 @bridge.provide_op(CORE_PERSON_CREATE_UNLINKED)
-def _create_unlinked(*, last_name='', first_name='', middle_name='', person_name='', birth_date=None, **_):
+def _create_unlinked(*, last_name='', first_name='', middle_name='', person_name='', birth_date=None, gender='', **_):
     try:
         return _ok(service.create_unlinked(
             last_name=last_name,
@@ -66,6 +66,7 @@ def _create_unlinked(*, last_name='', first_name='', middle_name='', person_name
             middle_name=middle_name,
             person_name=person_name,
             birth_date=birth_date,
+            gender=gender,
         ))
     except PersonError as exc:
         return _error(exc)
@@ -84,7 +85,7 @@ def _find_namesakes(*, last_name='', first_name='', middle_name='', person_name=
 
 @bridge.provide_op(CORE_PERSON_UPDATE)
 def _update(*, person_public_id, actor_user_public_id, **fields):
-    allowed = {key: value for key, value in fields.items() if key in (*service.NAME_FIELDS, 'birth_date')}
+    allowed = {key: value for key, value in fields.items() if key in (*service.NAME_FIELDS, 'birth_date', 'gender')}
     try:
         return _ok(service.update(person_public_id, actor_user_public_id=actor_user_public_id, **allowed))
     except PersonError as exc:
@@ -92,7 +93,7 @@ def _update(*, person_public_id, actor_user_public_id, **fields):
 
 
 @bridge.provide_op(CORE_PERSON_LINK)
-def _link(*, person_public_id, user_public_id, actor_user_public_id, names_from=None, birth_date_from=None, **_):
+def _link(*, person_public_id, user_public_id, actor_user_public_id, names_from=None, birth_date_from=None, gender_from=None, **_):
     try:
         return service.link(
             person_public_id,
@@ -100,6 +101,7 @@ def _link(*, person_public_id, user_public_id, actor_user_public_id, names_from=
             actor_user_public_id=actor_user_public_id,
             names_from=names_from,
             birth_date_from=birth_date_from,
+            gender_from=gender_from,
         )
     except PersonError as exc:
         return _error(exc)

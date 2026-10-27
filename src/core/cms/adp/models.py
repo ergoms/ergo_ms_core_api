@@ -28,6 +28,17 @@ class UserProfile(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='adp_profile')
     phone = models.CharField(max_length=20, blank=True, null=True)
     birth_date = models.DateField(blank=True, null=True, verbose_name='Дата рождения')
+    gender = models.CharField(
+        max_length=16,
+        blank=True,
+        default='',
+        choices=(
+            ('', 'Не указан'),
+            ('male', 'Мужской'),
+            ('female', 'Женский'),
+        ),
+        verbose_name='Пол',
+    )
     bio = models.TextField(max_length=500, blank=True, null=True)
     language = models.CharField(
         max_length=10,

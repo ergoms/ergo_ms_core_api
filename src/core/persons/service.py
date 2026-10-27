@@ -36,6 +36,7 @@ NAMESAKES_SCAN = 500
 SIDE_PERSON = 'person'
 SIDE_ACCOUNT = 'account'
 SIDES = (SIDE_PERSON, SIDE_ACCOUNT)
+GENDERS = ('', 'male', 'female')
 
 
 class PersonError(Exception):
@@ -55,6 +56,13 @@ def parse_uuid(raw) -> uuid.UUID | None:
         return uuid.UUID(str(raw))
     except (TypeError, ValueError, AttributeError):
         return None
+
+
+def parse_gender(raw) -> str:
+    value = str(raw or '').strip()
+    if value not in GENDERS:
+        raise PersonError('invalid_gender')
+    return value
 
 
 def parse_date(raw) -> date | None:
@@ -110,6 +118,30 @@ def _account_birth_date(user) -> date | None:
     )
 
 
+def _account_gender(user) -> str:
+    raw = (
+        UserProfile.objects.filter(user_id=user.pk)
+        .values_list('gender', flat=True)
+        .first()
+    )
+    return raw or ''
+
+
+def sync_account_gender(user) -> None:
+    """Профиль ядра только что сохранён: связанная карточка повторяет его пол."""
+    public_id = getattr(user, 'public_id', None)
+    if not public_id:
+        return
+    person = Person.objects.filter(user_public_id=public_id).first()
+    if person is None:
+        return
+    gender = _account_gender(user)
+    if (person.gender or '') == gender:
+        return
+    person.gender = gender
+    person.save(update_fields=['gender', 'updated_at'])
+
+
 def _user_by_public_id(raw):
     public_id = parse_uuid(raw)
     if public_id is None:
@@ -120,13 +152,15 @@ def _user_by_public_id(raw):
 # --- Ответ ---------------------------------------------------------------
 
 
-def _payload(person: Person, account=None, account_birth: date | None = None) -> dict:
+def _payload(person: Person, account=None, account_birth: date | None = None, account_gender: str = '') -> dict:
     if account is not None:
         names = _account_names(account)
         birth = account_birth
+        gender = account_gender or ''
     else:
         names = _own_names(person)
         birth = person.birth_date
+        gender = person.gender or ''
     return {
         'public_id': str(person.public_id),
         'user_public_id': str(person.user_public_id) if person.user_public_id else None,
@@ -134,6 +168,7 @@ def _payload(person: Person, account=None, account_birth: date | None = None) ->
         **names,
         'full_name': ' '.join(names[field] for field in NAME_FIELDS if names[field]),
         'birth_date': birth.isoformat() if birth else None,
+        'gender': gender,
     }
 
 
@@ -143,16 +178,24 @@ def payloads(persons) -> dict[int, dict]:
     user_ids = [person.user_public_id for person in persons if person.user_public_id]
     users = {}
     births = {}
+    genders = {}
     if user_ids:
         users = {user.public_id: user for user in User.objects.filter(public_id__in=user_ids)}
-        births = dict(
+        for user_id, birth, gender in (
             UserProfile.objects.filter(user_id__in=[user.pk for user in users.values()])
-            .values_list('user_id', 'birth_date')
-        )
+            .values_list('user_id', 'birth_date', 'gender')
+        ):
+            births[user_id] = birth
+            genders[user_id] = gender or ''
     out = {}
     for person in persons:
         account = users.get(person.user_public_id) if person.user_public_id else None
-        out[person.pk] = _payload(person, account, births.get(account.pk) if account else None)
+        out[person.pk] = _payload(
+            person,
+            account,
+            births.get(account.pk) if account else None,
+            genders.get(account.pk, '') if account else '',
+        )
     return out
 
 
@@ -270,12 +313,16 @@ def ensure_for_user(user_public_id) -> Person:
         raise PersonError('user_not_found')
     person, _created = Person.objects.get_or_create(
         user_public_id=public_id,
-        defaults={**_account_names(user), 'birth_date': _account_birth_date(user)},
+        defaults={
+            **_account_names(user),
+            'birth_date': _account_birth_date(user),
+            'gender': _account_gender(user),
+        },
     )
     return person
 
 
-def create_unlinked(*, last_name='', first_name='', middle_name='', person_name='', birth_date=None) -> Person:
+def create_unlinked(*, last_name='', first_name='', middle_name='', person_name='', birth_date=None, gender='') -> Person:
     names = _clean_names(
         last_name=last_name,
         first_name=first_name,
@@ -284,7 +331,7 @@ def create_unlinked(*, last_name='', first_name='', middle_name='', person_name=
     )
     if not names['last_name'] and not names['first_name']:
         raise PersonError('name_required')
-    return Person.objects.create(**names, birth_date=parse_date(birth_date))
+    return Person.objects.create(**names, birth_date=parse_date(birth_date), gender=parse_gender(gender))
 
 
 def can_edit(user_public_id, person_public_id) -> bool:
@@ -339,6 +386,16 @@ def update(person_public_id, *, actor_user_public_id, **fields) -> Person:
                 'new': value.isoformat() if value else '',
             })
             person.birth_date = value
+    if 'gender' in fields:
+        value = parse_gender(fields['gender'])
+        if value != (person.gender or ''):
+            changes.append({
+                'field': 'gender',
+                'label': 'gender',
+                'old': person.gender or '',
+                'new': value,
+            })
+            person.gender = value
     if not person.last_name and not person.first_name:
         raise PersonError('name_required')
     if changes:
@@ -370,7 +427,7 @@ def _has_names(names: dict) -> bool:
     return bool(names['last_name'] or names['first_name'])
 
 
-def _link_conflicts(person_names: dict, person_birth, account_names: dict, account_birth) -> dict:
+def _link_conflicts(person_names: dict, person_birth, account_names: dict, account_birth, person_gender: str, account_gender: str) -> dict:
     conflicts = {}
     if _has_names(person_names) and _has_names(account_names) and _names_differ(person_names, account_names):
         conflicts['names'] = {SIDE_PERSON: person_names, SIDE_ACCOUNT: account_names}
@@ -379,11 +436,13 @@ def _link_conflicts(person_names: dict, person_birth, account_names: dict, accou
             SIDE_PERSON: person_birth.isoformat(),
             SIDE_ACCOUNT: account_birth.isoformat(),
         }
+    if person_gender and account_gender and person_gender != account_gender:
+        conflicts['gender'] = {SIDE_PERSON: person_gender, SIDE_ACCOUNT: account_gender}
     return conflicts
 
 
-def link(person_public_id, user_public_id, *, actor_user_public_id, names_from=None, birth_date_from=None) -> dict:
-    """Явная привязка учётки. Расхождение ФИО или даты рождения без выбора стороны не пишется."""
+def link(person_public_id, user_public_id, *, actor_user_public_id, names_from=None, birth_date_from=None, gender_from=None) -> dict:
+    """Явная привязка учётки. Расхождение ФИО, даты рождения или пола без выбора стороны не пишется."""
     actor = _require_admin(actor_user_public_id)
     person = resolve(person_public_id)
     if person is None:
@@ -398,13 +457,24 @@ def link(person_public_id, user_public_id, *, actor_user_public_id, names_from=N
 
     account_names = _account_names(user)
     account_birth = _account_birth_date(user)
+    account_gender = _account_gender(user)
     person_names = _own_names(person)
-    conflicts = _link_conflicts(person_names, person.birth_date, account_names, account_birth)
+    person_gender = person.gender or ''
+    conflicts = _link_conflicts(
+        person_names,
+        person.birth_date,
+        account_names,
+        account_birth,
+        person_gender,
+        account_gender,
+    )
     unresolved = {}
     if 'names' in conflicts and names_from not in SIDES:
         unresolved['names'] = conflicts['names']
     if 'birth_date' in conflicts and birth_date_from not in SIDES:
         unresolved['birth_date'] = conflicts['birth_date']
+    if 'gender' in conflicts and gender_from not in SIDES:
+        unresolved['gender'] = conflicts['gender']
     if unresolved:
         return {'status': 'conflict', 'conflicts': unresolved, 'person': payload(person)}
 
@@ -443,6 +513,19 @@ def link(person_public_id, user_public_id, *, actor_user_public_id, names_from=N
             profile, _created = UserProfile.objects.get_or_create(user=user)
             profile.birth_date = person.birth_date
             profile.save(update_fields=['birth_date', 'updated_at'])
+        take_person_gender = bool(person_gender) and (
+            not account_gender or ('gender' in conflicts and gender_from == SIDE_PERSON)
+        )
+        if take_person_gender:
+            profile, _created = UserProfile.objects.get_or_create(user=user)
+            profile.gender = person_gender
+            profile.save(update_fields=['gender', 'updated_at'])
+            chosen_gender = person_gender
+        else:
+            chosen_gender = account_gender
+        if (person.gender or '') != chosen_gender:
+            person.gender = chosen_gender
+            person.save(update_fields=['gender', 'updated_at'])
 
         _audit(core_actions.PERSON_LINKED, person, actor=actor, changes=[{
             'field': 'user_public_id',
@@ -466,6 +549,9 @@ def _snapshot_from_account(person: Person, user) -> None:
     birth = _account_birth_date(user)
     if birth:
         person.birth_date = birth
+    gender = _account_gender(user)
+    if gender:
+        person.gender = gender
 
 
 def _detach(person: Person, *, user=None, actor=None) -> Person:
@@ -528,6 +614,8 @@ def _merge(*, survivor: Person, loser: Person, actor=None, emit_linked=True) -> 
             setattr(survivor, field, getattr(loser, field))
     if survivor.birth_date is None:
         survivor.birth_date = loser.birth_date
+    if not survivor.gender:
+        survivor.gender = loser.gender or ''
     survivor.save()
     loser_public_id = loser.public_id
     PersonAlias.objects.filter(survivor=loser).update(survivor=survivor)
