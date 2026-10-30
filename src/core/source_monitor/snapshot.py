@@ -57,6 +57,14 @@ def read_snapshot(cache_key: str) -> tuple[dict[str, Any] | None, float | None]:
     return stored['payload'], age
 
 
+def _has_metrics(payload: dict[str, Any]) -> bool:
+    """У оболочки нет rates: нули в totals — заглушка, не посчитанный снимок."""
+    sources = payload.get('sources')
+    if not isinstance(sources, list):
+        return False
+    return any(isinstance(row, dict) and row.get('rates') for row in sources)
+
+
 def serve_snapshot(
     *,
     cache_key: str,
@@ -65,8 +73,18 @@ def serve_snapshot(
     max_age: int = DEFAULT_MAX_AGE,
     ttl: int = DEFAULT_SNAPSHOT_TTL,
 ) -> dict[str, Any]:
-    """Свежий или устаревший снимок сразу. Без снимка — оболочка. Пересчёт не в GET."""
+    """Свежий или устаревший снимок сразу. Без снимка — оболочка. Пересчёт не в GET.
+
+    Оболочку в кэш не кладём: иначе ближайшие запросы отдают нули как свежие числа.
+    """
+    del ttl
     payload, age = read_snapshot(cache_key)
+    if payload is not None and not _has_metrics(payload):
+        payload, age = None, None
+        try:
+            _store().delete(cache_key)
+        except Exception:
+            logger.warning('Пустая оболочка снимка не снялась', exc_info=True)
     if payload is not None:
         stale = age is None or age > max_age
         if stale and schedule_rebuild is not None:
@@ -87,10 +105,9 @@ def serve_snapshot(
             schedule_rebuild()
         except Exception:
             logger.warning('Пересчёт снимка не поставился', exc_info=True)
-    if isinstance(payload, dict) and 'stale' not in payload:
+    if isinstance(payload, dict):
         payload = dict(payload)
         payload['stale'] = True
-    store_snapshot(cache_key, payload, ttl=ttl)
     return payload
 
 
