@@ -10,8 +10,6 @@ import os
 import sys
 from typing import List
 
-import psutil
-
 from _common import (
     API_DIR,
     CACHE_DIR,
@@ -21,6 +19,7 @@ from _common import (
     is_celery_process,
     setup_celery_script_logging,
 )
+from src.core.utils.process_scan import iter_process_cmdlines
 
 
 def beat_schedule_filename(module: str = '') -> str:
@@ -35,24 +34,20 @@ def find_celery_beat(module: str = '') -> bool:
     """Проверяет, запущен ли Beat ядра или Beat указанного модуля."""
     catalog = (module or '').strip()
     marker = f'celerybeat-schedule-{catalog}' if catalog else ''
-    for proc in psutil.process_iter(['cmdline']):
-        try:
-            cmdline = proc.info.get('cmdline') or []
-            if not is_celery_process(cmdline):
-                continue
-            cmdline_lower = [str(p).lower() for p in cmdline]
-            if 'beat' not in cmdline_lower:
-                continue
-            text = ' '.join(str(p) for p in cmdline)
-            if catalog:
-                if marker in text or f'--module={catalog}' in text:
-                    return True
-                continue
-            if 'celerybeat-schedule-' in text:
-                continue
-            return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+    for _proc, cmdline in iter_process_cmdlines():
+        if not is_celery_process(cmdline):
             continue
+        cmdline_lower = [str(p).lower() for p in cmdline]
+        if 'beat' not in cmdline_lower:
+            continue
+        text = ' '.join(str(p) for p in cmdline)
+        if catalog:
+            if marker in text or f'--module={catalog}' in text:
+                return True
+            continue
+        if 'celerybeat-schedule-' in text:
+            continue
+        return True
     return False
 
 

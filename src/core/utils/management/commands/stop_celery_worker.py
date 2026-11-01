@@ -24,6 +24,7 @@ from django.core.management.base import BaseCommand, CommandParser
 
 from src.config.settings.base import SYSTEM_DIR
 from src.core.utils.os_abstraction import get_os_abstraction
+from src.core.utils.process_scan import iter_process_cmdlines
 
 logger = logging.getLogger('core.utils.commands')
 
@@ -109,55 +110,50 @@ class Command(BaseCommand):
         Returns:
             Optional[psutil.Process]: Объект процесса если worker запущен, иначе None
         """
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                cmdline = proc.info.get('cmdline') or []
-                if not self._is_celery_cmd(cmdline):
-                    continue
-                cmdline_str = ' '.join(cmdline)
-                cmdline_lower = [part.lower() for part in cmdline]
+        for proc, cmdline in iter_process_cmdlines():
+            if not self._is_celery_cmd(cmdline):
+                continue
+            cmdline_str = ' '.join(str(part) for part in cmdline)
+            cmdline_lower = [str(part).lower() for part in cmdline]
 
-                is_celery_worker = 'worker' in cmdline_lower
-                is_wrapper_worker = any('start_celery_worker' in part for part in cmdline_lower)
+            is_celery_worker = 'worker' in cmdline_lower
+            is_wrapper_worker = any('start_celery_worker' in part for part in cmdline_lower)
 
-                if is_celery_worker:
-                    # Если указаны очереди, проверяем, что worker слушает эти очереди
-                    if queues:
-                        # Ищем параметр -Q в командной строке
-                        for i, arg in enumerate(cmdline):
-                            if arg == '-Q' and i + 1 < len(cmdline):
-                                worker_queues = set(cmdline[i + 1].lower().split(','))
-                                requested_queues = set(q.strip().lower() for q in queues.split(','))
-                                # Проверяем, что все запрошенные очереди есть в worker'е
-                                if requested_queues.issubset(worker_queues):
-                                    logger.debug(
-                                        f"Найден процесс Celery worker с очередями {queues}: PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
-                                    )
-                                    return proc
-                                break
-                    # Если указан hostname, проверяем его
-                    elif hostname:
-                        if f'--hostname={hostname}' in cmdline_str or f'-n {hostname}' in cmdline_str:
-                            logger.debug(
-                                f"Найден процесс Celery worker с hostname {hostname}: PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
-                            )
-                            return proc
-                    # Если не указаны ни очереди, ни hostname, возвращаем первый найденный worker
-                    else:
+            if is_celery_worker:
+                # Если указаны очереди, проверяем, что worker слушает эти очереди
+                if queues:
+                    # Ищем параметр -Q в командной строке
+                    for i, arg in enumerate(cmdline):
+                        if arg == '-Q' and i + 1 < len(cmdline):
+                            worker_queues = set(str(cmdline[i + 1]).lower().split(','))
+                            requested_queues = set(q.strip().lower() for q in queues.split(','))
+                            # Проверяем, что все запрошенные очереди есть в worker'е
+                            if requested_queues.issubset(worker_queues):
+                                logger.debug(
+                                    f"Найден процесс Celery worker с очередями {queues}: PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
+                                )
+                                return proc
+                            break
+                # Если указан hostname, проверяем его
+                elif hostname:
+                    if f'--hostname={hostname}' in cmdline_str or f'-n {hostname}' in cmdline_str:
                         logger.debug(
-                            f"Найден процесс Celery worker: PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
+                            f"Найден процесс Celery worker с hostname {hostname}: PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
                         )
                         return proc
-
-                # Если celery не найден, падаем обратно на обертку
-                if is_wrapper_worker:
+                # Если не указаны ни очереди, ни hostname, возвращаем первый найденный worker
+                else:
                     logger.debug(
-                        f"Найден процесс Celery worker (обертка): PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
+                        f"Найден процесс Celery worker: PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
                     )
                     return proc
-            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                logger.error(f'Ошибка при поиске процесса: {e}')
-                continue
+
+            # Если celery не найден, падаем обратно на обертку
+            if is_wrapper_worker:
+                logger.debug(
+                    f"Найден процесс Celery worker (обертка): PID={proc.pid}, CMDLINE={' '.join(cmdline)}"
+                )
+                return proc
         logger.debug('Процесс Celery worker не найден')
         return None
 
@@ -171,26 +167,22 @@ class Command(BaseCommand):
         workers = []
         seen_pids = set()
         
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                pid = proc.info.get('pid')
-                if pid in seen_pids:
-                    continue
-                    
-                cmdline = proc.info.get('cmdline') or []
-                if not self._is_celery_cmd(cmdline):
-                    continue
-
-                is_celery_worker = 'worker' in [str(p).lower() for p in cmdline]
-
-                if is_celery_worker:
-                    workers.append(proc)
-                    seen_pids.add(pid)
-                    logger.debug(
-                        f"Найден процесс Celery worker: PID={pid}, CMDLINE={' '.join(cmdline)}"
-                    )
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+        for proc, cmdline in iter_process_cmdlines():
+            pid = proc.pid
+            if pid in seen_pids:
                 continue
+
+            if not self._is_celery_cmd(cmdline):
+                continue
+
+            is_celery_worker = 'worker' in [str(p).lower() for p in cmdline]
+
+            if is_celery_worker:
+                workers.append(proc)
+                seen_pids.add(pid)
+                logger.debug(
+                    f"Найден процесс Celery worker: PID={pid}, CMDLINE={' '.join(cmdline)}"
+                )
         
         logger.info(f"Найдено {len(workers)} Celery worker процессов")
         return workers
@@ -206,22 +198,17 @@ class Command(BaseCommand):
             List[psutil.Process]: Список найденных процессов
         """
         workers = []
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                cmdline = proc.info.get('cmdline') or []
-                if not self._is_celery_cmd(cmdline):
-                    continue
-
-                cmdline_str = ' '.join(cmdline)
-                if 'worker' not in [str(p).lower() for p in cmdline]:
-                    continue
-                
-                if f'--hostname={hostname}' in cmdline_str or f'-n {hostname}' in cmdline_str:
-                    workers.append(proc)
-                    logger.debug(f"Найден worker с hostname={hostname}: PID={proc.pid}")
-                    
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+        for proc, cmdline in iter_process_cmdlines():
+            if not self._is_celery_cmd(cmdline):
                 continue
+
+            cmdline_str = ' '.join(str(part) for part in cmdline)
+            if 'worker' not in [str(p).lower() for p in cmdline]:
+                continue
+
+            if f'--hostname={hostname}' in cmdline_str or f'-n {hostname}' in cmdline_str:
+                workers.append(proc)
+                logger.debug(f"Найден worker с hostname={hostname}: PID={proc.pid}")
         
         return workers
 

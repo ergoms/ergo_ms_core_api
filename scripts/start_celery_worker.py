@@ -14,7 +14,6 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 
-import psutil
 import yaml
 
 from _common import (
@@ -27,6 +26,7 @@ from _common import (
     read_queues_cache,
     setup_celery_script_logging,
 )
+from src.core.utils.process_scan import iter_process_cmdlines
 from src.core.utils.celery.startup_format import format_queues_display
 
 try:
@@ -63,28 +63,24 @@ def _cmdline_has_hostname(cmdline: list, hostname: str) -> bool:
 
 def find_celery_worker(queues: Optional[str] = None, hostname: Optional[str] = None) -> bool:
     """Проверяет, запущен ли worker с указанными параметрами."""
-    for proc in psutil.process_iter(['cmdline']):
-        try:
-            cmdline = proc.info.get('cmdline') or []
-            if not is_celery_process(cmdline):
-                continue
-            cmdline_lower = [str(p).lower() for p in cmdline]
-            if 'worker' not in cmdline_lower:
-                continue
-            if hostname and _cmdline_has_hostname(cmdline, hostname):
-                return True
-            if queues:
-                for i, arg in enumerate(cmdline):
-                    if arg == '-Q' and i + 1 < len(cmdline):
-                        worker_queues = set(cmdline[i + 1].lower().split(','))
-                        requested = set(q.strip().lower() for q in queues.split(','))
-                        if requested.issubset(worker_queues):
-                            return True
-                        break
-            elif not hostname:
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+    for _proc, cmdline in iter_process_cmdlines():
+        if not is_celery_process(cmdline):
             continue
+        cmdline_lower = [str(p).lower() for p in cmdline]
+        if 'worker' not in cmdline_lower:
+            continue
+        if hostname and _cmdline_has_hostname(cmdline, hostname):
+            return True
+        if queues:
+            for i, arg in enumerate(cmdline):
+                if arg == '-Q' and i + 1 < len(cmdline):
+                    worker_queues = set(cmdline[i + 1].lower().split(','))
+                    requested = set(q.strip().lower() for q in queues.split(','))
+                    if requested.issubset(worker_queues):
+                        return True
+                    break
+        elif not hostname:
+            return True
     return False
 
 
