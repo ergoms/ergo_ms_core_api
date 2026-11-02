@@ -14,11 +14,19 @@ def _create_client() -> 'MediaClient':
     mode = getattr(settings, 'MEDIA_ACCESS_MODE', 'local').strip().lower()
     if mode == 'remote':
         from src.core.utils.media_client.remote import RemoteMediaClient
-        return RemoteMediaClient()
-    if mode == 'local':
+        inner = RemoteMediaClient()
+    elif mode == 'local':
         from src.core.utils.media_client.local import LocalMediaClient
-        return LocalMediaClient()
-    raise ValueError(f'Неизвестный MEDIA_ACCESS_MODE: {mode}')
+        inner = LocalMediaClient()
+    else:
+        raise ValueError(f'Неизвестный MEDIA_ACCESS_MODE: {mode}')
+    from core.shared.media_zones import load_media_zones
+
+    zones = load_media_zones()
+    if not zones:
+        return inner
+    from src.core.utils.media_client.zoned import ZonedMediaClient
+    return ZonedMediaClient(inner, zones)
 
 
 def get_media_client() -> 'MediaClient':

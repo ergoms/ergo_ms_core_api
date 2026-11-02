@@ -16,9 +16,12 @@ logger = logging.getLogger(__name__)
 class LocalMediaClient(MediaPipelineMixin):
     """Читает и пишет файлы напрямую в MEDIA_ROOT без HTTP."""
 
-    def __init__(self, root_path: str | None = None):
+    def __init__(self, root_path: str | None = None, *, create: bool = True):
         self._root = Path(root_path or settings.MEDIA_ROOT).resolve()
-        self._root.mkdir(parents=True, exist_ok=True)
+        if create:
+            self._root.mkdir(parents=True, exist_ok=True)
+        elif not self._root.is_dir():
+            raise FileNotFoundError(f'Каталог зоны не смонтирован: {self._root}')
 
     @property
     def root_path(self) -> str:
