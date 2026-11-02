@@ -4,11 +4,11 @@ from unittest.mock import patch
 from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase
 
+from urllib.error import HTTPError, URLError
+
 from src.core.utils.knowledge_pack import (
     CORE_OWNER,
-    _http_get_knowledge_bytes,
     _is_core_process,
-    _pack_download_error_text,
     assert_knowledge_path,
     collect_module_documents,
     compute_revision,
@@ -17,6 +17,12 @@ from src.core.utils.knowledge_pack import (
     manifest_path,
     normalize_owner,
     publish_local_knowledge_packs,
+)
+from src.core.utils.knowledge_pack_fetch import (
+    PACK_DOWNLOAD_ATTEMPTS,
+    PACK_DOWNLOAD_TIMEOUT_SECONDS,
+    _http_get_knowledge_bytes,
+    _pack_download_error_text,
 )
 
 
@@ -46,8 +52,6 @@ class KnowledgePackPathTests(SimpleTestCase):
             assert_knowledge_path('knowledge/other/file.md', owner='core')
 
     def test_download_error_does_not_leak_signed_url(self):
-        from urllib.error import HTTPError, URLError
-
         url = 'http://10.0.0.5:8003/serve/knowledge/core/rev/manifest.json?signature=secret'
         http_exc = HTTPError(url, 502, 'Bad Gateway', hdrs=None, fp=None)
         self.assertEqual(_pack_download_error_text(url, http_exc), 'HTTP 502 с 10.0.0.5:8003')
@@ -127,6 +131,72 @@ class KnowledgePackPathTests(SimpleTestCase):
                 'http://10.0.0.5:8003/serve/knowledge/core/rev/manifest.json'
             )
         self.assertEqual(body, b'ok')
+
+    def test_download_retries_timed_out_connection(self):
+        timeouts: list[int | None] = []
+
+        class _Resp:
+            def read(self):
+                return b'catalog'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class _FakeOpener:
+            def open(self, url, timeout=None):
+                timeouts.append(timeout)
+                if len(timeouts) == 1:
+                    raise URLError('timed out')
+                return _Resp()
+
+        with patch(
+            'src.core.utils.http_proxy.urllib_opener',
+            return_value=_FakeOpener(),
+        ):
+            body = _http_get_knowledge_bytes(
+                'http://10.0.0.5:8003/serve/knowledge/core/rev/docs/page.md'
+            )
+        self.assertEqual(body, b'catalog')
+        self.assertEqual(timeouts, [PACK_DOWNLOAD_TIMEOUT_SECONDS, PACK_DOWNLOAD_TIMEOUT_SECONDS])
+
+    def test_download_does_not_retry_missing_file(self):
+        calls: list[int | None] = []
+
+        class _FakeOpener:
+            def open(self, url, timeout=None):
+                calls.append(timeout)
+                raise HTTPError(getattr(url, 'full_url', url), 404, 'missing', hdrs=None, fp=None)
+
+        with patch(
+            'src.core.utils.http_proxy.urllib_opener',
+            return_value=_FakeOpener(),
+        ):
+            with self.assertRaises(HTTPError):
+                _http_get_knowledge_bytes(
+                    'http://10.0.0.5:8003/serve/knowledge/core/rev/docs/page.md'
+                )
+        self.assertEqual(calls, [PACK_DOWNLOAD_TIMEOUT_SECONDS])
+
+    def test_download_stops_after_repeated_timeouts(self):
+        calls: list[int | None] = []
+
+        class _FakeOpener:
+            def open(self, url, timeout=None):
+                calls.append(timeout)
+                raise URLError('timed out')
+
+        with patch(
+            'src.core.utils.http_proxy.urllib_opener',
+            return_value=_FakeOpener(),
+        ):
+            with self.assertRaises(URLError):
+                _http_get_knowledge_bytes(
+                    'http://10.0.0.5:8003/serve/knowledge/core/rev/docs/page.md'
+                )
+        self.assertEqual(len(calls), PACK_DOWNLOAD_ATTEMPTS)
 
     def test_sign_op_names(self):
         self.assertEqual(knowledge_sign_read_op('core'), 'core.knowledge.sign_read')
