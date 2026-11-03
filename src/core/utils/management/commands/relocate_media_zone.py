@@ -210,8 +210,13 @@ def _copy_file(
             copied = 1
             skipped = 0
         removed = 0
+        # Удаление зависит от прав на каталог, не на сам файл. Сбой здесь
+        # не отменяет уже принятую копию: иначе файл считается неперенесённым.
         if not keep_local:
-            src.unlink()
+            try:
+                src.unlink()
+            except OSError as exc:
+                return copied, skipped, 1, 0, f'{relative}: местная копия не удалена: {exc}'
             removed = 1
         return copied, skipped, 0, removed, None
     except (OSError, MediaZoneError) as exc:
