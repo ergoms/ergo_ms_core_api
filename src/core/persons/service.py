@@ -24,6 +24,7 @@ from src.core.integrations.module_contracts import (
 )
 
 from .models import Person, PersonAlias
+from .portrait import absorb_portrait, portrait_url
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -169,6 +170,7 @@ def _payload(person: Person, account=None, account_birth: date | None = None, ac
         'full_name': ' '.join(names[field] for field in NAME_FIELDS if names[field]),
         'birth_date': birth.isoformat() if birth else None,
         'gender': gender,
+        'avatar_url': portrait_url(person, linked=account is not None or bool(person.user_public_id)),
     }
 
 
@@ -616,6 +618,7 @@ def _merge(*, survivor: Person, loser: Person, actor=None, emit_linked=True) -> 
         survivor.birth_date = loser.birth_date
     if not survivor.gender:
         survivor.gender = loser.gender or ''
+    absorb_portrait(survivor, loser)
     survivor.save()
     loser_public_id = loser.public_id
     PersonAlias.objects.filter(survivor=loser).update(survivor=survivor)

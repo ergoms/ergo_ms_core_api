@@ -27,6 +27,12 @@ class Person(PublicIdMixin, models.Model):
         ),
         verbose_name='Пол',
     )
+    avatar_path = models.CharField(
+        max_length=512,
+        blank=True,
+        default='',
+        verbose_name='Путь портрета в media',
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создана')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлена')
 

@@ -8,6 +8,7 @@ Kwargs и ответы — JSON-примитивы, чтобы вызов про
 from src.core.integrations import bridge
 from src.core.integrations.module_contracts import (
     CORE_PERSON_CAN_EDIT,
+    CORE_PERSON_CLEAR_PORTRAIT,
     CORE_PERSON_CREATE_UNLINKED,
     CORE_PERSON_ENSURE_FOR_USER,
     CORE_PERSON_FIND_BY_USERS,
@@ -17,11 +18,12 @@ from src.core.integrations.module_contracts import (
     CORE_PERSON_MERGE,
     CORE_PERSON_RESOLVE_ALIAS,
     CORE_PERSON_RESOLVE_MANY,
+    CORE_PERSON_SET_PORTRAIT,
     CORE_PERSON_UNLINK,
     CORE_PERSON_UPDATE,
 )
 
-from . import service
+from . import portrait, service
 from .service import PersonError
 
 
@@ -135,3 +137,26 @@ def _resolve_alias(*, person_public_id, **_):
 @bridge.provide_op(CORE_PERSON_CAN_EDIT)
 def _can_edit(*, user_public_id, person_public_id, **_):
     return service.can_edit(user_public_id, person_public_id)
+
+
+@bridge.provide_op(CORE_PERSON_SET_PORTRAIT)
+def _set_portrait(*, person_public_id, file_path, actor_user_public_id, **_):
+    try:
+        return _ok(portrait.set_portrait(
+            person_public_id,
+            file_path,
+            actor_user_public_id=actor_user_public_id,
+        ))
+    except PersonError as exc:
+        return _error(exc)
+
+
+@bridge.provide_op(CORE_PERSON_CLEAR_PORTRAIT)
+def _clear_portrait(*, person_public_id, actor_user_public_id, **_):
+    try:
+        return _ok(portrait.clear_portrait(
+            person_public_id,
+            actor_user_public_id=actor_user_public_id,
+        ))
+    except PersonError as exc:
+        return _error(exc)

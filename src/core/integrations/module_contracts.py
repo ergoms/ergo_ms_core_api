@@ -85,7 +85,8 @@ CORE_BULK_USER_CREATE = 'core.bulk_user_create'
 
 # Карточка человека (core.persons): личность без обязательной учётки.
 # Kwargs и ответы — JSON-примитивы; карточка в ответе — dict
-# {public_id, user_public_id, linked, last_name, first_name, middle_name, full_name, birth_date}.
+# {public_id, user_public_id, linked, last_name, first_name, middle_name, full_name, birth_date, gender, avatar_url}.
+# avatar_url пуст, пока карточка привязана к учётке: на экране тогда аватар аккаунта.
 CORE_PERSON_ENSURE_FOR_USER = 'core.person.ensure_for_user'
 CORE_PERSON_GET = 'core.person.get'
 # {person_public_id: карточка}; поглощённые слиянием id ведут на выжившую карточку.
@@ -100,6 +101,9 @@ CORE_PERSON_UNLINK = 'core.person.unlink'
 CORE_PERSON_MERGE = 'core.person.merge'
 CORE_PERSON_RESOLVE_ALIAS = 'core.person.resolve_alias'
 CORE_PERSON_CAN_EDIT = 'core.person.can_edit'
+# Портрет карточки без учётки. file_path — уже загруженный файл в avatars/persons/<person_public_id>/.
+CORE_PERSON_SET_PORTRAIT = 'core.person.set_portrait'
+CORE_PERSON_CLEAR_PORTRAIT = 'core.person.clear_portrait'
 # Провайдер: callable(*, user_public_id, person_public_id) -> True | False | None.
 CORE_PERSON_EDIT_POLICY = 'core.person.edit_policy'
 # События: модули перевешивают свои ссылки и обновляют кэш ФИО и права входа.
