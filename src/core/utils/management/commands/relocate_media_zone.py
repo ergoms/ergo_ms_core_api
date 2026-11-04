@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from pathlib import Path
 from queue import Queue
 
@@ -23,6 +24,8 @@ from core.shared.media_zone_http import MediaZoneError, zone_meta, zone_save
 from core.shared.media_zones import MediaZone, load_media_zones
 
 _MAX_WORKERS = 32
+_ATTEMPTS = 5
+_ZONE_ROUNDS = 4
 
 
 class Command(BaseCommand):
@@ -80,13 +83,22 @@ class Command(BaseCommand):
         keep_local = bool(options['keep_local'])
         failures = 0
         for zone in zones:
-            copied, skipped, failed, removed = self._relocate_zone(
-                root,
-                zone,
-                dry_run=dry_run,
-                keep_local=keep_local,
-                workers=workers,
-            )
+            copied = skipped = failed = removed = 0
+            for round_index in range(_ZONE_ROUNDS):
+                copied, skipped, failed, removed = self._relocate_zone(
+                    root,
+                    zone,
+                    dry_run=dry_run,
+                    keep_local=keep_local,
+                    workers=workers,
+                )
+                if dry_run or failed == 0:
+                    break
+                self.stdout.write(
+                    f'{zone.prefix}: повтор {round_index + 2}, '
+                    f'ещё ошибок {failed}'
+                )
+                time.sleep(min(30, 2 ** round_index))
             failures += failed
             if dry_run:
                 self.stdout.write(f'{zone.prefix}: к переносу {copied} файлов')
@@ -146,8 +158,7 @@ class Command(BaseCommand):
                     seen += 1
                     size = src.stat().st_size
                     if size == 0:
-                        self.stderr.write(f'пустой файл пропущен: {relative}')
-                        failed += 1
+                        _drop_empty(src, relative, self)
                         continue
                     if dry_run:
                         copied += 1
@@ -194,6 +205,39 @@ def _copy_file(
     size: int,
     keep_local: bool,
 ) -> tuple[int, int, int, int, str | None]:
+    last_error = None
+    for attempt in range(_ATTEMPTS):
+        try:
+            return _copy_once(zone, src, relative, size, keep_local)
+        except MediaZoneError as exc:
+            last_error = _format_zone_error(relative, exc)
+            if attempt + 1 >= _ATTEMPTS:
+                break
+            time.sleep(min(20, 2 ** attempt))
+    return 0, 0, 1, 0, last_error or f'{relative}: зона не ответила'
+
+
+def _format_zone_error(relative: str, exc: MediaZoneError) -> str:
+    cause = exc.__cause__
+    if cause is None:
+        return f'{relative}: {exc}'
+    return f'{relative}: {exc} ({type(cause).__name__}: {cause})'
+
+
+def _drop_empty(src: Path, relative: str, command: Command) -> None:
+    try:
+        src.unlink()
+    except OSError as exc:
+        command.stderr.write(f'{relative}: пустой файл не удалён: {exc}')
+
+
+def _copy_once(
+    zone: MediaZone,
+    src: Path,
+    relative: str,
+    size: int,
+    keep_local: bool,
+) -> tuple[int, int, int, int, str | None]:
     try:
         exists, remote_size = zone_meta(zone.base_url, zone.key, relative)
         if exists and remote_size == size:
@@ -219,7 +263,7 @@ def _copy_file(
                 return copied, skipped, 1, 0, f'{relative}: местная копия не удалена: {exc}'
             removed = 1
         return copied, skipped, 0, removed, None
-    except (OSError, MediaZoneError) as exc:
+    except OSError as exc:
         return 0, 0, 1, 0, f'{relative}: {exc}'
 
 
