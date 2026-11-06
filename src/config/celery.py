@@ -120,6 +120,10 @@ if IS_CELERY_PROCESS:
 
     # Настройка параллелизма по очередям (только для worker'ов)
     if not IS_BEAT:
+        # Раньше ограничителя: он оборачивает этот класс и захватывает слот первым.
+        from src.core.utils.celery.restart_hold import setup_restart_hold
+
+        setup_restart_hold(celery_app)
         MODULE_MANAGER.setup_queue_concurrency()
         queue_limits = MODULE_MANAGER.get_all_queue_limits()
         if queue_limits:
