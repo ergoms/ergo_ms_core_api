@@ -73,6 +73,7 @@ MODULE_TASK_QUEUES: Dict = {}
 if IS_CELERY_PROCESS:
     from src.config.redis_runtime import sanitize_celery_redis_url
     from src.core.utils.celery.manager import CeleryModuleManager
+    from src.core.utils.module_registry import get_process_role
 
     for _env_key in ('CELERY_BROKER_URL', 'CELERY_RESULT_BACKEND'):
         _raw_url = os.environ.get(_env_key, '').strip()
@@ -185,6 +186,19 @@ if IS_CELERY_PROCESS:
         celery_app.conf.update(
             **_build_common_celery_config(MODULE_MANAGER, MODULE_TASK_ROUTES, MODULE_TASK_QUEUES),
         )
+        # Настройка процесса должна применяться и при чтении общих маршрутов из кэша.
+        role, _, module = get_process_role().partition(':')
+        if role == 'module' and module:
+            from src.config.env import env
+
+            reuse_key = f'{module.upper()}_WORKER_DB_REUSE_MAX'
+            reuse_max = env.int(reuse_key, default=0)
+            if reuse_max < 0:
+                raise ValueError(f'{reuse_key} должен быть неотрицательным целым числом')
+            if reuse_max:
+                celery_app.conf['CELERY_DB_REUSE_MAX'] = reuse_max
+                logger.info('Celery: %s=%d', reuse_key, reuse_max)
+
         from src.core.utils.celery.footprint_history import connect_signals
         from src.core.utils.celery.overlay_limits import start_overlay_limit_watcher
 
