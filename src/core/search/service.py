@@ -45,6 +45,17 @@ def _build_meili_filter(filters: dict[str, Any] | None) -> str | None:
       parts.append(f'{key} = {str(value).lower()}')
     elif isinstance(value, (int, float)):
       parts.append(f'{key} = {value}')
+    elif isinstance(value, (list, tuple, set)):
+      clauses = []
+      for item in value:
+        if item in (None, ''):
+          continue
+        escaped = str(item).replace('"', '\\"')
+        clauses.append(f'{key} = "{escaped}"')
+      if len(clauses) == 1:
+        parts.append(clauses[0])
+      elif clauses:
+        parts.append('(' + ' OR '.join(clauses) + ')')
     else:
       escaped = str(value).replace('"', '\\"')
       parts.append(f'{key} = "{escaped}"')
