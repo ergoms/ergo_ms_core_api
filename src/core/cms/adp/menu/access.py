@@ -139,15 +139,17 @@ class MenuAccessChecker:
 
         route_name = getattr(item, 'route_name', None)
         if route_name and route_name in self._route_overrides:
-            return self._route_overrides[route_name]
-
-        menu_override = bridge.emit_first(
-            MENU_CAN_SEE_ITEM,
-            item=item,
-            **bridge_user_kwargs(self.user, **self.session_claims),
-        )
-        if menu_override is not None:
-            return bool(menu_override)
+            # False прячет пункт. True не отменяет список ролей и групп.
+            if not self._route_overrides[route_name]:
+                return False
+        else:
+            menu_override = bridge.emit_first(
+                MENU_CAN_SEE_ITEM,
+                item=item,
+                **bridge_user_kwargs(self.user, **self.session_claims),
+            )
+            if menu_override is False:
+                return False
 
         if not self._passes_role_acl(item):
             return False
@@ -185,7 +187,8 @@ def user_can_see_menu_item(item, user, *, checker: MenuAccessChecker | None = No
     is_admin_only, allowed_roles, allowed_role_groups.
     Ограничение по правам модуля — через M2M allowed_role_groups на пункте.
     URL deny-политики скрывают пункты по route_name / module_source.
-    Модули могут переопределить видимость через событие menu.can_see_item.
+    Модуль может скрыть пункт через menu.prepare_visibility / menu.can_see_item.
+    Положительный ответ эти события не отменяют список ролей и групп.
     """
     if checker is not None:
         return checker.can_see(item)
