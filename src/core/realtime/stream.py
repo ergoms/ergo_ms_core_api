@@ -9,7 +9,7 @@ from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 
-from src.core.realtime.subscriptions import clear_user_subscriptions, groups_for_user
+from src.core.realtime.subscriptions import begin_user_stream, end_user_stream, groups_for_user
 
 logger = logging.getLogger('core.realtime')
 
@@ -27,6 +27,7 @@ async def sse_event_stream(user) -> AsyncIterator[str]:
         return
 
     channel_name = await channel_layer.new_channel()
+    generation = begin_user_stream(user.pk)
     subscribed_groups: set[str] = set()
     keepalive = getattr(settings, 'REALTIME_SSE_KEEPALIVE_INTERVAL', 25)
 
@@ -39,9 +40,8 @@ async def sse_event_stream(user) -> AsyncIterator[str]:
             await channel_layer.group_discard(group, channel_name)
         subscribed_groups = target_groups
 
-    await sync_groups()
-
     try:
+        await sync_groups()
         while True:
             try:
                 message = await asyncio.wait_for(
@@ -69,4 +69,4 @@ async def sse_event_stream(user) -> AsyncIterator[str]:
                 await channel_layer.group_discard(group, channel_name)
             except Exception:
                 pass
-        clear_user_subscriptions(user.pk)
+        end_user_stream(user.pk, generation)

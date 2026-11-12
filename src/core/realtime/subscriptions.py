@@ -19,6 +19,10 @@ logger = logging.getLogger('core.realtime')
 
 _lock = threading.Lock()
 _user_topics: dict[int, set[str]] = {}
+# Последний живой SSE пользователя. Закрытие более старого потока topics не стирает:
+# иначе вкладка, которая только что стала лидером, теряет подписки предыдущей.
+_stream_generation: dict[int, int] = {}
+_stream_generation_seq = 0
 
 
 def _user_topic_set(user_id: int) -> set[str]:
@@ -83,6 +87,20 @@ def resolve_topic_to_group(user, topic: str) -> str | None:
     return authorize_registered_topic(user, topic)
 
 
-def clear_user_subscriptions(user_id: int) -> None:
+def begin_user_stream(user_id: int) -> int:
+    """Отмечает новый SSE текущим и возвращает его поколение."""
+    global _stream_generation_seq
     with _lock:
+        _stream_generation_seq += 1
+        generation = _stream_generation_seq
+        _stream_generation[user_id] = generation
+        return generation
+
+
+def end_user_stream(user_id: int, generation: int) -> None:
+    """Стирает topics, только если закрылся последний поток этого пользователя."""
+    with _lock:
+        if _stream_generation.get(user_id) != generation:
+            return
+        _stream_generation.pop(user_id, None)
         _user_topics.pop(user_id, None)
