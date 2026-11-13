@@ -31,9 +31,10 @@ from src.core.utils.celery.startup_format import format_queues_display
 
 try:
     from celery_balance.cluster import resolve_allowed_queues, resolve_paused_queues
-    from celery_balance.overlay import worker_override
+    from celery_balance.overlay import queue_pool_ceiling, worker_override
     from celery_balance.settings import load_settings
 except ImportError:  # pragma: no cover — скрипт без пакета deployment
+    queue_pool_ceiling = None  # type: ignore[assignment]
     resolve_allowed_queues = None  # type: ignore[assignment]
     resolve_paused_queues = None  # type: ignore[assignment]
     worker_override = None  # type: ignore[assignment]
@@ -330,6 +331,16 @@ def _balance_overrides(worker_name: Optional[str]) -> Dict[str, Any]:
         'autoscale_min': override.autoscale_min,
         'autoscale_max': override.autoscale_max,
     }
+
+
+def _module_pool_size(queues: Optional[List[str]], floor: Optional[int]) -> Optional[int]:
+    """Пул threads-воркера модуля по max_parallel его очередей. Сбой — значение из yaml."""
+    if queue_pool_ceiling is None:
+        return floor
+    try:
+        return queue_pool_ceiling(PROJECT_ROOT, list(queues or []), floor)
+    except Exception:
+        return floor
 
 
 def main() -> int:
@@ -647,12 +658,20 @@ def main() -> int:
         log.info('Worker %s уже запущен', hostname)
         return 0
 
-    # Именованный воркер модуля берёт concurrency из hook, не из плана ядра `all`.
-    overlay = {} if concurrency_opt or module_spec else _balance_overrides(worker_name)
+    # Воркер модуля не берёт пул из плана `all`: тот урезан потолком VRAM чужих очередей.
+    module_worker = bool(module_spec or module_name)
+    overlay = {} if concurrency_opt or module_worker else _balance_overrides(worker_name)
     if overlay.get('concurrency'):
         concurrency = overlay['concurrency']
+    if module_worker and prefetch_opt is None:
+        prefetch_opt = 1
+    if module_worker and not concurrency_opt and str(pool or '').strip().lower() == 'threads':
+        concurrency = _module_pool_size(queues, concurrency)
     prefetch = prefetch_opt or overlay.get('prefetch_multiplier')
-    log.info('Запуск %s, очереди: %s, пул=%s', hostname, queues_display, pool)
+    log.info(
+        'Запуск %s, очереди: %s, пул=%s, параллелизм=%s',
+        hostname, queues_display, pool, concurrency or 'по умолчанию',
+    )
     cmd = build_cmd(
         queues,
         hostname,

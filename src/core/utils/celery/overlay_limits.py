@@ -19,6 +19,7 @@ _DECISION = CACHE_DIR / 'celery_balance' / 'decision.json'
 _watcher_started = False
 _watcher_lock = threading.Lock()
 _overlay_paused: set[str] = set()
+_overlay_limited: set[str] = set()
 _consumers_released: set[str] = set()
 _live_nodename = ''
 _nodename_hooked = False
@@ -160,12 +161,34 @@ def _load_decision(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _own_plan_limits(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Лимиты плана этого воркера по hostname.
+
+    Общий queue_limits — минимум по всем планам. Воркер со своим планом не должен
+    получать потолок чужого пула, например общего воркера, урезанного по VRAM.
+    """
+    hostname = _worker_hostname()
+    plans = data.get('plans')
+    if not hostname or not isinstance(plans, dict):
+        return None
+    for raw_plan in plans.values():
+        if not isinstance(raw_plan, dict):
+            continue
+        if str(raw_plan.get('hostname') or '') != hostname:
+            continue
+        limits = raw_plan.get('queue_limits')
+        return limits if isinstance(limits, dict) else None
+    return None
+
+
 def apply_decision_limits(data: dict[str, Any] | None) -> None:
     """Накладывает queue_limits, pause_queues и non_light_cap из overlay."""
-    global _overlay_paused
+    global _overlay_paused, _overlay_limited
     if not data:
         return
-    raw_limits = data.get('queue_limits')
+    raw_limits = _own_plan_limits(data)
+    if raw_limits is None:
+        raw_limits = data.get('queue_limits')
     limits: dict[str, int] = {}
     if isinstance(raw_limits, dict):
         for name, value in raw_limits.items():
@@ -187,14 +210,21 @@ def apply_decision_limits(data: dict[str, Any] | None) -> None:
         queue_concurrency_manager.set_paused(queue_name, True)
     _overlay_paused = set(paused)
 
+    applied: set[str] = set()
     for queue_name, overlay_limit in limits.items():
         if queue_name in paused:
             continue
         if overlay_limit <= 0:
             continue
-        current = queue_concurrency_manager.get_queue_limit(queue_name)
-        effective = overlay_limit if current <= 0 else min(current, overlay_limit)
+        # Считаем от лимита модуля, не от текущего: иначе один низкий план
+        # запирает очередь на минимуме до рестарта воркера.
+        base = queue_concurrency_manager.get_base_limit(queue_name)
+        effective = overlay_limit if base <= 0 else min(base, overlay_limit)
         queue_concurrency_manager.update_queue_limit(queue_name, effective)
+        applied.add(queue_name)
+    for queue_name in _overlay_limited - applied:
+        queue_concurrency_manager.restore_base_limit(queue_name)
+    _overlay_limited = applied
 
     raw_classes = data.get('queue_classes')
     classes: dict[str, str] = {}

@@ -19,6 +19,10 @@ _HISTORY_FILE = _HISTORY_DIR / 'history.jsonl'
 # потолка, а ergoms celery-balance зависает на полном чтении.
 _HISTORY_MAX_BYTES = 32 * 1024 * 1024
 _local = threading.local()
+# Задачи, которые сейчас идут в этом процессе. В пуле threads RSS процесса общий,
+# и без деления каждая задача записывала бы память всего воркера.
+_active_lock = threading.Lock()
+_active_tasks = 0
 
 
 def _trim_history_file(path: Path, *, max_bytes: int = _HISTORY_MAX_BYTES) -> None:
@@ -118,7 +122,16 @@ def _queue_name(sender, task_id: str, kwargs: dict) -> str:
     return 'default'
 
 
+def _change_active(delta: int) -> int:
+    global _active_tasks
+    with _active_lock:
+        _active_tasks = max(0, _active_tasks + delta)
+        return _active_tasks
+
+
 def on_task_prerun(sender=None, task_id=None, task=None, **kwargs) -> None:
+    if getattr(_local, 'start_mono', None) is None:
+        _local.start_active = _change_active(1)
     _local.start_mono = time.monotonic()
     _local.start_rss_mb = _rss_mb()
     _local.peak_rss_mb = _local.start_rss_mb
@@ -130,7 +143,8 @@ def on_task_postrun(sender=None, task_id=None, task=None, **kwargs) -> None:
     if start is None:
         return
     wall_ms = (time.monotonic() - start) * 1000.0
-    peak = max(float(getattr(_local, 'peak_rss_mb', 0.0)), _rss_mb())
+    sharing = max(1, int(getattr(_local, 'start_active', 1)), _change_active(-1) + 1)
+    peak = max(float(getattr(_local, 'peak_rss_mb', 0.0)), _rss_mb()) / sharing
     peak_vram = max(float(getattr(_local, 'peak_vram_mb', 0.0)), _vram_mb_for_pid())
     task_name = getattr(sender, 'name', None) or getattr(task, 'name', None) or 'unknown'
     queue = _queue_name(sender or task, task_id or '', kwargs)

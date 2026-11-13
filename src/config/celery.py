@@ -126,21 +126,21 @@ if IS_CELERY_PROCESS:
 
         setup_restart_hold(celery_app)
         MODULE_MANAGER.setup_queue_concurrency()
-        queue_limits = MODULE_MANAGER.get_all_queue_limits()
-        if queue_limits:
-            from src.core.utils.celery.concurrency import (
-                queue_concurrency_manager,
-                setup_concurrency_limited_tasks,
+        from src.core.utils.celery.concurrency import (
+            queue_concurrency_manager,
+            setup_concurrency_limited_tasks,
+        )
+
+        cache_backend = getattr(settings, 'CACHE_BACKEND', 'file')
+        if cache_backend == 'redis' and MODULE_MANAGER.get_all_queue_limits():
+            queue_concurrency_manager.configure(use_distributed=True)
+            logger.info(
+                "Celery: распределённый лимит параллелизма (Redis cache)"
             )
 
-            cache_backend = getattr(settings, 'CACHE_BACKEND', 'file')
-            if cache_backend == 'redis':
-                queue_concurrency_manager.configure(use_distributed=True)
-                logger.info(
-                    "Celery: распределённый лимит параллелизма (Redis cache)"
-                )
-
-            setup_concurrency_limited_tasks(celery_app)
+        # Ограничитель нужен и без лимитов модулей: лимиты и паузы приходят
+        # из плана балансировщика, когда воркер уже работает.
+        setup_concurrency_limited_tasks(celery_app)
 
     # Очередь по умолчанию
     if "default" not in MODULE_TASK_QUEUES:

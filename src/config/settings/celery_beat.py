@@ -78,16 +78,22 @@ CELERY_BEAT_SCHEDULE = beat_module_manager.get_all_beat_schedules()
 from celery.schedules import crontab
 from src.config.env import env as _env
 
+_process_role = (_env.str('ERGO_PROCESS_ROLE', default='') or '').strip().lower()
+_module_queue = _process_role.split(':', 1)[1].strip() if _process_role.startswith('module:') else ''
+# Beat модуля не ставит задачи ядра: они идут в default, а на хосте одних модулей
+# default никто не слушает, и очередь растёт без конца. У ядра свой Beat.
+_core_entries: dict = {}
+
 _audit_retention_days = _env.int('AUDIT_RETENTION_DAYS', default=0)
 if _audit_retention_days > 0:
-    CELERY_BEAT_SCHEDULE['audit-purge-old-events'] = {
+    _core_entries['audit-purge-old-events'] = {
         'task': 'core.audit.purge_old_events',
         'schedule': crontab(hour=3, minute=30),
     }
 
 _client_monitoring_retention_days = _env.int('CLIENT_MONITORING_RETENTION_DAYS', default=7)
 if _client_monitoring_retention_days > 0:
-    CELERY_BEAT_SCHEDULE['client-monitor-purge-old'] = {
+    _core_entries['client-monitor-purge-old'] = {
         'task': 'core.client_monitor.purge_old',
         'schedule': crontab(hour=3, minute=45),
     }
@@ -100,30 +106,35 @@ try:
 except Exception:
     _session_device_retention_days = _env.int('API_SESSION_DEVICE_RETENTION_DAYS', default=0)
 if _session_device_retention_days > 0:
-    CELERY_BEAT_SCHEDULE['session-device-purge-old'] = {
+    _core_entries['session-device-purge-old'] = {
         'task': 'core.cms.adp.purge_old_devices',
         'schedule': crontab(hour=4, minute=0),
     }
 
-CELERY_BEAT_SCHEDULE['notifications-archive-stale-read'] = {
+_core_entries['notifications-archive-stale-read'] = {
     'task': 'core.notifications.archive_stale_read',
     'schedule': crontab(hour=4, minute=15),
 }
 
-CELERY_BEAT_SCHEDULE['integrations-flush-outbox'] = {
+_core_entries['integrations-flush-outbox'] = {
     'task': 'core.integrations.flush_outbox',
     'schedule': 30.0,
 }
+
+_core_entries['session-connection-history-maintenance'] = {
+    'task': 'core.cms.adp.maintain_connection_history',
+    'schedule': 60.0,
+}
+
+if not _module_queue:
+    CELERY_BEAT_SCHEDULE.update(_core_entries)
 
 _knowledge_publish = {
     'task': 'core.knowledge.publish_packs',
     'schedule': crontab(minute=20, hour='*/2'),
 }
-_process_role = (_env.str('ERGO_PROCESS_ROLE', default='') or '').strip().lower()
-if _process_role.startswith('module:'):
-    _module_queue = _process_role.split(':', 1)[1].strip()
-    if _module_queue:
-        _knowledge_publish['options'] = {'queue': _module_queue}
+if _module_queue:
+    _knowledge_publish['options'] = {'queue': _module_queue}
 CELERY_BEAT_SCHEDULE['knowledge-publish-packs'] = _knowledge_publish
 
 # Дополнительные настройки Beat из модулей
@@ -136,9 +147,5 @@ CELERY_BEAT_MODULE_LOGGERS = beat_module_manager.get_module_loggers()
 CELERY_BEAT_MODULES = beat_module_manager.get_modules_list()
 
 # ==================== Синхронизация задач с БД ====================
-CELERY_BEAT_SCHEDULE['session-connection-history-maintenance'] = {
-    'task': 'core.cms.adp.maintain_connection_history',
-    'schedule': 60.0,
-}
 
 # Синхронизация будет выполнена в celery.py после полной инициализации Django 

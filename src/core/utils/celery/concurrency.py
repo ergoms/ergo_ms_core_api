@@ -10,47 +10,12 @@ from typing import Dict, Optional, Callable, Any
 
 from django.core.cache import cache
 
+from src.core.utils.celery.slot_gate import SlotGate, SlotLease
+
 logger = logging.getLogger('celery.concurrency')
 
 # None в Celery.retry значит «взять max_retries задачи», не «ждать бесконечно».
 _SLOT_WAIT_RETRIES = 10**9
-
-
-class _SlotGate:
-    """Счётчик слотов: смену лимита можно делать без сброса уже взятых."""
-
-    def __init__(self, limit: int):
-        self._lock = threading.Lock()
-        self._cv = threading.Condition(self._lock)
-        self.limit = max(0, int(limit))
-        self.held = 0
-
-    def acquire(self, blocking: bool = False) -> bool:
-        with self._cv:
-            if self.limit <= 0:
-                return False
-            if self.held < self.limit:
-                self.held += 1
-                return True
-            if not blocking:
-                return False
-            while self.held >= self.limit > 0:
-                self._cv.wait()
-            if self.limit <= 0:
-                return False
-            self.held += 1
-            return True
-
-    def release(self) -> None:
-        with self._cv:
-            if self.held > 0:
-                self.held -= 1
-            self._cv.notify_all()
-
-    def set_limit(self, limit: int) -> None:
-        with self._cv:
-            self.limit = max(0, int(limit))
-            self._cv.notify_all()
 
 
 class QueueConcurrencyManager:
@@ -87,12 +52,14 @@ class QueueConcurrencyManager:
             return
         
         self._queue_limits: Dict[str, int] = {}
-        self._semaphores: Dict[str, _SlotGate] = {}
+        # Лимит из конфигурации модуля. План балансировщика опускает его, но не поднимает выше.
+        self._base_limits: Dict[str, int] = {}
+        self._semaphores: Dict[str, SlotGate] = {}
         self._semaphore_lock = threading.Lock()
         self._paused_queues: set[str] = set()
         self._queue_classes: Dict[str, str] = {}
         self._non_light_cap = 0
-        self._non_light_gate: Optional[_SlotGate] = None
+        self._non_light_gate: Optional[SlotGate] = None
         self._use_distributed = False  # Использовать распределенные блокировки через cache
         self._cache_ttl = 3600  # TTL для cache-based семафоров (1 час)
         self._retry_delay = 60  # Задержка перед повторной попыткой (секунды)
@@ -123,34 +90,38 @@ class QueueConcurrencyManager:
         )
     
     def set_queue_limit(self, queue_name: str, max_concurrent: int):
-        """
-        Устанавливает лимит параллельных задач для очереди.
-        
-        Args:
-            queue_name: Имя очереди
-            max_concurrent: Максимальное количество одновременных задач (0 = без ограничений)
-        """
-        if max_concurrent <= 0:
-            self._queue_limits.pop(queue_name, None)
-            with self._semaphore_lock:
-                self._semaphores.pop(queue_name, None)
-            logger.debug(f"Очередь {queue_name}: без ограничений параллелизма")
-            return
-        self.update_queue_limit(queue_name, max_concurrent)
+        """Базовый лимит очереди из конфигурации модуля (0 = без ограничений)."""
+        self._base_limits[queue_name] = max(0, int(max_concurrent))
+        self._apply_limit(queue_name, max_concurrent)
 
     def update_queue_limit(self, queue_name: str, max_concurrent: int) -> None:
-        """Меняет лимит, не сбрасывая уже взятые слоты."""
-        if max_concurrent <= 0:
-            self.set_queue_limit(queue_name, 0)
-            return
-        self._queue_limits[queue_name] = max_concurrent
+        """Живой лимит из плана. Базовый не трогает, уже взятые слоты не сбрасывает."""
+        self._apply_limit(queue_name, max_concurrent)
+
+    def get_base_limit(self, queue_name: str) -> int:
+        return self._base_limits.get(queue_name, 0)
+
+    def restore_base_limit(self, queue_name: str) -> None:
+        """План больше не ограничивает очередь — вернуть лимит модуля."""
+        self._apply_limit(queue_name, self._base_limits.get(queue_name, 0))
+
+    def _gate(self, queue_name: str) -> SlotGate:
         with self._semaphore_lock:
             gate = self._semaphores.get(queue_name)
             if gate is None:
-                self._semaphores[queue_name] = _SlotGate(max_concurrent)
-            else:
-                gate.set_limit(max_concurrent)
-        logger.debug(f"Очередь {queue_name}: max_concurrent_tasks={max_concurrent}")
+                gate = SlotGate(self._queue_limits.get(queue_name, 0))
+                self._semaphores[queue_name] = gate
+            return gate
+
+    def _apply_limit(self, queue_name: str, max_concurrent: int) -> None:
+        limit = max(0, int(max_concurrent))
+        if limit > 0:
+            self._queue_limits[queue_name] = limit
+        else:
+            self._queue_limits.pop(queue_name, None)
+        # Счётчик не удаляем: иначе задачи, взявшие слот раньше, выпадут из учёта.
+        self._gate(queue_name).set_limit(limit)
+        logger.debug(f"Очередь {queue_name}: max_concurrent_tasks={limit or 'без ограничений'}")
 
     def set_paused(self, queue_name: str, paused: bool) -> None:
         if paused:
@@ -171,14 +142,13 @@ class QueueConcurrencyManager:
     def set_non_light_cap(self, cap: int) -> None:
         parsed = max(0, int(cap))
         self._non_light_cap = parsed
-        if parsed <= 0:
-            self._non_light_gate = None
-            return
         gate = self._non_light_gate
         if gate is None:
-            self._non_light_gate = _SlotGate(parsed)
-        else:
-            gate.set_limit(parsed)
+            if parsed > 0:
+                self._non_light_gate = SlotGate(parsed)
+            return
+        # Объект остаётся: задачи, взявшие слот до снятия потолка, отпускают его сюда же.
+        gate.set_limit(parsed)
 
     def is_light_queue(self, queue_name: str) -> bool:
         default_class = 'light' if queue_name == 'default' else 'medium'
@@ -247,6 +217,45 @@ class QueueConcurrencyManager:
             self._release_non_light()
         return acquired
     
+    def acquire_lease(self, queue_name: str, blocking: bool = False) -> Optional[SlotLease]:
+        """Берёт слот очереди и слот класса. None — места нет или очередь на паузе."""
+        if self.is_paused(queue_name):
+            return None
+        class_slot = self._needs_non_light_slot(queue_name)
+        if class_slot and not self._acquire_non_light(blocking):
+            return None
+        limit = self._queue_limits.get(queue_name, 0)
+        if self._use_distributed:
+            queue_slot = limit > 0
+            acquired = self._acquire_distributed(queue_name, blocking) if queue_slot else True
+        else:
+            queue_slot = True
+            acquired = self._gate(queue_name).acquire(blocking)
+        if not acquired:
+            if class_slot:
+                self._release_non_light_slot()
+            return None
+        return SlotLease(queue=queue_name, queue_slot=queue_slot, class_slot=class_slot)
+
+    def release_lease(self, lease: SlotLease) -> None:
+        """Отпускает ровно то, что взял acquire_lease, при любом текущем лимите."""
+        if lease.class_slot:
+            self._release_non_light_slot()
+        if not lease.queue_slot:
+            return
+        if self._use_distributed:
+            self._release_distributed(lease.queue)
+            return
+        self._gate(lease.queue).release()
+
+    def _release_non_light_slot(self) -> None:
+        if self._use_distributed:
+            self._release_distributed('__non_light__')
+            return
+        gate = self._non_light_gate
+        if gate is not None:
+            gate.release()
+
     def release(self, queue_name: str):
         """
         Освобождает слот после выполнения задачи.
@@ -463,42 +472,36 @@ def create_concurrency_limited_task_class(base_task_class):
             # Определяем очередь
             queue_name = _get_task_queue_from_request(self.request)
             
-            # Проверяем, есть ли лимит для этой очереди
-            if queue_name and queue_concurrency_manager.has_limit(queue_name):
-                # Пытаемся захватить слот
-                if not queue_concurrency_manager.acquire(queue_name, blocking=False):
-                    # Лимит превышен - задача будет повторена
-                    limit = queue_concurrency_manager.get_queue_limit(queue_name)
-                    retry_delay = queue_concurrency_manager.get_retry_delay()
-                    logger.info(
-                        f"Очередь {queue_name}: лимит ({limit}) превышен. "
-                        f"Задача {self.request.id} отложена на {retry_delay}с."
-                    )
-                    # Ожидание слота не тратит max_retries задачи: иначе Beat умирает после двух попыток.
-                    raise self.retry(countdown=retry_delay, max_retries=_SLOT_WAIT_RETRIES)
-                
-                # Слот захвачен - запоминаем для освобождения
-                task_id = self.request.id
-                with _task_slots_lock:
-                    _task_acquired_slots[task_id] = queue_name
-                logger.debug(f"Задача {task_id}: захвачен слот для очереди {queue_name}")
-                keeper = _start_slot_keepalive(queue_name)
-
-                try:
-                    # Выполняем задачу
-                    return super().__call__(*args, **kwargs)
-                finally:
-                    # Сначала гасим продление, потом отпускаем слот: иначе поток
-                    # продлит уже отпущенный счётчик.
-                    _stop_slot_keepalive(keeper)
-                    with _task_slots_lock:
-                        _task_acquired_slots.pop(task_id, None)
-                    queue_concurrency_manager.release(queue_name)
-                    logger.debug(f"Задача {task_id}: освобожден слот для очереди {queue_name}")
-            else:
-                # Нет ограничений - выполняем как обычно
+            if not queue_name:
                 return super().__call__(*args, **kwargs)
-    
+
+            # Слот берём всегда, даже без лимита: план может поставить потолок
+            # посреди долгой задачи, и она должна быть в нём учтена.
+            lease = queue_concurrency_manager.acquire_lease(queue_name, blocking=False)
+            if lease is None:
+                limit = queue_concurrency_manager.get_queue_limit(queue_name)
+                retry_delay = queue_concurrency_manager.get_retry_delay()
+                logger.info(
+                    f"Очередь {queue_name}: лимит ({limit}) превышен. "
+                    f"Задача {self.request.id} отложена на {retry_delay}с."
+                )
+                # Ожидание слота не тратит max_retries задачи: иначе Beat умирает после двух попыток.
+                raise self.retry(countdown=retry_delay, max_retries=_SLOT_WAIT_RETRIES)
+
+            task_id = self.request.id
+            with _task_slots_lock:
+                _task_acquired_slots[task_id] = queue_name
+            keeper = _start_slot_keepalive(queue_name)
+            try:
+                return super().__call__(*args, **kwargs)
+            finally:
+                # Сначала гасим продление, потом отпускаем слот: иначе поток
+                # продлит уже отпущенный счётчик.
+                _stop_slot_keepalive(keeper)
+                with _task_slots_lock:
+                    _task_acquired_slots.pop(task_id, None)
+                queue_concurrency_manager.release_lease(lease)
+
     return ConcurrencyLimitedTask
 
 
