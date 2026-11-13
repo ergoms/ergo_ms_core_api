@@ -50,6 +50,8 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--workers',
+            dest='thread_count',
+            metavar='N',
             type=int,
             default=1,
             help=(
@@ -74,8 +76,8 @@ class Command(BaseCommand):
                 '(переменная MEDIA_ZONE_ARCHIVE_URL) и перезапустите процессы.'
             )
 
-        workers = int(options['workers'])
-        if workers < 1 or workers > _MAX_WORKERS:
+        thread_count = int(options['thread_count'])
+        if thread_count < 1 or thread_count > _MAX_WORKERS:
             raise CommandError(f'--workers от 1 до {_MAX_WORKERS}')
 
         root = Path(settings.MEDIA_ROOT).resolve()
@@ -90,7 +92,7 @@ class Command(BaseCommand):
                     zone,
                     dry_run=dry_run,
                     keep_local=keep_local,
-                    workers=workers,
+                    thread_count=thread_count,
                 )
                 if dry_run or failed == 0:
                     break
@@ -117,24 +119,24 @@ class Command(BaseCommand):
         *,
         dry_run: bool,
         keep_local: bool,
-        workers: int,
+        thread_count: int,
     ) -> tuple[int, int, int, int]:
         base = (root / zone.prefix).resolve()
         if not base.is_relative_to(root) or not base.is_dir():
             self.stdout.write(f'{zone.prefix}: местного каталога нет, переносить нечего')
             return 0, 0, 0, 0
         self.stdout.write(f'{zone.prefix} → {zone.base_url}')
-        if workers > 1 and not dry_run:
-            self.stdout.write(f'{zone.prefix}: потоков {workers}')
+        if thread_count > 1 and not dry_run:
+            self.stdout.write(f'{zone.prefix}: потоков {thread_count}')
         copied = skipped = failed = removed = 0
         seen = 0
-        parallel = workers > 1 and not dry_run
-        jobs: Queue | None = Queue(maxsize=workers * 4) if parallel else None
+        parallel = thread_count > 1 and not dry_run
+        jobs: Queue | None = Queue(maxsize=thread_count * 4) if parallel else None
         stats = {'copied': 0, 'skipped': 0, 'failed': 0, 'removed': 0, 'done': 0}
         lock = threading.Lock()
         threads: list[threading.Thread] = []
         if jobs is not None:
-            for index in range(workers):
+            for index in range(thread_count):
                 thread = threading.Thread(
                     target=_copy_worker,
                     name=f'relocate-media-{zone.prefix}-{index}',
