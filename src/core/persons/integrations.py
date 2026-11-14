@@ -18,12 +18,13 @@ from src.core.integrations.module_contracts import (
     CORE_PERSON_MERGE,
     CORE_PERSON_RESOLVE_ALIAS,
     CORE_PERSON_RESOLVE_MANY,
+    CORE_PERSON_SEARCH,
     CORE_PERSON_SET_PORTRAIT,
     CORE_PERSON_UNLINK,
     CORE_PERSON_UPDATE,
 )
 
-from . import portrait, service
+from . import portrait, search, service
 from .service import PersonError
 
 
@@ -57,6 +58,11 @@ def _resolve_many(*, person_public_ids, **_):
 @bridge.provide_op(CORE_PERSON_FIND_BY_USERS)
 def _find_by_users(*, user_public_ids, **_):
     return service.find_by_users(user_public_ids)
+
+
+@bridge.provide_op(CORE_PERSON_SEARCH)
+def _search(*, query='', limit=None, **_):
+    return search.search(query, limit=limit or search.SEARCH_LIMIT)
 
 
 @bridge.provide_op(CORE_PERSON_CREATE_UNLINKED)

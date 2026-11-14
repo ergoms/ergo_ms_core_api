@@ -94,6 +94,9 @@ CORE_PERSON_RESOLVE_MANY = 'core.person.resolve_many'
 CORE_PERSON_FIND_BY_USERS = 'core.person.find_by_users'
 CORE_PERSON_CREATE_UNLINKED = 'core.person.create_unlinked'
 CORE_PERSON_FIND_NAMESAKES = 'core.person.find_namesakes'
+# Поиск по строке: карточки без учётки по ФИО и учётки через поиск пользователей.
+# Ответ — список карточек; у учётки без карточки public_id пустой. У учётки есть email.
+CORE_PERSON_SEARCH = 'core.person.search'
 CORE_PERSON_UPDATE = 'core.person.update'
 # Привязка только явная и только с actor_user_public_id глобального администратора.
 CORE_PERSON_LINK = 'core.person.link'
