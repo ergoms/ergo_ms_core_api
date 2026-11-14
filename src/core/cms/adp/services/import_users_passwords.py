@@ -11,7 +11,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional
 
-import pandas as pd
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext as _
@@ -188,6 +187,9 @@ def consume_import_passwords(task_id: str, user: User) -> list[dict[str, str]]:
 
 
 def build_passwords_excel(entries: list[dict[str, str]]) -> bytes:
+    # pandas грузится по вызову: views импорта подключаются при старте API.
+    import pandas as pd
+
     df = pd.DataFrame(
         entries,
         columns=['last_name', 'first_name', 'middle_name', 'username', 'email', 'password'],

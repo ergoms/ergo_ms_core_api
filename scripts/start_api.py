@@ -1,5 +1,8 @@
 """
-Запуск API: development — dev/runserver (autoreload), production — daphne (ASGI).
+Запуск API: development — dev/runserver, production — daphne (ASGI).
+
+Горячую перезагрузку в development ведёт dev_reloader.py: наблюдатель без Django
+перезапускает `dev --noreload`, и проект грузится один раз, а не дважды.
 
 Точка входа для systemd/NSSM и ergoms start-api.
 Режим определяется ERGO_ENV (или API_DEPLOY_TYPE) в .env — см. src.config.deploy.
@@ -161,8 +164,20 @@ def main() -> int:
         cmd = build_daphne_command(sys.executable, port=ports[0])
         print(f'API (запуск как на сервере): daphne на {host}, порт {ports[0]}')
     else:
-        cmd = build_dev_command(sys.executable)
+        from src.config.env import env
+
+        cmd = [*build_dev_command(sys.executable), '--noreload']
         print(f'API (разработка): runserver на {host}, порт {port}')
+        if env.bool('API_AUTORELOAD', default=True):
+            from dev_reloader import run_dev_with_reloader
+
+            return run_dev_with_reloader(
+                cmd,
+                cwd=str(API_DIR),
+                env=run_env,
+                project_root=PROJECT_ROOT,
+                start_env_key=ENV_API_START_WALL,
+            )
 
     return replace_current_process(cmd, cwd=str(API_DIR), env=run_env)
 

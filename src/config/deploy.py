@@ -79,6 +79,6 @@ def build_daphne_command(
 
 
 def build_dev_command(python_executable: str | None = None) -> List[str]:
-    """Команда development-запуска API (runserver с autoreload через commands dev)."""
+    """Команда development-запуска API (commands dev). start_api добавляет --noreload и свой наблюдатель."""
     exe = python_executable or sys.executable
     return [exe, '-m', 'commands', 'dev']

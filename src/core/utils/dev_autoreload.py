@@ -1,5 +1,8 @@
 """
-Ускорение Django autoreload в development.
+Ускорение встроенного Django autoreload в development.
+
+Работает, когда `commands dev` запущен напрямую. start_api.py вместо этого
+запускает `dev --noreload` под scripts/dev_reloader.py.
 
 - Игнор шумных путей (virtual_env, client, migrations, media, logs…):
   не триггерят reload и не участвуют в StatReloader.snapshot.
@@ -10,59 +13,16 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path, PurePosixPath
 
 from django.dispatch import receiver
 from django.utils.autoreload import StatReloader, file_changed
 
-logger = logging.getLogger('core.utils.dev_autoreload')
+from src.core.utils.autoreload_paths import should_ignore_autoreload_path
 
-_IGNORE_SUBSTRINGS = (
-    '/virtual_env/',
-    '/.git/',
-    '/logs/',
-    '/media/',
-    '/__pycache__/',
-    '/node_modules/',
-    '/.cursor/',
-    '/core/client/',
-    '/core/media_api/',
-)
+logger = logging.getLogger('core.utils.dev_autoreload')
 
 _installed = False
 _ORIGINAL_WATCHED_FILES = StatReloader.watched_files
-
-
-def _normalize(path: Path | str) -> str:
-    text = path.as_posix() if isinstance(path, Path) else str(path).replace('\\', '/')
-    if not text.startswith('/'):
-        text = f'/{text}'
-    return text
-
-
-def should_ignore_autoreload_path(path: Path | str) -> bool:
-    """True — путь не должен вызывать reload / не нужно снимать mtime."""
-    normalized = _normalize(path)
-    lowered = normalized.lower()
-
-    for segment in _IGNORE_SUBSTRINGS:
-        if segment in lowered:
-            return True
-
-    parts = PurePosixPath(normalized).parts
-    if 'migrations' in parts:
-        return True
-
-    # modules/<module>/client/… — UI модуля, не Python API
-    if 'modules' in parts:
-        try:
-            idx = parts.index('modules')
-        except ValueError:
-            return False
-        if 'client' in parts[idx + 1 :]:
-            return True
-
-    return False
 
 
 @receiver(file_changed)

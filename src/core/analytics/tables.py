@@ -1,13 +1,19 @@
 """Conversions between prepared row data and Polars, without source access."""
-from typing import Any, Sequence
+from __future__ import annotations
 
-import polars as pl
+from typing import TYPE_CHECKING, Any, Sequence
+
+if TYPE_CHECKING:
+    import polars as pl
 
 
 def rows_to_frame(
     columns: Sequence[str] | None,
     rows: Sequence[Sequence[Any]] | None,
 ) -> pl.DataFrame:
+    # Polars грузится по вызову: модули импортируют этот файл при старте API.
+    import polars as pl
+
     columns = list(columns or [])
     rows = list(rows or [])
     if not columns:
