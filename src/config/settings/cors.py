@@ -23,6 +23,7 @@ FRONTEND_BASE_URL) или, без nginx, непустой FRONTEND_BASE_URL. Loc
 ответ бэкенда не должен лишаться заголовков CORS.
 """
 
+from corsheaders.defaults import default_headers
 from django.core.exceptions import ImproperlyConfigured
 
 from src.config.deploy import is_development
@@ -64,5 +65,8 @@ if not CORS_ALLOWED_ORIGINS and not CORS_ALLOWED_ORIGIN_REGEXES:
         'или CORS_ALLOWED_ORIGIN_REGEXES, либо FRONTEND_BASE_URL / публичный origin nginx. '
         'Список localhost подставляется только при ERGO_ENV=development.'
     )
+
+# Versioned API operations use this header to safely retry the same request.
+CORS_ALLOW_HEADERS = (*default_headers, 'idempotency-key')
 
 CORS_ALLOW_CREDENTIALS = True

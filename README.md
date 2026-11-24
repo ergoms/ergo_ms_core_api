@@ -43,3 +43,8 @@
 - Клиент: [`../client/README.md`](../client/README.md)
 - Файлы: [`../media_api/README.md`](../media_api/README.md)
 - Развёртывание: [`../deployment/logic.md`](../deployment/logic.md)
+
+
+## Заголовки CORS для повторяемых операций
+
+В `src/config/settings/cors.py` стандартный список `django-cors-headers` дополнен `Idempotency-Key`. Он позволяет браузерному клиенту выполнять операции с защитой от повторной записи, включая PUT/DELETE закрепления результатов Scout. Разрешённые origin и credentials определяются существующей конфигурацией. Регрессия preflight находится в `tests/test_cors_idempotency.py` и выполняется без базы данных.
