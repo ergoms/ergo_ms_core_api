@@ -94,10 +94,15 @@ def resolve_queues(queues_config: Any, all_queues: List[str]) -> Optional[List[s
     if queues_config == 'all' or queues_config is None:
         if not all_queues:
             return []
-        from src.core.utils.celery.module_queues import dedicated_queue_names
+        from src.core.utils.celery.module_queues import (
+            dedicated_queue_names,
+            supplement_declared_queues,
+        )
 
         names = {'default'}
         names.update(all_queues)
+        # Кэш мог быть записан запасным конфигом без отдельных очередей модуля.
+        names.update(supplement_declared_queues(names, PROJECT_ROOT / 'modules'))
         names.difference_update(dedicated_queue_names(PROJECT_ROOT / 'modules'))
         return sorted(names)
     if isinstance(queues_config, list):

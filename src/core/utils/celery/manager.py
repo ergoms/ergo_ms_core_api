@@ -197,6 +197,15 @@ class CeleryModuleManager:
         queues = {}
         for config in self.modules_configs.values():
             queues.update(config.get_task_queues())
+        # Запасной конфиг при ошибке импорта не знает отдельные очереди файла.
+        from src.config.paths import MODULES_DIR
+        from src.core.utils.celery.module_queues import supplement_declared_queues
+
+        for name in supplement_declared_queues(queues, MODULES_DIR):
+            queues.setdefault(name, {
+                'exchange': name,
+                'routing_key': name,
+            })
         return queues
     
     def get_all_task_annotations(self) -> Dict[str, Dict[str, Any]]:

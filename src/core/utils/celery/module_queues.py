@@ -52,6 +52,42 @@ def _queues_from_dict(node: ast.Dict) -> Iterable[str]:
                 yield from _queues_from_assign_target(elt)
 
 
+_GENERIC_QUEUES = frozenset({'default'})
+
+
+def supplement_declared_queues(
+    known: Iterable[str],
+    modules_root: str | Path,
+) -> set[str]:
+    """Очереди из ``celery_config.py``, которые прогрев потерял.
+
+    Если импорт конфига не удался, в кэш попадает запасной вариант: одна
+    очередь с именем модуля. Отдельная очередь, объявленная строковым ключом
+    ``queue`` в том же файле, в ``-Q`` общего воркера тогда не входит, и
+    задача остаётся в брокере. Добавляем такие имена только модулю, чья
+    очередь уже есть в ``known``. Чужой каталог не подмешиваем.
+    ``default`` связкой не считается: он есть почти у всех.
+    """
+    known_set = {
+        name.strip()
+        for name in known
+        if isinstance(name, str) and name.strip() and name.strip() not in _GENERIC_QUEUES
+    }
+    extra: set[str] = set()
+    root = Path(modules_root)
+    if not known_set or not root.is_dir():
+        return extra
+    for module_dir in root.iterdir():
+        if not module_dir.is_dir() or module_dir.name.startswith(('.', '_')):
+            continue
+        declared = queues_from_celery_configs(module_dir) - _GENERIC_QUEUES
+        if not declared:
+            continue
+        if module_dir.name in known_set or declared & known_set:
+            extra.update(declared)
+    return extra
+
+
 def queues_from_celery_configs(module_dir: Path) -> set[str]:
     """Имена очередей из ``celery_config.py`` каталога модуля, без импорта Django."""
     found: set[str] = set()
