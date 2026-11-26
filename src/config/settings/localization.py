@@ -2,7 +2,7 @@
 Локализация Django (ru / en / fr).
 
 DEFAULT_LANGUAGE в .env — язык API и новых профилей.
-TIME_ZONE в .env — часовой пояс приложения и меток в логах (IANA).
+TIME_ZONE в .env — единый пояс приложения, меток в логах и часов в интерфейсе (IANA).
 Свой язык пользователь меняет только в настройках (UserProfile.language).
 """
 
@@ -44,7 +44,7 @@ def _resolve_time_zone() -> str:
     return raw or 'UTC'
 
 
-# Часовой пояс приложения и меток времени в логах (из .env TIME_ZONE).
+# Единый пояс приложения, логов и клиента (из .env TIME_ZONE).
 TIME_ZONE = _resolve_time_zone()
 
 # Использование временных зон.

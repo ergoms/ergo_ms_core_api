@@ -2,11 +2,16 @@
 Единый формат строки логов ERGO MS (API, Media API, Celery, daphne).
 
 Эталон: [LEVEL] YYYY-MM-DD HH:MM:SS logger.name module message
+Метка времени — пояс TIME_ZONE из .env, не пояс операционной системы.
 """
 
 from __future__ import annotations
 
+import logging
+import os
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # dictConfig / logging.Formatter(style='{')
 VERBOSE_FORMAT = '[{levelname}] {asctime} {name} {module} {message}'
@@ -25,6 +30,20 @@ CELERY_WORKER_TASK_LOG_FORMAT = (
     '[%(levelname)s] %(asctime)s %(name)s %(module)s %(processName)s '
     '[%(task_name)s(%(task_id)s)] %(message)s'
 )
+
+
+def system_time_tuple(timestamp: float):
+    """Стенные часы пояса TIME_ZONE для logging.Formatter."""
+    name = os.environ.get('TIME_ZONE', '').strip() or 'UTC'
+    try:
+        zone = ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        zone = ZoneInfo('UTC')
+    moment = datetime.fromtimestamp(timestamp, zone)
+    return moment.timetuple()
+
+
+logging.Formatter.converter = staticmethod(system_time_tuple)
 
 
 def verbose_formatter_dict() -> dict[str, Any]:
